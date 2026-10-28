@@ -62,14 +62,83 @@ Pour votre déclaration de TVA mensuelle sans y passer votre week-end :
 
 ---
 
-## 🤖 NOUVEAU : Votre Assistant IA Exécutif (Gemini 2.5 Flash)
+## 🤖 Votre Assistant IA Exécutif (Gemini 2.5 Flash) — Mode d'Emploi
 
-Vous avez désormais un **assistant IA directement intégré** (bouton **`✨ Assistant IA`** en haut à droite, ou la bulle ronde flottante en bas à droite) :
+L'assistant IA est votre secrétaire et bras droit numérique disponible 24h/24. Il est propulsé par le modèle **Gemini 2.5 Flash** (ultra-rapide, économique et léger) et **directement branché sur vos données réelles**. Il ne bavarde pas et ne théorise pas : il vous donne des réponses concrètes et rédige vos courriers à votre place.
 
-* **Toujours branché sur vos dossiers réels** : il connaît vos dossiers en cours, vos heures non facturées, vos dates de Dires et vos chiffres de TVA.
-* **Génération de mails et relances en 1 clic** : demandez-lui par exemple *« Rédige un mail courtois pour relancer l'avocat sur son Dire n°2 »* puis appuyez sur **`Copier`** pour le coller directement dans Outlook ou Mail.
-* **Économique et instantané** : propulsé par **Gemini 2.5 Flash** (modèle léger, ultra rapide et peu gourmand).
-* **Mode local sécurisé garanti** : même sans connexion internet ou clé API configurée, l'assistant répond immédiatement à partir des données de votre cabinet.
+```mermaid
+flowchart TD
+    A["💬 Vous posez une question en français"] --> B["⚡ Assistant IA (Gemini 2.5 Flash)"]
+    B --> C["🗄️ Consultation immédiate de votre base<br/>(Dossiers, Honoraires, Échéances, TVA)"]
+    C --> D["📋 Réponse chiffrée ou Mail prêt à être copié"]
+```
+
+---
+
+### 1. Comment l'ouvrir et le fermer ?
+* **Sur ordinateur ou tablette** : cliquez sur le bouton bleu ciel **`✨ Assistant IA`** dans la barre du haut, ou sur la bulle noire et bleue flottante en bas à droite de votre écran.
+* **Sur smartphone (iPhone / Android)** : appuyez sur le bouton **`✨ IA`** en haut à droite (ou sur la bulle en bas).
+* **Pour le fermer** : appuyez sur la croix **`✕`** en haut à droite ou cliquez à l'extérieur du panneau.
+
+---
+
+### 2. Comment lui parler ?
+Parlez-lui normalement, comme à un confrère ou une assistante de direction. Pas besoin de formule magique ni de vocabulaire technique d'informaticien.
+
+Vous pouvez soit :
+* **Taper directement votre question** dans le champ de texte en bas et appuyer sur Entrée (ou sur l'icône d'envoi).
+* **Cliquer sur une suggestion rapide** sous le chat pour obtenir une réponse en un clic :
+  * `⚠️ Seuils > 3 500 €`
+  * `📅 Prochaines échéances`
+  * `📊 Bilan TVA & CA`
+  * `✉️ Rédiger une relance Dire`
+
+---
+
+### 3. Les 4 grands cas d'usage au quotidien (Exemples concrets)
+
+#### Cas A : Rédiger un email officiel ou une relance en 5 secondes
+Vous devez relancer un avocat ou un expert contradicteur, mais vous n'avez ni le temps ni l'énergie de rédiger les formules de politesse ? Demandez-lui :
+> 🗣 *« Rédige un mail courtois mais ferme pour relancer l'avocat de VINCI sur le dépôt de son Dire n°2. »*
+> 🗣 *« Prépare-moi un message pour avertir l'assureur ALBINGIA que le seuil de 3 500 € d'honoraires est atteint sur le dossier Regiorail. »*
+
+👉 **Le réflexe à avoir** : Dès que l'assistant affiche le projet de message, cliquez sur le bouton **`Copier`** situé juste en dessous. Vous n'avez plus qu'à faire **Coller (`Cmd + V` ou `Ctrl + V`)** directement dans Outlook, Apple Mail ou Thunderbird !
+
+#### Cas B : Prendre la météo d'un dossier avant un coup de fil ou une réunion
+Vous devez appeler un client ou un avocat et vous voulez vous rafraîchir la mémoire immédiatement :
+> 🗣 *« Fais-moi le point sur le dossier Alstom Ligne 18 : qui sont les parties et où en est-on ? »*
+> 🗣 *« Combien d'heures et de frais ai-je engagés sur le déraillement de Clermont-Gravanche ? »*
+
+L'assistant consulte instantanément la base et vous résume les références, le montant non facturé, les dernières activités pointées et la date du prochain jalon.
+
+#### Cas C : Piloter sa facturation et ne jamais oublier de facturer
+> 🗣 *« Quels sont les dossiers où j'ai dépassé le seuil d'alerte de 3 500 € ? »*
+> 🗣 *« Quel est le montant total de mes honoraires en attente de facturation ? »*
+
+L'assistant vous liste le ou les dossiers concernés (ex: *VP2026104 - Regiorail avec 4 123,50 € HT en attente*) et vous invite à vous rendre sur l'onglet **Honoraires** pour émettre la note en un clic.
+
+#### Cas D : Connaître sa situation comptable et sa TVA
+> 🗣 *« Quel est mon chiffre d'affaires émis ce mois-ci et combien de TVA dois-je payer ? »*
+> 🗣 *« Quelles sont les dernières factures que j'ai émises ? »*
+
+---
+
+### 4. L'astuce pratique : Le « Contexte Ciblé »
+Quand vous êtes déjà en train de consulter un dossier précis dans l'onglet **Dossiers** (par exemple la fiche de la mission *ALSTOM Ligne 18*), l'assistant affiche un badge bleu : **`Contexte actif : [VP2026922]`**.
+
+Vous n'avez même plus besoin de préciser le nom du dossier dans vos questions ! Demandez-lui simplement :
+* *« Qui sont les personnes convoquées sur ce dossier ? »*
+* *« Rédige une note de synthèse des 3 dernières opérations réalisées ici. »*
+* *« Quel est le taux horaire appliqué sur cette mission ? »*
+
+---
+
+### 5. Boutons et raccourcis utiles dans le panneau de l'assistant
+* **Bouton `Copier`** : copie la réponse complète dans votre presse-papier sans sélectionner le texte à la souris.
+* **Bouton `🔄` (en haut à droite)** : réinitialise la discussion pour repartir d'une page blanche.
+* **Badge de statut** :
+  * `Gemini 2.5 Flash` : génération intelligente complète connectée à Google AI Studio.
+  * `Local Conforme` : fonctionne en toute sécurité même si votre connexion est coupée ou si aucune clé n'est configurée, en puisant directement dans les données de votre cabinet.
 
 ---
 
