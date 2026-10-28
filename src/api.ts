@@ -171,12 +171,32 @@ export const api = {
     body: JSON.stringify(data),
   }),
 
-  // AI Assistant (Gemini 2.5 Flash)
+  // AI Assistant (Gemini Flash & Ingestion Terrain)
   askAssistant: (data: { message: string; history?: any[]; missionId?: string }) => fetchJSON<{
     reply: string;
     model: string;
     hasKey: boolean;
   }>('/assistant/chat', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  ingestDocument: async (formData: FormData) => {
+    const res = await fetch('/api/assistant/ingest', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur d'ingestion (${res.status})`);
+    }
+    return res.json();
+  },
+  commitAssistantAction: (data: any) => fetchJSON<{
+    success: boolean;
+    message: string;
+    id?: string;
+    mission_code?: string;
+  }>('/assistant/commit-action', {
     method: 'POST',
     body: JSON.stringify(data),
   }),

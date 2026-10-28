@@ -1290,3 +1290,371 @@ Consignes :
   });
 });
 
+// ---------------- ASSISTANT MULTIMODAL INGESTION ----------------
+apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
+  try {
+    const file = req.file;
+    const instruction = (req.body.text || req.body.instruction || '').trim();
+    const preselectedMissionId = req.body.missionId;
+
+    if (!file && !instruction) {
+      return res.status(400).json({ error: "Veuillez fournir un justificatif ou une consigne." });
+    }
+
+    // 1. Fetch active missions for target resolution
+    const missions = db.prepare('SELECT id, code, title, case_reference, insurance_client, insured_party, custom_hourly_rate FROM missions ORDER BY code DESC').all() as any[];
+
+    let matchedMission = preselectedMissionId ? missions.find(m => m.id === preselectedMissionId || m.code.toLowerCase() === preselectedMissionId.toLowerCase()) : null;
+
+    // Check if filename / instruction references a mission
+    if (!matchedMission && instruction) {
+      const lowerInst = instruction.toLowerCase();
+      matchedMission = missions.find(m => 
+        lowerInst.includes(m.code.toLowerCase()) || 
+        (m.title && lowerInst.includes(m.title.toLowerCase().slice(0, 10))) ||
+        (m.insurance_client && lowerInst.includes(m.insurance_client.toLowerCase())) ||
+        (m.case_reference && lowerInst.includes(m.case_reference.toLowerCase())) ||
+        (m.code.includes('922') && (lowerInst.includes('alstom') || lowerInst.includes('ligne 18'))) ||
+        (m.code.includes('104') && (lowerInst.includes('regiorail') || lowerInst.includes('ambérieu') || lowerInst.includes('amberieu')))
+      );
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
+    let extracted: any = null;
+    let modelUsed = 'Règles déterministes locales';
+
+    // 2. Multimodal analysis via Gemini if API key is present and file provided
+    if (apiKey && file) {
+      const candidateModels = [
+        process.env.GEMINI_MODEL,
+        'gemini-3.8-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+      ].filter(Boolean) as string[];
+
+      const fileBuffer = fs.readFileSync(file.path);
+      const mimeType = file.mimetype === 'application/pdf' ? 'application/pdf' : (file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg');
+
+      const systemPrompt = `Tu es l'assistant d'ingestion comptable et juridique de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice).
+
+Dossiers d'expertise en cours :
+${missions.map(m => `- [${m.code}] (ID: ${m.id}) : ${m.title} (Réf : ${m.case_reference}, Assureur : ${m.insurance_client}, Assuré : ${m.insured_party || 'N/A'})`).join('\n')}
+
+Instruction de Valentine : "${instruction || 'Analyse ce justificatif ou document.'}"
+Nom du fichier original : "${file.originalname}"
+
+Consignes :
+1. Catégorise l'action :
+   - "expense" si c'est un ticket de train, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
+   - "document" si c'est un Dire d'avocat, un PV de constatation contradictoire, une convocation, une note technique ou un courrier de procédure.
+   - "new_mission" si c'est une nouvelle ordonnance de référé ou une nouvelle lettre de mission désignant une affaire inexistante dans la liste.
+   - "activity" si c'est un relevé d'heures ou une vacation.
+2. Pour une dépense ("expense") :
+   - Extrait la date au format YYYY-MM-DD.
+   - Calcule avec rigueur :
+     * Billets SNCF / RATP : TVA à 10% (HT = TTC / 1.10).
+     * Hôtel / Hébergement : TVA à 10%.
+     * Restauration : TVA à 10%.
+     * Péage / Taxi / Fournitures : TVA à 20%.
+     * Kilométrique : TVA à 0%.
+     * Contrôle arithmétique : total_ttc = round(amount_ht + vat_amount, 2).
+   - Rapproche la dépense du dossier mentionné par Valentine ou le plus pertinent.
+3. Pour un document ("document") :
+   - Extrait le titre, la catégorie (dire, pv, technique, autre) et l'échéance de réponse si mentionnée (format YYYY-MM-DD).
+4. Pour un nouveau dossier ("new_mission") :
+   - Extrait le titre du sinistre, la référence, l'assureur ou tribunal, la date et l'assuré.
+
+Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni texte additionnel :
+{
+  "action_type": "expense" | "document" | "new_mission" | "activity",
+  "confidence": 0.95,
+  "matched_mission_id": "id du dossier correspondant ou null",
+  "matched_mission_code": "code du dossier correspondant (ex: VP2026922) ou null",
+  "summary": "Résumé en français court et clair pour Valentine",
+  "payload": {
+    "date": "YYYY-MM-DD",
+    "category": "train" | "hotel" | "repas" | "peage" | "autre",
+    "label": "Libellé de la dépense",
+    "supplier": "Fournisseur",
+    "amount_ht": 0.0,
+    "vat_rate": 0.10,
+    "vat_amount": 0.0,
+    "total_ttc": 0.0,
+    "document_title": "Titre du document",
+    "document_category": "dire" | "pv" | "technique" | "autre",
+    "deadline": "YYYY-MM-DD",
+    "new_mission_title": "Titre",
+    "new_mission_case_reference": "Réf",
+    "new_mission_client": "Assureur/Client",
+    "new_mission_insured": "Assuré",
+    "new_mission_court": "Tribunal"
+  }
+}`;
+
+      const ai = new GoogleGenAI({ apiKey });
+      for (const mName of candidateModels) {
+        try {
+          const result = await ai.models.generateContent({
+            model: mName,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: systemPrompt },
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: fileBuffer.toString('base64'),
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+
+          const rawText = result.text || '';
+          const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleaned);
+          if (parsed && parsed.action_type) {
+            extracted = parsed;
+            modelUsed = mName;
+            break;
+          }
+        } catch (modelErr: any) {
+          console.warn(`[Ingest] Modèle ${mName} indisponible :`, modelErr.message);
+        }
+      }
+    }
+
+    // 3. Fallback déterministe local (si pas de clé API ou modèle échoué ou saisie textuelle)
+    if (!extracted) {
+      const lower = `${instruction} ${file ? file.originalname : ''}`.toLowerCase();
+      const today = new Date().toISOString().slice(0, 10);
+
+      // Check for mission match if not already found
+      if (!matchedMission) {
+        matchedMission = missions.find(m => 
+          lower.includes(m.code.toLowerCase()) || 
+          lower.includes(m.title.toLowerCase().slice(0, 10)) ||
+          (m.code.includes('922') && (lower.includes('alstom') || lower.includes('ligne 18'))) ||
+          (m.code.includes('104') && (lower.includes('regiorail') || lower.includes('ambérieu') || lower.includes('amberieu')))
+        ) || missions[0];
+      }
+
+      // Detect action type
+      if (lower.includes('dire') || lower.includes('conclusions') || lower.includes('avocat') || lower.includes('signifi')) {
+        extracted = {
+          action_type: 'document',
+          confidence: 0.90,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `Pièce de procédure détectée pour le dossier ${matchedMission?.code || ''}`,
+          payload: {
+            date: today,
+            document_title: file ? file.originalname.replace(/\.[^.]+$/, '') : "Dire d'avocat reçu",
+            document_category: 'dire',
+            deadline: null,
+          },
+        };
+      } else if (lower.includes('ordonnance') || lower.includes('désignation') || lower.includes('designation') || lower.includes('nouveau dossier')) {
+        extracted = {
+          action_type: 'new_mission',
+          confidence: 0.88,
+          matched_mission_id: null,
+          matched_mission_code: null,
+          summary: "Nouvelle désignation judiciaire détectée",
+          payload: {
+            date: today,
+            new_mission_title: instruction ? instruction.replace(/nouveau dossier/i, '').trim() : "Nouvelle mission d'expertise ferroviaire",
+            new_mission_case_reference: "Réf à préciser",
+            new_mission_client: "Tribunal Judiciaire",
+            new_mission_court: "TJ",
+          },
+        };
+      } else {
+        // Default to Expense
+        let category: 'train' | 'hotel' | 'repas' | 'peage' | 'autre' = 'train';
+        let vat_rate = 0.10;
+        let label = "Déplacement ferroviaire SNCF";
+        let supplier = "SNCF Voyageurs";
+
+        if (lower.includes('hotel') || lower.includes('ibis') || lower.includes('novotel') || lower.includes('nuit')) {
+          category = 'hotel';
+          vat_rate = 0.10;
+          label = "Hébergement hôtel intervention";
+          supplier = "Hôtel";
+        } else if (lower.includes('restaurant') || lower.includes('repas') || lower.includes('dejeuner') || lower.includes('diner')) {
+          category = 'repas';
+          vat_rate = 0.10;
+          label = "Repas réunion d'expertise";
+          supplier = "Restauration";
+        } else if (lower.includes('peage') || lower.includes('aprr') || lower.includes('vinci') || lower.includes('taxi')) {
+          category = 'peage';
+          vat_rate = 0.20;
+          label = "Frais de péage autoroutier / Taxi";
+          supplier = "Société d'autoroutes";
+        }
+
+        // Amount extraction
+        const amountMatch = lower.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:€|eur|euros)/i) || lower.match(/(?:montant|total|prix|de)\s*(\d+(?:[.,]\d{1,2})?)/i);
+        const amount_raw = amountMatch ? parseFloat(amountMatch[1].replace(',', '.')) : 118.00;
+        const amount_ht = Math.round((amount_raw / (1 + vat_rate)) * 100) / 100;
+        const vat_amount = Math.round((amount_raw - amount_ht) * 100) / 100;
+        const total_ttc = Math.round((amount_ht + vat_amount) * 100) / 100;
+
+        extracted = {
+          action_type: 'expense',
+          confidence: 0.85,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `${label} (${total_ttc.toFixed(2).replace('.', ',')} € TTC) rattaché à [${matchedMission?.code || 'Sans dossier'}]`,
+          payload: {
+            date: today,
+            category,
+            label,
+            supplier,
+            amount_ht,
+            vat_rate,
+            vat_amount,
+            total_ttc,
+          },
+        };
+      }
+    }
+
+    // 4. Ensure payload arithmetic is 100% deterministic
+    if (extracted.action_type === 'expense' && extracted.payload) {
+      const p = extracted.payload;
+      const rate = typeof p.vat_rate === 'number' ? p.vat_rate : 0.10;
+      let ht = typeof p.amount_ht === 'number' && p.amount_ht > 0 ? p.amount_ht : (p.total_ttc ? Math.round((p.total_ttc / (1 + rate)) * 100) / 100 : 0);
+      let vat = Math.round(ht * rate * 100) / 100;
+      let ttc = Math.round((ht + vat) * 100) / 100;
+
+      p.amount_ht = ht;
+      p.vat_rate = rate;
+      p.vat_amount = vat;
+      p.total_ttc = ttc;
+      if (!p.date) p.date = new Date().toISOString().slice(0, 10);
+    }
+
+    // 5. Attach file details if present
+    const fileInfo = file ? {
+      filename: file.filename,
+      original_name: file.originalname,
+      mime_type: file.mimetype,
+      file_size: file.size,
+      url: `/uploads/${file.filename}`,
+    } : null;
+
+    res.json({
+      success: true,
+      model: modelUsed,
+      file: fileInfo,
+      action: extracted,
+    });
+  } catch (err: any) {
+    console.error("[Assistant Ingest Error] :", err);
+    res.status(500).json({ error: err.message || "Erreur lors de l'ingestion du document." });
+  }
+});
+
+// Commit action validated by user in ActionPreviewCard
+apiRouter.post('/assistant/commit-action', (req, res) => {
+  try {
+    const { action_type, mission_id, payload, filename, original_name } = req.body;
+    if (!action_type) {
+      return res.status(400).json({ error: "Type d'action requis." });
+    }
+
+    if (action_type === 'expense') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const date = payload.date || new Date().toISOString().slice(0, 10);
+      const category = payload.category || 'train';
+      const label = (payload.label || 'Note de frais terrain').trim();
+      const amount_ht = Number(payload.amount_ht) || 0;
+      const vat_amount = Number(payload.vat_amount) || 0;
+      const total_ttc = Math.round((amount_ht + vat_amount) * 100) / 100;
+      const id = `exp-${uuidv4().slice(0, 8)}`;
+
+      db.prepare(`
+        INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_amount, total_ttc, receipt_filename, status, is_refacturable)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'a_facturer', 1)
+      `).run(id, mission.id, mission.code, date, category, label, amount_ht, amount_ht, vat_amount, total_ttc, filename || null);
+
+      return res.json({
+        success: true,
+        action_type: 'expense',
+        id,
+        mission_code: mission.code,
+        message: `Frais de ${amount_ht.toFixed(2).replace('.', ',')} € HT (${category}) enregistré avec succès dans [${mission.code}].`,
+      });
+    }
+
+    if (action_type === 'document') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const id = `doc-${uuidv4().slice(0, 8)}`;
+      const docFilename = filename || `doc-${Date.now()}.pdf`;
+      const docOriginalName = original_name || payload.document_title || 'Document';
+      const cat = payload.document_category || 'autre';
+      const caption = (payload.document_title || payload.label || 'Pièce de procédure').trim();
+
+      db.prepare(`
+        INSERT INTO documents (id, mission_id, mission_code, filename, original_name, mime_type, file_size, category, caption, is_selected_for_report)
+        VALUES (?, ?, ?, ?, ?, 'application/pdf', 1024, ?, ?, 0)
+      `).run(id, mission.id, mission.code, docFilename, docOriginalName, cat, caption);
+
+      if (payload.deadline) {
+        db.prepare(`
+          UPDATE missions SET next_deadline = ?, next_action = ? WHERE id = ?
+        `).run(payload.deadline, `Remise réponse à la pièce : ${caption}`, mission.id);
+      }
+
+      return res.json({
+        success: true,
+        action_type: 'document',
+        id,
+        mission_code: mission.code,
+        message: `Document classé avec succès dans [${mission.code}].`,
+      });
+    }
+
+    if (action_type === 'activity') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code, custom_hourly_rate FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const id = `act-${uuidv4().slice(0, 8)}`;
+      const date = payload.date || new Date().toISOString().slice(0, 10);
+      const hours = Number(payload.hours) || 1;
+      const rate = mission.custom_hourly_rate || 190;
+      const total_ht = Math.round(hours * rate * 100) / 100;
+      const label = (payload.label || 'Vacation d\'expertise').trim();
+
+      db.prepare(`
+        INSERT INTO activities (id, mission_id, mission_code, date, category, label, hours, hourly_rate, total_ht, billable, status)
+        VALUES (?, ?, ?, ?, 'expertise', ?, ?, ?, ?, 1, 'a_facturer')
+      `).run(id, mission.id, mission.code, date, label, hours, rate, total_ht);
+
+      return res.json({
+        success: true,
+        action_type: 'activity',
+        id,
+        mission_code: mission.code,
+        message: `Pointage de ${hours} h enregistré dans [${mission.code}].`,
+      });
+    }
+
+    return res.status(400).json({ error: `Type d'action "${action_type}" non géré.` });
+  } catch (err: any) {
+    console.error("[Assistant Commit Error] :", err);
+    res.status(500).json({ error: err.message || "Erreur lors de l'enregistrement de l'action." });
+  }
+});

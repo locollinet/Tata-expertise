@@ -1,17 +1,31 @@
-import React, { useState } from 'react';
-import { X, FolderPlus, AlertCircle, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, FolderPlus, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { api } from '../api.js';
 
 interface CreateMissionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (newMissionId: string) => void;
+  initialValues?: Partial<{
+    code: string;
+    title: string;
+    case_reference: string;
+    insurance_client: string;
+    client_contact: string;
+    insured_party: string;
+    third_parties: string;
+    court_reference: string;
+    incident_date: string;
+    reception_date: string;
+    description: string;
+  }> | null;
 }
 
 export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  initialValues,
 }) => {
   const currentYear = new Date().getFullYear();
   const [code, setCode] = useState(`VP${currentYear}105`);
@@ -31,6 +45,22 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
   const [billingAddress, setBillingAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialValues && isOpen) {
+      if (initialValues.title) setTitle(initialValues.title);
+      if (initialValues.case_reference) setCaseReference(initialValues.case_reference);
+      if (initialValues.insurance_client) setInsuranceClient(initialValues.insurance_client);
+      if (initialValues.client_contact) setClientContact(initialValues.client_contact);
+      if (initialValues.insured_party) setInsuredParty(initialValues.insured_party);
+      if (initialValues.third_parties) setThirdParties(initialValues.third_parties);
+      if (initialValues.court_reference) setCourtReference(initialValues.court_reference);
+      if (initialValues.incident_date) setIncidentDate(initialValues.incident_date);
+      if (initialValues.reception_date) setReceptionDate(initialValues.reception_date);
+      if (initialValues.description) setDescription(initialValues.description);
+      if (initialValues.code) setCode(initialValues.code);
+    }
+  }, [initialValues, isOpen]);
 
   if (!isOpen) return null;
 
@@ -86,6 +116,13 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {initialValues && (
+          <div className="mx-6 mt-4 p-2.5 bg-cyan-50 border border-cyan-200 text-cyan-900 rounded-lg flex items-center space-x-2 text-xs">
+            <Sparkles className="w-4 h-4 text-cyan-600 shrink-0" />
+            <span>Champs pré-remplis automatiquement par l'Assistant IA depuis le document déposé. Vérifiez les informations avant validation.</span>
+          </div>
+        )}
 
         {error && (
           <div className="mx-6 mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-center space-x-2">

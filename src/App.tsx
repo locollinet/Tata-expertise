@@ -44,6 +44,7 @@ export function App() {
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickAddDefaultMissionId, setQuickAddDefaultMissionId] = useState<string | undefined>(undefined);
   const [isCreateMissionOpen, setIsCreateMissionOpen] = useState(false);
+  const [createMissionInitialData, setCreateMissionInitialData] = useState<any>(null);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   const refreshData = async () => {
@@ -279,6 +280,12 @@ export function App() {
         onClose={() => setIsAssistantOpen(false)}
         selectedMissionId={selectedMissionId}
         missions={missions}
+        onNavigateToMission={handleNavigateToMission}
+        onOpenCreateMissionWithData={(data) => {
+          setCreateMissionInitialData(data);
+          setIsCreateMissionOpen(true);
+        }}
+        onRefreshData={refreshData}
       />
 
       {/* Quick Add Modal */}
@@ -293,11 +300,16 @@ export function App() {
       {/* Create Mission Modal */}
       <CreateMissionModal
         isOpen={isCreateMissionOpen}
-        onClose={() => setIsCreateMissionOpen(false)}
+        initialValues={createMissionInitialData}
+        onClose={() => {
+          setIsCreateMissionOpen(false);
+          setCreateMissionInitialData(null);
+        }}
         onSuccess={(newId) => {
           refreshData();
           setSelectedMissionId(newId);
           setActiveTab('missions');
+          setCreateMissionInitialData(null);
         }}
       />
     </div>
