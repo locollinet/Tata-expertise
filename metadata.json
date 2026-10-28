@@ -2,5 +2,7 @@
   "name": "Tata t'aime - VP Expertise",
   "description": "Application métier de gestion pour VP Expertise : suivi des missions d'expertise mécanique et ferroviaire, temps, frais, facturation et comptabilité.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
