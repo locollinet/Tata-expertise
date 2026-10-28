@@ -10,19 +10,23 @@ import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 
 interface MissionDetailViewProps {
   missionId: string;
+  initialMission?: any;
   onBack: () => void;
+  onCacheMission?: (mission: any) => void;
   onOpenQuickAdd: (missionId: string) => void;
   onPrepareBilling: (missionId: string) => void;
 }
 
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   missionId,
+  initialMission,
   onBack,
+  onCacheMission,
   onOpenQuickAdd,
   onPrepareBilling,
 }) => {
-  const [mission, setMission] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [mission, setMission] = useState<any>(initialMission || null);
+  const [loading, setLoading] = useState(!initialMission || !initialMission.activities);
   const initialSubtab = new URLSearchParams(window.location.search).get('subtab') as 'overview' | 'time' | 'evidences' | 'rates' | 'docs' | 'report' | 'comms' | 'travel' | null;
   const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'evidences' | 'rates' | 'docs' | 'report' | 'comms' | 'travel'>(initialSubtab || 'time');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -46,11 +50,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [batchSubmitting, setBatchSubmitting] = useState(false);
 
   // Report draft edit state
-  const [reportFacts, setReportFacts] = useState('');
-  const [reportObs, setReportObs] = useState('');
-  const [reportAnalysis, setReportAnalysis] = useState('');
-  const [reportConc, setReportConc] = useState('');
-  const [rawFieldNotes, setRawFieldNotes] = useState('');
+  const [reportFacts, setReportFacts] = useState(initialMission?.report_draft?.section_facts || '');
+  const [reportObs, setReportObs] = useState(initialMission?.report_draft?.section_observations || '');
+  const [reportAnalysis, setReportAnalysis] = useState(initialMission?.report_draft?.section_analysis || '');
+  const [reportConc, setReportConc] = useState(initialMission?.report_draft?.section_conclusions || '');
+  const [rawFieldNotes, setRawFieldNotes] = useState(initialMission?.report_draft?.raw_field_notes || '');
   const [reportSaved, setReportSaved] = useState(false);
 
   // New photo upload state
@@ -70,6 +74,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     try {
       const data = await api.getMission(missionId);
       setMission(data);
+      onCacheMission?.(data);
       if (data.report_draft) {
         setReportFacts(data.report_draft.section_facts || '');
         setReportObs(data.report_draft.section_observations || '');
@@ -85,10 +90,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   };
 
   useEffect(() => {
+    if (initialMission && (!mission || mission.id !== missionId)) {
+      setMission(initialMission);
+      setLoading(!initialMission.activities);
+    }
     loadData();
   }, [missionId]);
 
-  if (loading || !mission) {
+  if (!mission) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#0f3854]"></div>
@@ -309,11 +318,18 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors"
+          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Retour aux dossiers</span>
         </button>
+
+        {loading && (
+          <div className="flex items-center space-x-1.5 text-slate-400 text-xs">
+            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#0f3854]"></div>
+            <span>Actualisation...</span>
+          </div>
+        )}
 
         <div className="flex items-center space-x-2">
           <button
@@ -337,7 +353,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div>
-            <div className="flex items-center space-x-2 mb-1">
+            <div className="flex items-center space-x-2 mb-1 flex-wrap gap-y-1">
               <span className="text-base font-bold text-[#0f3854] bg-[#0f3854]/10 px-2.5 py-0.5 rounded-md">
                 {mission.code}
               </span>
@@ -345,8 +361,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 Réf : {mission.case_reference}
               </span>
               <span className="text-xs font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                Reçu le {mission.reception_date.split('-').reverse().join('/')}
+                Reçu le {mission.reception_date ? mission.reception_date.split('-').reverse().join('/') : '—'}
               </span>
+              {loading && (
+                <span className="text-[11px] text-slate-400 inline-flex items-center space-x-1 ml-1 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
+                  <span>Synchronisation...</span>
+                </span>
+              )}
             </div>
             <h1 className="text-xl font-bold text-slate-900 leading-snug">{mission.title}</h1>
             
@@ -499,7 +521,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               </button>
             </div>
 
-            {mission.activities?.length === 0 ? (
+            {loading && !mission.activities ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des pointages...</span>
+              </div>
+            ) : (mission.activities || []).length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">Aucun temps pointé sur ce dossier.</p>
             ) : (
               <div className="overflow-x-auto">
@@ -516,7 +543,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {mission.activities.map((act: any) => (
+                    {(mission.activities || []).map((act: any) => (
                       <tr key={act.id} className="hover:bg-slate-50/50">
                         <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
                           {act.date.split('-').reverse().join('/')}
@@ -570,7 +597,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               </button>
             </div>
 
-            {mission.expenses?.length === 0 ? (
+            {loading && !mission.expenses ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-600"></div>
+                <span>Chargement des notes de frais...</span>
+              </div>
+            ) : (mission.expenses || []).length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">Aucun frais rattaché à ce dossier.</p>
             ) : (
               <div className="overflow-x-auto">
@@ -588,7 +620,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {mission.expenses.map((exp: any) => (
+                    {(mission.expenses || []).map((exp: any) => (
                       <tr key={exp.id} className="hover:bg-slate-50/50">
                         <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
                           {exp.date.split('-').reverse().join('/')}
@@ -746,7 +778,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               </div>
             </div>
 
-            {mission.documents?.length === 0 ? (
+            {loading && !mission.documents ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des documents...</span>
+              </div>
+            ) : (mission.documents || []).length === 0 ? (
               <div className="p-8 text-center border border-slate-100 rounded-xl bg-slate-50/50 text-slate-400 text-xs space-y-1">
                 <Paperclip className="w-8 h-8 mx-auto text-slate-300 mb-1" />
                 <p className="font-semibold text-slate-600">Aucun document rattaché pour le moment</p>
@@ -1034,22 +1071,31 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               </form>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {mission.attendees?.map((att: any) => (
-                <div key={att.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-900">{att.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                      att.present_on_site ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
-                    }`}>
-                      {att.present_on_site ? 'Sur site' : 'Visio'}
-                    </span>
+            {loading && !mission.attendees ? (
+              <div className="py-4 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des participants...</span>
+              </div>
+            ) : (mission.attendees || []).length === 0 ? (
+              <p className="text-xs text-slate-400 py-3 text-center">Aucun participant enregistré.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {(mission.attendees || []).map((att: any) => (
+                  <div key={att.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">{att.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
+                        att.present_on_site ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
+                      }`}>
+                        {att.present_on_site ? 'Sur site' : 'Visio'}
+                      </span>
+                    </div>
+                    <p className="text-slate-600 font-medium">{att.organization}</p>
+                    {att.role && <p className="text-slate-400">{att.role}</p>}
                   </div>
-                  <p className="text-slate-600 font-medium">{att.organization}</p>
-                  {att.role && <p className="text-slate-400">{att.role}</p>}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Photo Gallery & Field Clichés */}
@@ -1112,11 +1158,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               </form>
             )}
 
-            {mission.photos?.length === 0 ? (
+            {loading && !mission.photos ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des clichés...</span>
+              </div>
+            ) : (mission.photos || []).length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">Aucune photo enregistrée pour ce dossier.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {mission.photos.map((photo: any) => (
+                {(mission.photos || []).map((photo: any) => (
                   <div key={photo.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
                     <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden relative">
                       <img
@@ -1381,12 +1432,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           )}
 
           <div className="space-y-3">
-            {mission.communications?.length === 0 ? (
+            {loading && !mission.communications ? (
+              <div className="bg-white p-8 rounded-xl border border-slate-200 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des courriers et dires...</span>
+              </div>
+            ) : (mission.communications || []).length === 0 ? (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400 text-xs">
                 Aucun message rattaché à ce dossier.
               </div>
             ) : (
-              mission.communications.map((comm: any) => (
+              (mission.communications || []).map((comm: any) => (
                 <div key={comm.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
@@ -1447,11 +1503,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <span>Visites de chantier & Interventions sur site ({mission.travels?.length || 0})</span>
             </h3>
 
-            {mission.travels?.length === 0 ? (
+            {loading && !mission.travels ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
+                <span>Chargement des interventions sur site...</span>
+              </div>
+            ) : (mission.travels || []).length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">Aucune visite sur site enregistrée pour ce dossier.</p>
             ) : (
               <div className="space-y-3">
-                {mission.travels.map((travel: any) => (
+                {(mission.travels || []).map((travel: any) => (
                   <div key={travel.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-900 text-sm">{travel.destination}</span>
@@ -1483,11 +1544,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <span>Suivi des courriers recommandés (LRAR) ({mission.registered_mails?.length || 0})</span>
             </h3>
 
-            {mission.registered_mails?.length === 0 ? (
+            {loading && !mission.registered_mails ? (
+              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
+                <span>Chargement des recommandés...</span>
+              </div>
+            ) : (mission.registered_mails || []).length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">Aucun courrier recommandé enregistré.</p>
             ) : (
               <div className="divide-y divide-slate-100 text-xs">
-                {mission.registered_mails.map((mail: any) => (
+                {(mission.registered_mails || []).map((mail: any) => (
                   <div key={mail.id} className="py-2.5 flex items-center justify-between">
                     <div>
                       <p className="font-bold text-slate-900">{mail.recipient}</p>

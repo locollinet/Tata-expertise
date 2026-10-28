@@ -18,6 +18,7 @@ export function App() {
   const [billingPreselectedCode, setBillingPreselectedCode] = useState<string | undefined>(undefined);
 
   const [missions, setMissions] = useState<Mission[]>([]);
+  const [missionsCache, setMissionsCache] = useState<Record<string, any>>({});
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -64,6 +65,26 @@ export function App() {
     refreshData();
   }, []);
 
+  // Prefetch mission details silently in the background so opening any folder is 100% instantaneous
+  useEffect(() => {
+    if (missions.length > 0) {
+      const timer = setTimeout(() => {
+        missions.forEach((m) => {
+          if (!missionsCache[m.id]) {
+            api.getMission(m.id).then((full) => {
+              setMissionsCache(prev => ({
+                ...prev,
+                [full.id]: full,
+                [full.code.toLowerCase()]: full,
+              }));
+            }).catch(() => {});
+          }
+        });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [missions]);
+
   const handleOpenQuickAdd = (missionId?: string) => {
     setQuickAddDefaultMissionId(missionId);
     setIsQuickAddOpen(true);
@@ -78,6 +99,8 @@ export function App() {
     );
     if (found) {
       setSelectedMissionId(found.id);
+    } else if (codeOrId) {
+      setSelectedMissionId(codeOrId);
     }
     setActiveTab('missions');
   };
@@ -118,14 +141,25 @@ export function App() {
         {activeTab === 'missions' && (
           selectedMissionId ? (
             <MissionDetailView
+              key={selectedMissionId}
               missionId={selectedMissionId}
+              initialMission={
+                missionsCache[selectedMissionId] ||
+                missions.find(m => m.id === selectedMissionId || m.code.toLowerCase() === selectedMissionId.toLowerCase())
+              }
+              onCacheMission={(fullData) => {
+                setMissionsCache(prev => ({
+                  ...prev,
+                  [fullData.id]: fullData,
+                  [fullData.code.toLowerCase()]: fullData,
+                }));
+              }}
               onBack={() => {
                 setSelectedMissionId(null);
-                refreshData();
               }}
               onOpenQuickAdd={(mId) => handleOpenQuickAdd(mId)}
               onPrepareBilling={(mId) => {
-                const m = missions.find(x => x.id === mId);
+                const m = missions.find(x => x.id === mId) || missionsCache[mId];
                 handleNavigateToBilling(m?.code);
               }}
             />
