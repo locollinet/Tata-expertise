@@ -1,136 +1,115 @@
-# Déploiement Firebase pour les Preuves & Personnalisation des Paramètres par Dossier
+# Ingestion Terrain & Assistant IA Pragmatique (VP Expertise)
 
-Intégration d'une infrastructure cloud Firebase (Firestore et Authentification Google) pour sécuriser et pérenniser le dépôt de toutes les preuves techniques (photos terrain haute définition, documents PDF, constats contradictoires), tout en offrant un paramétrage sur-mesure à l'échelle de chaque mission (taux d'expert, taux de déplacement, barème kilométrique et seuil d'alerte de facturation).
-
-## Décisions Clés & Réponses de Cadrage
-
-> [!IMPORTANT]
-> Les réponses aux questions de cadrage ont fixé les arbitrages majeurs suivants pour le déploiement :
-> - **Périmètre des Preuves dans Firebase** : Stockage structuré des photos terrain (clichés, métadonnées, exifs, sélection rapport), des pièces justificatives PDF (PV de constat, ordonnances, dires, devis), et des métadonnées probatoires associées.
-> - **Paramétrage Tarifaire à l'Échelle du Dossier** : Chaque dossier hérite des taux standards de Valentine (`DEFAULT_HOURLY_RATE = 190 €/h`, `TRAVEL_HOURLY_RATE = 135 €/h`, `KILOMETER_RATE = 0,95 €/km`, `BILLING_THRESHOLD_REMINDER = 3 500 €`), mais l'experte peut surcharger individuellement ces 4 paramètres directement dans la fiche du dossier.
-> - **Contrôle d'Accès** : Authentification Google via Firebase Auth avec politique Zero-Trust et règles de sécurité Firestore strictes (RBAC garantissant l'intégrité probatoire des pièces).
+Permettre à Valentine de capturer ou déposer un justificatif (ticket de train, reçu de péage/hôtel, pièce de procédure) depuis son smartphone ou son ordinateur, avec extraction ciblée des données et pré-remplissage sécurisé sans jamais corrompre sa comptabilité ni sa numérotation.
 
 ---
 
-## 1. Vue d'Ensemble & Périmètre Fonctionnel
+## Synthèse du Challenge & Arbitrages Retenus
 
-### Qu'apporte cette évolution ?
-1. **Dépôt & Consultation Pérenne des Preuves (Photos & PDF)** :
-   - Dépôt glisser-déposer (Drag & Drop) de clichés haute définition et de rapports/pièces d'expertise PDF.
-   - Indexation et horodatage probatoire certifié des pièces (date/heure de prise de vue, géolocalisation ou lieu de constat, légende technique, statut de sélection pour le rapport Word final).
-   - Synchronisation temps réel Firestore des métadonnées de preuves entre terminaux (ordinateur portable du cabinet, tablette sur chantier, smartphone de terrain).
-2. **Paramétrage Granulaire par Dossier (Taux & Alertes)** :
-   - Écran de configuration dédié dans la Fiche Mission pour surcharger :
-     - Taux horaire d'expert (par défaut 190 €/h)
-     - Taux horaire de déplacement (par défaut 135 €/h)
-     - Barème kilométrique spécifique (par défaut 0,95 €/km)
-     - Seuil d'alerte de facturation d'étape (par défaut 3 500 € HT)
-   - Recalcul déterministe immédiat des activités et frais associés lors de la saisie d'un temps ou d'un déplacement sur ce dossier.
-   - Notification proactive dans l'onglet « Aujourd'hui » dès que le cumul non facturé du dossier atteint le seuil personnalisé défini pour cette mission.
-3. **Sécurité & Authentification** :
-   - Connexion sécurisée Google Firebase Auth avec bandeau de statut discret.
-   - Protection des pièces sensibles selon les règles déontologiques et judiciaires d'expertise.
+Suite à l'analyse critique de votre IA, voici le tri objectif entre la réalité technique de la plateforme et les excellentes remarques métier :
+
+| Point soulevé | Verdict | Prise en compte dans le plan |
+| :--- | :--- | :--- |
+| **1. Noms des modèles Gemini** | ❌ L'IA externe a tort (données d'entraînement anciennes). | Nous avons vérifié en direct dans la console que `gemini-2.5-flash` est déprécié par Google (erreur 404 du SDK invitant à passer à `gemini-3.8-flash`). Ce sont bien `gemini-3.8-flash` et `gemini-3.1-flash-lite` qui sont opérationnels sur notre serveur. |
+| **2. Usage Smartphone / Caméra** | ✅ **100 % pertinent et indispensable.** | Ajout d'un bouton direct **« 📷 Prendre en photo »** avec déclencheur caméra native (`capture="environment"`) sur smartphone pour shooter les reçus en gare ou sur les voies. |
+| **3. Création automatique de dossier** | ✅ **100 % d'accord sur le danger.** | **Aucune création autonome en base**. Si un nouveau dossier est détecté, l'IA pré-remplit la modale habituelle de création de dossier. Valentine conserve la maîtrise absolue de son code `VP2026...` et de sa numérotation. |
+| **4. Gros PDF juridiques (35 pages)** | ✅ **Très sage pour la stabilité.** | Limite de taille à **10 Mo** et analyse ciblée des premières pages clés pour garantir une réponse en moins de 3 secondes sans risque de timeout réseau. |
 
 ---
 
-## 2. Expérience Utilisateur & Design d'Interface
+## 1. Vue d'Ensemble & Expérience Terrain de Valentine
 
-### Parcours Utilisateur
-1. **Accès & Authentification** :
-   - Un bouton d'authentification Google discret dans le header (« Connexion Valentine Pécheux ») affiche le statut de session et l'avatar sécurisé.
-   - En mode déconnecté, une invite fluide permet de s'authentifier en un clic via popup Google sans interruption du travail.
-2. **Fiche Dossier — Section « Paramètres Tarifaires du Dossier »** :
-   - Intégration d'un sous-volet « Tarification & Seuil d'Alerte » dans la vue détaillée de la mission.
-   - Switch intuitif « Utiliser les taux standards du cabinet » vs « Personnaliser pour ce dossier ».
-   - Affichage immédiat d'une pastille informative : *« Taux appliqués : 190 €/h étude / 135 €/h trajet / 0,95 €/km · Seuil d'étape : 3 500 € »*.
-   - Modification en direct avec sauvegarde instantanée et recalcul des totaux de prestations non facturées.
-3. **Galerie & Registre des Preuves** :
-   - Onglet « Preuves & Clichés » repensé dans la Fiche Mission avec zone de téléversement Drag & Drop réactive.
-   - Prévisualisation instantanée des miniatures, badge de statut d'intégration au rapport final, saisie de la légende technique et date du constat.
-   - Visualiseur plein écran de photos et aperçu des documents PDF sans rechargement.
+### Scénario 1 : Le reçu de frais sur le terrain (iPhone / Mobile)
+1. Valentine est à la gare de Massy ou au restaurant après une expertise.
+2. Elle ouvre l'assistant dans l'app sur son téléphone, appuie sur l'icône **Appareil photo** 📷.
+3. Elle prend en photo le reçu CB ou le billet SNCF.
+4. Optionnel : elle dit ou tape juste *"Dossier Alstom"*.
+5. En 2 secondes, l'assistant affiche une carte :
+   - Catégorie : *Transports / Train*
+   - Montant : *118,00 € HT (TVA 10% : 11,80 €)*
+   - Dossier rattaché : *[VP2026922] ALSTOM - Ligne 18*
+6. Valentine clique sur **« Valider la dépense »** ➡️ C'est enregistré directement dans sa base, sans aucune ressaisie.
 
-### Charte Visuelle & Finitions (anti-slop)
-- **Palette** : Bleu marine institutionnel ferroviaire (`#0f3854`), ardoise profonde (`#0f172a`), fond blanc épuré (`#f8fafc`), accents ambre/rose discrets pour les alertes de seuil.
-- **Typographie** : `Plus Jakarta Sans` pour la structure de navigation et les titres, combinée à une typographie à espacement fixe (`tabular-nums` / `font-mono`) pour tous les calculs monétaires et barèmes kilométriques.
-- **Zéro-Pill** : Séparateurs textuels typographiques sobres (`·`, `/`) au lieu de badges capsules superposés.
+### Scénario 2 : Le Dire d'avocat ou le PV reçu par e-mail (Bureau / PC)
+1. Au bureau, Valentine glisse le PDF du Dire reçu (limité à 10 Mo) dans le tiroir assistant.
+2. L'IA extrait : la date de signification, l'échéance de réponse (ex: sous 15 jours), l'auteur et un résumé en 2 lignes.
+3. Valentine valide : la pièce est classée dans l'onglet **Documents & Dires** du dossier correspondant et l'échéance de procédure est mise à jour.
 
----
-
-## 3. Choix d'Architecture & Arbitrages Techniques
-
-### Décision 1 : Modèle Hybride Local-First & Cloud Firestore
-- **Approche retenue** : Architecture hybride synchrone.
-  - La base SQLite locale continue d'assurer les calculs ultra-rapides, la génération native des documents Word (`.docx`) et classeurs Excel (`.xlsx`), et les tests déterministes.
-  - Firestore stocke et synchronise en temps réel la collection des preuves (`evidence_items`), photos annotées et pièces PDF, ainsi que les surcharges de configuration de dossiers.
-- **Bénéfice** : Zéro régression sur le moteur Word/Excel déterministe déjà validé, tout en assurant la persistance cloud pérenne des preuves téléversées depuis n'importe quel appareil.
-
-### Décision 2 : Stockage des Fichiers de Preuves
-- **Approche retenue** : Les métadonnées probatoires (hash, horodatage, auteur, légende, tags, ordre de rapport) sont stockées dans Firestore dans `/missions/{missionId}/evidences/{evidenceId}`. Les fichiers volumineux ou originaux sont téléversés avec stockage persistant local et synchronisation des aperçus/binaires optimisés.
-
-### Décision 3 : Surcharges Tarifaires au Niveau de la Mission
-- **Approche retenue** : Chaque enregistrement `missions` comprend les champs `custom_hourly_rate`, `custom_travel_rate`, `custom_km_rate`, et le nouveau champ `custom_billing_threshold`.
-- **Règle de résolution** : `taux_effectif = mission.custom_rate ?? CONFIG.DEFAULT_RATE`.
+### Scénario 3 : Une nouvelle mission judiciaire ou amiable
+1. Valentine dépose une lettre de mission ou une ordonnance de désignation.
+2. L'assistant détecte qu'aucun dossier existant ne correspond.
+3. L'assistant affiche : *« Nouveau dossier détecté : TGI d'Évry c/ SNCF Réseau. Souhaitez-vous ouvrir la fiche de création pré-remplie ? »*
+4. Au clic, la fenêtre habituelle **« Nouveau Dossier »** s'ouvre avec les champs pré-remplis (juridiction, références, parties, date). Valentine vérifie, attribue son code officiel `VP2026...`, et valide.
 
 ---
 
-## 4. Architecture Technique & Flux de Données
+## 2. Interface & Ergonomie Mobile-First
+
+### A. Barre d'outils d'envoi dans `AIAssistantDrawer.tsx`
+- **Double déclencheur** :
+  1. **Bouton Caméra (Mobile)** : `<input type="file" accept="image/*" capture="environment">` pour prise de vue instantanée sans passer par la galerie.
+  2. **Bouton Trombone / Drag & Drop (Desktop)** : `<input type="file" accept="image/*,application/pdf">` pour glisser un document PDF ou image.
+- **Micro-vignette de prévisualisation** : Aperçu miniature du ticket pris en photo avec possibilité de le supprimer avant envoi.
+- **Indicateur de traitement rapide** : Badge discret *"Analyse du reçu..."* avec animation fluide.
+
+### B. Carte d'Aperçu Sécurisée (*Action Preview Card*)
+- **Champs modifiables en un clic** : Date, montant HT, TVA, dossier cible.
+- **Bouton vert « Valider l'enregistrement »** : Écrit en base de données SQLite et met à jour le montant non facturé en direct.
+- **Bouton gris « Annuler »** : Oublie la proposition sans toucher à la base.
+
+---
+
+## 3. Architecture Technique Ciblée & Robuste
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                          NAVIGATEUR CLIENT                             │
-│                                                                        │
-│  ┌───────────────────────┐             ┌────────────────────────────┐  │
-│  │   Firebase Auth       │             │   Interface React 19       │  │
-│  │  (Google Sign-In)     │             │  - Fiche Mission & Tarifs  │  │
-│  └──────────┬────────────┘             │  - Registre des Preuves    │  │
-│             │ Token                    │  - Saisie Rapide & Factures│  │
-│             ▼                          └─────────────┬──────────────┘  │
-│  ┌───────────────────────┐                           │                 │
-│  │   Firestore SDK       │◄──────────────────────────┘                 │
-│  │  - evidences          │                                             │
-│  │  - mission_rates      │                                             │
-│  └──────────┬────────────┘                                             │
-└─────────────┼──────────────────────────────────────────────────────────┘
-              │ Synchronisation Cloud
-              ▼
-┌──────────────────────────────────────────────┐
-│            FIREBASE CLOUD                    │
-│  ┌────────────────────────────────────────┐  │
-│  │  Firestore Security Rules (ABAC)       │  │
-│  │  /missions/{id}/evidences/{doc}        │  │
-│  └────────────────────────────────────────┘  │
-└──────────────────────────────────────────────┘
-              ▲
-              │ REST API (/api/...)
-┌─────────────┴──────────────────────────────────────────────────────────┐
-│                      SERVEUR EXPRESS BACKEND                           │
-│                                                                        │
-│  ┌────────────────────┐   ┌────────────────────┐   ┌────────────────┐  │
-│  │  Routes Missions   │   │  Moteur Word/Excel │   │  SQLite WAL DB │  │
-│  │  & Taux Surchargés │   │  (.docx & .xlsx)   │   │  (Calculs &    │  │
-│  └────────────────────┘   └────────────────────┘   │   Invariants)  │  │
-│                                                    └────────────────┘  │
+│                        AIAssistantDrawer.tsx                           │
+│  - Déclencheur Caméra iPhone (capture="environment")                   │
+│  - Déclencheur Drag & Drop Desktop                                     │
+│  - Garde-fou taille (< 10 Mo)                                          │
+│  - ActionPreviewCard avec validation interactive                       │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ POST /api/assistant/ingest
+                                    │ (multipart: photo/pdf + prompt)
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        server/api.ts                                   │
+│  1. Vérification du fichier (taille <= 10 Mo, mime image/pdf)          │
+│  2. Sauvegarde du justificatif dans ./uploads/expenses ou /documents   │
+│  3. Analyse ciblée via @google/genai :                                 │
+│     - gemini-3.1-flash-lite / gemini-3.8-flash (modèles actifs)       │
+│     - Schéma JSON strict (montant, date, catégorie, dossier cible)     │
+│  4. Retourne la proposition d'action à l'assistant                     │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Clic "Valider"
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│         Écriture sécurisée dans la base SQLite locale                  │
+│  - INSERT INTO expenses / activities / documents                       │
+│  - OU ouverture de la modale pré-remplie pour un nouveau dossier       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Plan d'Exécution par Étapes
+---
 
-1. **Étape 1 : Provisioning Firebase & Authentification**
-   - Lancement de la procédure de provisionnement Firebase via les outils AI Studio (`show_aistudio_ui` avec `ui_type: "firebase_setup"` puis `ProvisionFirebase`).
-   - Mise en place de `firebase-blueprint.json` et des règles `firestore.rules` validées avec tests de sécurité et ESLint.
-   - Initialisation du SDK Firebase client (`src/firebase.ts`) et composant de connexion Google Auth.
+## 4. Garde-fous & Sécurité Métier
 
-2. **Étape 2 : Personnalisation des Taux & Alertes par Dossier**
-   - Ajout des champs de configuration dans la base (`custom_billing_threshold`, `custom_hourly_rate`, `custom_travel_rate`, `custom_km_rate`).
-   - Ajout du panneau d'édition des taux et seuils dans `src/views/MissionDetailView.tsx`.
-   - Adaptation du moteur de calcul des prestations pour appliquer prioritairement les taux du dossier.
-   - Mise à jour du calcul des alertes du tableau de bord (`TodayView.tsx` et `Header.tsx`) en tenant compte du seuil spécifique du dossier.
+1. **Aucune création silencieuse de dossier** : Seule Valentine peut valider la création d'un dossier dans son formulaire standard.
+2. **Plafond de taille de fichier** : Refus immédiat des scans au-delà de 10 Mo avec message clair (*« Document trop volumineux pour l'analyse rapide. Merci de déposer un fichier de moins de 10 Mo. »*).
+3. **Calcul de TVA déterministe** : Les montants HT et TVA sont vérifiés arithmétiquement pour éviter toute incohérence de centimes.
+4. **Conservation du justificatif** : L'image ou le PDF reste lié à la note de frais pour justificatif comptable fiscal.
 
-3. **Étape 3 : Registre des Preuves & Synchronisation Cloud**
-   - Composant de glisser-déposer de preuves (photos terrain haute définition, documents PDF).
-   - Enregistrement des métadonnées dans Firestore et stockage des pièces.
-   - Intégration dynamique des photos sélectionnées dans le générateur de rapport d'expertise Word `.docx`.
+---
 
-4. **Étape 4 : Tests & Validation**
-   - Validation de non-régression des tests unitaires déterministes existants (`npm test`).
-   - Vérification de la compilation TypeScript (`lint_applet` & `compile_applet`).
+## 5. Déroulé des Travaux
+
+1. **Backend (`server/api.ts`)** :
+   - Route `POST /api/assistant/ingest` avec validation des types MIME et limite 10 Mo.
+   - Prompt d'extraction spécialisé pour factures/frais ferroviaires et pièces de procédure.
+   - Route `POST /api/assistant/commit-action` pour l'enregistrement contrôlé.
+2. **Frontend (`AIAssistantDrawer.tsx`)** :
+   - Ajout des boutons Caméra mobile (`capture="environment"`) et trombone desktop.
+   - Composant `ActionPreviewCard` avec boutons Valider / Annuler et ouverture de modale pré-remplie.
+3. **Tests & Validation** :
+   - Test d'un ticket de train (photo/scan) ➡️ validation de la dépense.
+   - Test d'une pièce juridique ➡️ vérification du classement sans écriture parasite.

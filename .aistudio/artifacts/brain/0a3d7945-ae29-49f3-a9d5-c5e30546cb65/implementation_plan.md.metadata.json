@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan d'intégration pour le déploiement de Firebase (Firestore & Auth) pour la gestion et le stockage pérenne des preuves techniques et expertises ferroviaires, couplé à la personnalisation granulaire par dossier des taux horaires (expert & déplacement), du barème kilométrique et du seuil d'alerte de facturation.",
-  "updatedAt":  "2026-10-28T08:05:52.407638905Z",
+  "summary":  "Plan révisé intégrant les retours terrain : déclencheur caméra smartphone direct pour reçus et justificatifs, pré-remplissage assisté de la modale de nouveau dossier (sans écriture automatique sauvage), garde-fous sur les PDF (10 Mo max), et confirmation des modèles réels d'API Gemini.",
+  "updatedAt":  "2026-10-28T13:46:18.815842831Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
