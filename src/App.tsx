@@ -198,7 +198,7 @@ export function App() {
           <div className="relative">
             <Calendar className="w-5 h-5" />
             {(summary?.urgent_actions?.length || 0) > 0 && (
-              <span className="absolute -top-1 -right-2 w-3.5 h-3.5 bg-amber-500 text-white rounded-full text-[9px] flex items-center justify-center font-bold">
+              <span className="absolute -top-1 -right-2 w-3.5 h-3.5 bg-slate-200 text-slate-700 rounded-full text-[9px] flex items-center justify-center font-bold">
                 {summary?.urgent_actions?.length}
               </span>
             )}
@@ -239,9 +239,6 @@ export function App() {
         >
           <div className="relative">
             <Receipt className="w-5 h-5" />
-            {(summary?.total_unbilled_ht || 0) >= 3500 && (
-              <span className="absolute -top-1 -right-2 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>
-            )}
           </div>
           <span className="mt-0.5">Honoraires</span>
         </button>

@@ -383,7 +383,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <span>·</span>
               <span className="tabular-nums font-semibold text-slate-800">{mission.custom_km_rate || 0.95} €/km</span>
               <span>·</span>
-              <span className="text-slate-500">Seuil d'alerte :</span>
+              <span className="text-slate-500">Palier de facturation :</span>
               <span className="tabular-nums font-semibold text-slate-800">{missionThreshold.toLocaleString('fr-FR')} € HT</span>
               <button
                 onClick={() => setActiveTab('rates')}
@@ -431,17 +431,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
         {/* High billing alert */}
         {hasHighUnbilled && (
-          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-900">
+          <div className="mt-3 p-3 bg-sky-50/80 border border-sky-200/80 rounded-xl flex items-center justify-between text-xs text-sky-950">
             <div className="flex items-center space-x-2">
-              <Receipt className="w-4 h-4 text-amber-600 shrink-0" />
+              <Receipt className="w-4 h-4 text-[#0f3854] shrink-0" />
               <span>
-                <span className="font-semibold">Seuil de facturation dépassé : </span>
-                {(mission.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT non facturés sur ce dossier (seuil d'alerte configuré : {missionThreshold.toLocaleString('fr-FR')} €).
+                <span className="font-semibold">Palier de facturation atteint : </span>
+                {(mission.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT prêts pour facturation (palier de référence : {missionThreshold.toLocaleString('fr-FR')} €).
               </span>
             </div>
             <button
               onClick={() => onPrepareBilling(mission.id)}
-              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg shadow-2xs transition-colors shrink-0"
+              className="px-3 py-1 bg-[#0f3854] hover:bg-[#1a4a6e] text-white font-medium rounded-lg shadow-2xs transition-colors shrink-0"
             >
               Préparer la note d'honoraires
             </button>
@@ -453,7 +453,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           {[
             { id: 'time', label: 'Temps & Frais', icon: Clock, count: (mission.activities?.length || 0) + (mission.expenses?.length || 0) },
             { id: 'evidences', label: 'Photos terrain & Émargements', icon: Camera },
-            { id: 'rates', label: 'Tarifs & Seuil', icon: Sliders },
+            { id: 'rates', label: 'Tarifs & Palier', icon: Sliders },
             { id: 'docs', label: 'Pièces & Documents', icon: FolderOpen, count: mission.documents?.length || 0 },
             { id: 'report', label: 'Notes techniques & Rapport', icon: FileText, count: mission.photos?.length || 0 },
             { id: 'comms', label: 'Dires, Convocations & Courriers', icon: Mail, count: mission.communications?.length || 0 },
@@ -1384,7 +1384,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
                   >
                     <option value="normale">Normale</option>
-                    <option value="urgente">Urgente (Alerte sur cockpit)</option>
+                    <option value="urgente">Prioritaire (repère en tête de liste)</option>
                   </select>
                 </div>
               </div>
@@ -1449,8 +1449,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <div className="flex items-center space-x-2">
                         <span className="font-bold text-slate-900 text-sm">{comm.subject}</span>
                         {comm.urgency === 'urgente' && (
-                          <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                            Urgent
+                          <span className="bg-sky-100 text-[#0f3854] text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                            Prioritaire
                           </span>
                         )}
                         <span className="text-slate-400 text-xs">{comm.date}</span>

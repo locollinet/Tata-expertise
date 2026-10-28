@@ -69,7 +69,7 @@ apiRouter.get('/dashboard', (_req, res) => {
         id: `alert-bill-${m.id}`,
         mission_code: m.code,
         mission_title: m.title,
-        label: `Honoraires en attente : ${stats.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT (seuil de ${missionThreshold.toLocaleString('fr-FR')} € dépassé)`,
+        label: `Honoraires prêts pour facturation : ${stats.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT (palier de ${missionThreshold.toLocaleString('fr-FR')} € atteint)`,
         deadline: m.next_deadline || undefined,
         type: 'rappel_facturation',
       });
@@ -80,14 +80,14 @@ apiRouter.get('/dashboard', (_req, res) => {
         id: `alert-dead-${m.id}`,
         mission_code: m.code,
         mission_title: m.title,
-        label: `Échéance dossier : ${m.next_action}`,
+        label: `Échéance de procédure : ${m.next_action}`,
         deadline: m.next_deadline,
         type: 'echeance',
       });
     }
   }
 
-  // 2. Urgent communications
+  // 2. Communications & dires en attente
   const urgentEmails = db.prepare(`
     SELECT * FROM communications WHERE urgency = 'urgente' AND status = 'a_traiter' ORDER BY date DESC
   `).all() as any[];
@@ -97,12 +97,12 @@ apiRouter.get('/dashboard', (_req, res) => {
       id: `alert-email-${email.id}`,
       mission_code: email.mission_code,
       mission_title: email.subject,
-      label: `Demande de dire / Acte de ${email.sender.split('<')[0].trim()} : "${email.subject}"`,
+      label: `Courrier / Dire de ${email.sender.split('<')[0].trim()} : "${email.subject}"`,
       type: 'email_urgent',
     });
   }
 
-  // 3. Upcoming travels
+  // 3. Upcoming travels / visites de site
   const upcomingTravels = db.prepare(`
     SELECT * FROM travel_orders WHERE status IN ('prevu', 'confirme') ORDER BY start_date ASC LIMIT 5
   `).all() as any[];
@@ -112,7 +112,7 @@ apiRouter.get('/dashboard', (_req, res) => {
       id: `alert-travel-${t.id}`,
       mission_code: t.mission_code,
       mission_title: t.destination,
-      label: `Déplacement prévu le ${t.start_date.split('-').reverse().join('/')} : ${t.destination}`,
+      label: `Visite sur site le ${t.start_date.split('-').reverse().join('/')} : ${t.destination}`,
       deadline: t.start_date,
       type: 'deplacement',
     });

@@ -400,7 +400,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
   // Quick suggestions tailored to current view
   const quickSuggestions = [
-    { label: '⚠️ Seuils > 3 500 €', query: 'Quels dossiers dépassent le seuil de 3 500 € HT ?' },
+    { label: '💶 Honoraires à émettre', query: 'Quels dossiers ont atteint leur palier de facturation ?' },
     { label: '📅 Prochaines échéances', query: 'Quelles sont les prochaines échéances et dires attendus ?' },
     { label: '📊 Bilan TVA & CA', query: 'Quel est mon chiffre d\'affaires et ma TVA ce mois-ci ?' },
     ...(currentMission

@@ -112,7 +112,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
           </div>
         ) : (
           filteredMissions.map((mission) => {
-            const hasOverdueBilling = (mission.total_unbilled_ht || 0) >= 3500;
+            const hasBillingMilestone = (mission.total_unbilled_ht || 0) >= (mission.custom_billing_threshold || 3500);
             return (
               <div
                 key={mission.id}
@@ -162,7 +162,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                     </span>
                     {(mission.total_unbilled_ht || 0) > 0 && (
                       <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                        hasOverdueBilling ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
+                        hasBillingMilestone ? 'bg-sky-50 text-[#0f3854] border border-sky-200' : 'bg-slate-100 text-slate-700'
                       }`}>
                         {(mission.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT
                       </span>

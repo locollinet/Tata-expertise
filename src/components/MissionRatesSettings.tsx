@@ -98,7 +98,7 @@ export const MissionRatesSettings: React.FC<MissionRatesSettingsProps> = ({
           <div className="flex items-center space-x-2">
             <Sliders className="w-5 h-5 text-[#0f3854]" />
             <h3 className="text-base font-bold text-slate-900">
-              Paramètres Tarifaires & Seuil d'Alerte du Dossier
+              Paramètres Tarifaires & Palier de Facturation du Dossier
             </h3>
           </div>
           <p className="text-xs text-slate-500 mt-1">
@@ -122,7 +122,7 @@ export const MissionRatesSettings: React.FC<MissionRatesSettingsProps> = ({
       {successMsg && (
         <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center space-x-2">
           <Check className="w-4 h-4 text-emerald-600" />
-          <span>Paramètres du dossier enregistrés avec succès. Les prochains calculs et alertes utiliseront ces valeurs.</span>
+          <span>Paramètres du dossier enregistrés avec succès. Les prochains calculs et rappels utiliseront ces valeurs.</span>
         </div>
       )}
 
@@ -210,11 +210,11 @@ export const MissionRatesSettings: React.FC<MissionRatesSettingsProps> = ({
             </p>
           </div>
 
-          {/* Seuil d'alerte de facturation */}
+          {/* Palier de facturation */}
           <div className="p-4 bg-slate-50/70 border border-slate-200 rounded-xl space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-800">
-                Seuil Alerte (€ HT)
+                Palier Facturation (€ HT)
               </label>
               <span className="text-[10px] text-slate-500 font-mono">Défaut: 3 500 €</span>
             </div>
@@ -231,7 +231,7 @@ export const MissionRatesSettings: React.FC<MissionRatesSettingsProps> = ({
               <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold">€</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-tight">
-              Déclenche l'alerte d'émission d'une note d'honoraires d'étape.
+              Suggère la préparation d'une note d'honoraires intermédiaire lorsqu'atteint.
             </p>
           </div>
         </div>

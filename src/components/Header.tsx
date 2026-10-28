@@ -58,9 +58,9 @@ export const Header: React.FC<HeaderProps> = ({
   }
 
   const tabs: NavTab[] = [
-    { id: 'today', label: "Aujourd'hui", icon: Calendar, badge: urgentCount > 0 ? urgentCount : undefined, badgeColor: 'bg-amber-500' },
+    { id: 'today', label: "Aujourd'hui", icon: Calendar, badge: urgentCount > 0 ? urgentCount : undefined, badgeColor: 'bg-slate-100 text-slate-700 border border-slate-200' },
     { id: 'missions', label: 'Dossiers', icon: FolderKanban },
-    { id: 'billing', label: 'Honoraires', icon: Receipt, badge: unbilledTotal > 3500 ? 'Rappel' : undefined, badgeColor: 'bg-rose-500' },
+    { id: 'billing', label: 'Honoraires', icon: Receipt },
     { id: 'compta', label: 'Comptabilité', icon: Calculator },
   ];
 
