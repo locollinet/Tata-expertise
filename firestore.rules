@@ -1,0 +1,84 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidEvidenceItem(data) {
+      return data.keys().hasAll(['id', 'mission_id', 'mission_code', 'title', 'type', 'filename', 'created_by'])
+        && data.id is string && data.id.size() <= 128
+        && data.mission_id is string && data.mission_id.size() <= 128
+        && data.mission_code is string && data.mission_code.size() <= 64
+        && data.title is string && data.title.size() <= 255
+        && data.type in ['photo', 'document', 'constat']
+        && data.filename is string && data.filename.size() <= 255
+        && data.created_by is string && data.created_by.size() <= 128;
+    }
+
+    function isValidMissionSettings(data) {
+      return data.keys().hasAll(['mission_id', 'updated_by'])
+        && data.mission_id is string && data.mission_id.size() <= 128
+        && data.updated_by is string && data.updated_by.size() <= 128
+        && (!('custom_hourly_rate' in data) || data.custom_hourly_rate is number)
+        && (!('custom_travel_rate' in data) || data.custom_travel_rate is number)
+        && (!('custom_km_rate' in data) || data.custom_km_rate is number)
+        && (!('custom_billing_threshold' in data) || data.custom_billing_threshold is number);
+    }
+
+    // Evidence Collection for each Mission
+    match /missions/{missionId}/evidences/{evidenceId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && isValidId(missionId)
+        && isValidId(evidenceId)
+        && isValidEvidenceItem(incoming())
+        && incoming().created_by == request.auth.uid;
+
+      allow update: if isSignedIn()
+        && isValidId(missionId)
+        && isValidId(evidenceId)
+        && isValidEvidenceItem(incoming())
+        && incoming().created_by == existing().created_by
+        && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'order_index', 'is_selected_for_report', 'title', 'file_url']);
+
+      allow delete: if isSignedIn()
+        && isValidId(missionId)
+        && isValidId(evidenceId)
+        && (existing().created_by == request.auth.uid || request.auth.token.email == 'locollinet@gmail.com');
+    }
+
+    // Custom Mission Settings (Rates and Thresholds)
+    match /missions/{missionId}/settings/{settingsId} {
+      allow get, list: if isSignedIn();
+
+      allow create, update: if isSignedIn()
+        && isValidId(missionId)
+        && isValidId(settingsId)
+        && isValidMissionSettings(incoming())
+        && incoming().updated_by == request.auth.uid;
+
+      allow delete: if false;
+    }
+  }
+}

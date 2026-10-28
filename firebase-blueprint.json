@@ -1,0 +1,52 @@
+{
+  "entities": {
+    "EvidenceItem": {
+      "title": "EvidenceItem",
+      "description": "Technical evidence, photos and PDF documents for a mission",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "mission_id": { "type": "string", "maxLength": 128 },
+        "mission_code": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 255 },
+        "type": { "type": "string", "enum": ["photo", "document", "constat"] },
+        "file_url": { "type": "string", "maxLength": 2048 },
+        "filename": { "type": "string", "maxLength": 255 },
+        "file_size": { "type": "number" },
+        "mime_type": { "type": "string", "maxLength": 128 },
+        "caption": { "type": "string", "maxLength": 1000 },
+        "taken_at": { "type": "string", "maxLength": 64 },
+        "order_index": { "type": "number" },
+        "is_selected_for_report": { "type": "boolean" },
+        "created_by": { "type": "string", "maxLength": 128 },
+        "created_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "mission_id", "mission_code", "title", "type", "filename", "created_by"]
+    },
+    "MissionSettings": {
+      "title": "MissionSettings",
+      "description": "Custom rates and billing threshold for a specific mission",
+      "type": "object",
+      "properties": {
+        "mission_id": { "type": "string", "maxLength": 128 },
+        "custom_hourly_rate": { "type": "number" },
+        "custom_travel_rate": { "type": "number" },
+        "custom_km_rate": { "type": "number" },
+        "custom_billing_threshold": { "type": "number" },
+        "updated_by": { "type": "string", "maxLength": 128 },
+        "updated_at": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["mission_id", "updated_by"]
+    }
+  },
+  "firestore": {
+    "/missions/{missionId}/evidences/{evidenceId}": {
+      "schema": "EvidenceItem",
+      "description": "Technical evidence, site photographs and PDF documents attached to a railway claim mission"
+    },
+    "/missions/{missionId}/settings/{settingsId}": {
+      "schema": "MissionSettings",
+      "description": "Custom billing rates and threshold overrides for a specific mission"
+    }
+  }
+}
