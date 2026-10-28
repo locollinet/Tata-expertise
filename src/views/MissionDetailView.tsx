@@ -430,12 +430,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         <div className="flex space-x-2 mt-6 border-b border-slate-200 overflow-x-auto pb-px">
           {[
             { id: 'time', label: 'Temps & Frais', icon: Clock, count: (mission.activities?.length || 0) + (mission.expenses?.length || 0) },
-            { id: 'evidences', label: 'Preuves Cloud (Firebase)', icon: ShieldCheck },
+            { id: 'evidences', label: 'Photos terrain & Émargements', icon: Camera },
             { id: 'rates', label: 'Tarifs & Seuil', icon: Sliders },
             { id: 'docs', label: 'Pièces & Documents', icon: FolderOpen, count: mission.documents?.length || 0 },
-            { id: 'report', label: 'Notes, Photos & Rapport', icon: FileText, count: mission.photos?.length || 0 },
+            { id: 'report', label: 'Notes techniques & Rapport', icon: FileText, count: mission.photos?.length || 0 },
             { id: 'comms', label: 'Dires, Convocations & Courriers', icon: Mail, count: mission.communications?.length || 0 },
-            { id: 'travel', label: 'Déplacements & Fiches site', icon: Train, count: (mission.travels?.length || 0) + (mission.registered_mails?.length || 0) },
+            { id: 'travel', label: 'Visites sur site & Logistique', icon: Train, count: (mission.travels?.length || 0) + (mission.registered_mails?.length || 0) },
             { id: 'overview', label: 'Synthèse & Parties', icon: Calendar },
           ].map((t) => {
             const Icon = t.icon;
@@ -1438,17 +1438,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         </div>
       )}
 
-      {/* Tab 4: DÉPLACEMENTS & LRAR */}
+      {/* Tab 4: VISITES SUR SITE & LRAR */}
       {activeTab === 'travel' && (
         <div className="space-y-6">
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
             <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
               <Train className="w-4 h-4 text-indigo-600" />
-              <span>Ordres de déplacement pour ce dossier ({mission.travels?.length || 0})</span>
+              <span>Visites de chantier & Interventions sur site ({mission.travels?.length || 0})</span>
             </h3>
 
             {mission.travels?.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucun déplacement enregistré.</p>
+              <p className="text-xs text-slate-400 py-4 text-center">Aucune visite sur site enregistrée pour ce dossier.</p>
             ) : (
               <div className="space-y-3">
                 {mission.travels.map((travel: any) => (

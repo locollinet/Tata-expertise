@@ -46,7 +46,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     version: '1.0.0',
-    app: "Tata t'aime - VP Expertise",
+    app: "VP EXPERTISE",
     database: 'connected',
     time: new Date().toISOString(),
   });

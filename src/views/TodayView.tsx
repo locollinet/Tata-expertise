@@ -145,18 +145,18 @@ export const TodayView: React.FC<TodayViewProps> = ({
           className={`bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs transition-all ${
             upcoming_travels[0] ? 'hover:shadow-md hover:border-indigo-300 cursor-pointer active:scale-[0.98] group' : ''
           }`}
-          title={upcoming_travels[0] ? `Ouvrir le dossier ${upcoming_travels[0].mission_code}` : ''}
+          title={upcoming_travels[0] ? `Intervention sur site pour le dossier ${upcoming_travels[0].mission_code}` : 'Aucune visite sur site'}
         >
           <span className="text-xs font-semibold text-slate-500 flex items-center justify-between group-hover:text-indigo-700 transition-colors">
-            <span className="truncate">Déplacement</span>
+            <span className="truncate">Visite sur site</span>
             <Train className="w-4 h-4 text-indigo-600 shrink-0 ml-1 group-hover:scale-110 transition-transform" />
           </span>
           <div className="mt-2">
             <span className="text-xs sm:text-sm font-bold text-slate-900 block line-clamp-1">
-              {upcoming_travels[0] ? upcoming_travels[0].destination : "Aucun trajet"}
+              {upcoming_travels[0] ? upcoming_travels[0].destination : "Aucune réunion sur site"}
             </span>
             <span className="text-[11px] text-slate-500 block truncate">
-              {upcoming_travels[0] ? `Le ${upcoming_travels[0].start_date.split('-').reverse().join('/')} → Ouvrir` : "À jour"}
+              {upcoming_travels[0] ? `Le ${upcoming_travels[0].start_date.split('-').reverse().join('/')} · [${upcoming_travels[0].mission_code}]` : "À jour"}
             </span>
           </div>
         </div>
@@ -233,7 +233,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200'
                   }`}
                 >
-                  Déplacements ({travelCount})
+                  Visites site ({travelCount})
                 </button>
               )}
               {emailCount > 0 && (
@@ -343,7 +343,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2 group-hover:text-indigo-900 transition-colors">
                   <Train className="w-4 h-4 text-indigo-600 group-hover:scale-110 transition-transform" />
-                  <span>Prochain déplacement</span>
+                  <span>Prochaine visite sur site</span>
                 </h3>
                 <span className="text-xs text-indigo-700 bg-indigo-50 font-semibold px-2 py-0.5 rounded-full">
                   {upcoming_travels[0].start_date.split('-').reverse().join('/')}
@@ -352,7 +352,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
               <div className="text-xs space-y-1">
                 <p className="font-bold text-slate-900 text-sm">{upcoming_travels[0].destination}</p>
-                <p className="text-slate-500 font-medium">Dossier : <span className="text-[#0f3854] font-bold">{upcoming_travels[0].mission_code}</span> → Cliquer pour ouvrir</p>
+                <p className="text-slate-500 font-medium">Dossier : <span className="text-[#0f3854] font-bold">{upcoming_travels[0].mission_code}</span> → Cliquer pour ouvrir le dossier</p>
                 {upcoming_travels[0].train_info && (
                   <p className="text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 font-mono text-[11px]">
                     {upcoming_travels[0].train_info}
@@ -362,7 +362,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
               {upcoming_travels[0].checklist && upcoming_travels[0].checklist.length > 0 && (
                 <div className="pt-2 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">Checklist matériel :</span>
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">Matériel & Documents à emporter :</span>
                   <div className="space-y-1.5">
                     {upcoming_travels[0].checklist.map((item: any) => (
                       <div key={item.id} className="flex items-center space-x-2 text-xs">

@@ -107,16 +107,16 @@ export const Header: React.FC<HeaderProps> = ({
             })}
           </nav>
 
-          {/* Right Actions: Firebase Cloud Status + Auth + Quick Add */}
+          {/* Right Actions: Cloud Sync Status + Auth + Quick Add */}
           <div className="flex items-center space-x-2 shrink-0">
             {/* Cloud sync status indicator */}
             <div
-              className="flex items-center space-x-1.5 px-2 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-lg text-xs font-semibold whitespace-nowrap"
-              title="Base Cloud Firebase connectée"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-lg text-xs font-semibold whitespace-nowrap"
+              title="Toutes vos données et photos sont sauvegardées et synchronisées en temps réel"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
               <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="hidden 2xl:inline">Firebase Cloud</span>
+              <span className="hidden 2xl:inline">Données sauvegardées</span>
             </div>
 
             {/* User authentication */}
@@ -147,11 +147,11 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleLogin}
                 disabled={authLoading}
-                className="inline-flex items-center space-x-1.5 px-2 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap"
-                title="Connexion Google / Firebase"
+                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap"
+                title="Connexion à votre espace sécurisé"
               >
                 <LogIn className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <span className="hidden 2xl:inline">{authLoading ? 'Connexion...' : 'Connexion'}</span>
+                <span className="hidden 2xl:inline">{authLoading ? 'Connexion...' : 'Espace sécurisé'}</span>
               </button>
             )}
 
