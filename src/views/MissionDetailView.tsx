@@ -463,7 +463,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Tab: PREUVES CLOUD (FIREBASE) */}
+      {/* Tab: PHOTOS TERRAIN & ÉMARGEMENTS */}
       {activeTab === 'evidences' && (
         <FirebaseEvidenceManager
           missionId={mission.id}

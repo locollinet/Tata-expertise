@@ -176,7 +176,7 @@ export const FirebaseEvidenceManager: React.FC<FirebaseEvidenceManagerProps> = (
       setPreviewUrl(null);
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || "Erreur lors de l'enregistrement de la preuve");
+      setErrorMsg(err.message || "Erreur lors de l'enregistrement du fichier");
     } finally {
       setUploading(false);
     }
