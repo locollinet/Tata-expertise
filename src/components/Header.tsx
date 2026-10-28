@@ -163,33 +163,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
         </div>
-
-        {/* Mobile Navigation Tabs */}
-        <div className="md:hidden flex overflow-x-auto py-2 space-x-1 border-t border-slate-100">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
-                  isActive
-                    ? 'bg-slate-900 text-white shadow-2xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-                {tab.badge && (
-                  <span className={`ml-1 text-[9px] font-bold text-white px-1 rounded-full ${tab.badgeColor}`}>
-                    {tab.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </div>
     </header>
   );

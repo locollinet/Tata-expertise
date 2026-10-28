@@ -246,7 +246,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200'
                   }`}
                 >
-                  Mails ({emailCount})
+                  Dires & Actes ({emailCount})
                 </button>
               )}
             </div>

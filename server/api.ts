@@ -96,7 +96,7 @@ apiRouter.get('/dashboard', (_req, res) => {
       id: `alert-email-${email.id}`,
       mission_code: email.mission_code,
       mission_title: email.subject,
-      label: `Email urgent de ${email.sender.split('<')[0].trim()} : "${email.subject}"`,
+      label: `Demande de dire / Acte de ${email.sender.split('<')[0].trim()} : "${email.subject}"`,
       type: 'email_urgent',
     });
   }

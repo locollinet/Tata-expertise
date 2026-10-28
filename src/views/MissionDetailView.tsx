@@ -434,8 +434,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             { id: 'rates', label: 'Tarifs & Seuil', icon: Sliders },
             { id: 'docs', label: 'Pièces & Documents', icon: FolderOpen, count: mission.documents?.length || 0 },
             { id: 'report', label: 'Notes, Photos & Rapport', icon: FileText, count: mission.photos?.length || 0 },
-            { id: 'comms', label: 'Communications & Mails', icon: Mail, count: mission.communications?.length || 0 },
-            { id: 'travel', label: 'Déplacements & LRAR', icon: Train, count: (mission.travels?.length || 0) + (mission.registered_mails?.length || 0) },
+            { id: 'comms', label: 'Dires, Convocations & Courriers', icon: Mail, count: mission.communications?.length || 0 },
+            { id: 'travel', label: 'Déplacements & Fiches site', icon: Train, count: (mission.travels?.length || 0) + (mission.registered_mails?.length || 0) },
             { id: 'overview', label: 'Synthèse & Parties', icon: Calendar },
           ].map((t) => {
             const Icon = t.icon;
