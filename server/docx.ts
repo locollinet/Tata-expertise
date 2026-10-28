@@ -1,7 +1,92 @@
-import { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, HeadingLevel, ImageRun } from 'docx';
+import { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, HeadingLevel, ImageRun, Header, Footer } from 'docx';
 import fs from 'fs';
 import path from 'path';
 import { Invoice, ReportDraft, Attendee, Photo } from '../shared/types.js';
+
+function createVPHeader(): Header {
+  const logoPath = path.resolve(process.cwd(), 'server/assets/logo.jpg');
+  const hasLogo = fs.existsSync(logoPath);
+
+  const headerTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideVertical: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+    },
+    rows: [
+      new TableRow({
+        children: [
+          // Logo column
+          new TableCell({
+            width: { size: 20, type: WidthType.PERCENTAGE },
+            children: [
+              hasLogo
+                ? new Paragraph({
+                    children: [
+                      new ImageRun({
+                        data: fs.readFileSync(logoPath),
+                        transformation: { width: 55, height: 58 },
+                      }),
+                    ],
+                  })
+                : new Paragraph({
+                    children: [new TextRun({ text: "VP EXPERTISE", bold: true, color: "0F3854" })],
+                  }),
+            ],
+          }),
+          // Skills & Specialties column
+          new TableCell({
+            width: { size: 45, type: WidthType.PERCENTAGE },
+            children: [
+              new Paragraph({ children: [new TextRun({ text: "expertise technique", size: 16, color: "64748B" })] }),
+              new Paragraph({ children: [new TextRun({ text: "évaluation de préjudice", size: 16, color: "64748B" })] }),
+              new Paragraph({ children: [new TextRun({ text: "claim management • ingénierie mécanique", size: 16, color: "64748B" })] }),
+              new Paragraph({ children: [new TextRun({ text: "matériels ferroviaires", size: 16, color: "64748B" })] }),
+              new Paragraph({ children: [new TextRun({ text: "engins et machines", size: 16, color: "64748B" })] }),
+            ],
+          }),
+          // Contact info column
+          new TableCell({
+            width: { size: 35, type: WidthType.PERCENTAGE },
+            children: [
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Valentine Pécheux", bold: true, size: 18, color: "0F3854" })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "32, rue de Prony", size: 16, color: "475569" })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "92600 Asnières-sur-Seine", size: 16, color: "475569" })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "+33 6 38 73 68 88", size: 16, color: "475569" })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "contact@vpexpertise.com", size: 16, color: "0F3854" })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "www.vpexpertise.com", size: 16, color: "0F3854" })] }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
+  return new Header({
+    children: [headerTable],
+  });
+}
+
+function createVPFooter(): Footer {
+  return new Footer({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            text: "EI Valentine Pécheux | N° SIREN : 830 473 195 | S. soc. : 32, rue de Prony – 92600 Asnières-sur-Seine | N° TVA : FR11830473195",
+            size: 14,
+            color: "94A3B8",
+          }),
+        ],
+      }),
+    ],
+  });
+}
 
 export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
   const tableRows: TableRow[] = [
@@ -92,23 +177,57 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
   }
   addSummaryRow("Net à payer :", invoice.net_payable, true, true);
 
+  const titleTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideVertical: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+    },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 50, type: WidthType.PERCENTAGE },
+            children: [
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `DATE : ${invoice.date.split('-').reverse().join('/')}`, bold: true, size: 20 }),
+                ],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 50, type: WidthType.PERCENTAGE },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [
+                  new TextRun({ text: `NOTE D'HONORAIRES N° ${invoice.invoice_number}`, bold: true, size: 24, color: "0F3854" }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
   const doc = new Document({
     sections: [
       {
-        properties: {},
+        headers: {
+          default: createVPHeader(),
+        },
+        footers: {
+          default: createVPFooter(),
+        },
         children: [
-          new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            children: [
-              new TextRun({ text: `DATE : ${invoice.date.split('-').reverse().join('/')}`, bold: true }),
-            ],
-          }),
-          new Paragraph({
-            spacing: { before: 200, after: 200 },
-            children: [
-              new TextRun({ text: `NOTE D'HONORAIRES N° ${invoice.invoice_number}`, bold: true, size: 28, color: "0F3854" }),
-            ],
-          }),
+          titleTable,
+          new Paragraph({ spacing: { after: 120 } }),
           // Client block
           new Paragraph({
             spacing: { after: 100 },
@@ -315,7 +434,17 @@ export async function generateReportDocx(
   );
 
   const doc = new Document({
-    sections: [{ properties: {}, children }],
+    sections: [
+      {
+        headers: {
+          default: createVPHeader(),
+        },
+        footers: {
+          default: createVPFooter(),
+        },
+        children,
+      },
+    ],
   });
 
   const { Packer } = await import('docx');
