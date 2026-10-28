@@ -170,4 +170,14 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(data),
   }),
+
+  // AI Assistant (Gemini 2.5 Flash)
+  askAssistant: (data: { message: string; history?: any[]; missionId?: string }) => fetchJSON<{
+    reply: string;
+    model: string;
+    hasKey: boolean;
+  }>('/assistant/chat', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
 };

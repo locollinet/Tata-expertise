@@ -62,6 +62,17 @@ Pour votre déclaration de TVA mensuelle sans y passer votre week-end :
 
 ---
 
+## 🤖 NOUVEAU : Votre Assistant IA Exécutif (Gemini 2.5 Flash)
+
+Vous avez désormais un **assistant IA directement intégré** (bouton **`✨ Assistant IA`** en haut à droite, ou la bulle ronde flottante en bas à droite) :
+
+* **Toujours branché sur vos dossiers réels** : il connaît vos dossiers en cours, vos heures non facturées, vos dates de Dires et vos chiffres de TVA.
+* **Génération de mails et relances en 1 clic** : demandez-lui par exemple *« Rédige un mail courtois pour relancer l'avocat sur son Dire n°2 »* puis appuyez sur **`Copier`** pour le coller directement dans Outlook ou Mail.
+* **Économique et instantané** : propulsé par **Gemini 2.5 Flash** (modèle léger, ultra rapide et peu gourmand).
+* **Mode local sécurisé garanti** : même sans connexion internet ou clé API configurée, l'assistant répond immédiatement à partir des données de votre cabinet.
+
+---
+
 ## 📱 Astuce Terrain : Installer l'application sur l'écran d'accueil de votre iPhone
 
 Pour l'ouvrir d'un simple toucher comme une vraie application mobile, sans taper d'adresse web :

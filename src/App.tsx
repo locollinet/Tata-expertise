@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, FolderKanban, Receipt, Calculator, Plus, Camera } from 'lucide-react';
+import { Calendar, FolderKanban, Receipt, Calculator, Plus, Camera, Sparkles } from 'lucide-react';
 import { Header } from './components/Header.js';
 import { TodayView } from './views/TodayView.js';
 import { MissionsView } from './views/MissionsView.js';
@@ -8,6 +8,7 @@ import { BillingView } from './views/BillingView.js';
 import { ComptaView } from './views/ComptaView.js';
 import { QuickAddModal } from './components/QuickAddModal.js';
 import { CreateMissionModal } from './components/CreateMissionModal.js';
+import { AIAssistantDrawer } from './components/AIAssistantDrawer.js';
 import { Mission, DashboardSummary } from '@shared/types.js';
 import { api } from './api.js';
 
@@ -25,6 +26,7 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab') as 'today' | 'missions' | 'billing' | 'compta' | null;
     const missionId = params.get('mission');
+    const assistant = params.get('assistant');
     if (tab && ['today', 'missions', 'billing', 'compta'].includes(tab)) {
       setActiveTab(tab);
     }
@@ -32,12 +34,16 @@ export function App() {
       setSelectedMissionId(missionId);
       setActiveTab('missions');
     }
+    if (assistant === 'open' || assistant === 'true' || assistant === '1') {
+      setIsAssistantOpen(true);
+    }
   }, []);
 
-  // Modals
+  // Modals & Drawers
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickAddDefaultMissionId, setQuickAddDefaultMissionId] = useState<string | undefined>(undefined);
   const [isCreateMissionOpen, setIsCreateMissionOpen] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
   const refreshData = async () => {
     try {
@@ -91,6 +97,7 @@ export function App() {
           if (tab !== 'missions') setSelectedMissionId(null);
         }}
         onOpenQuickAdd={() => handleOpenQuickAdd()}
+        onOpenAssistant={() => setIsAssistantOpen(true)}
         urgentCount={summary?.urgent_actions?.length || 0}
         unbilledTotal={summary?.total_unbilled_ht || 0}
       />
@@ -220,6 +227,25 @@ export function App() {
       <footer className="border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-400">
         <p>VP EXPERTISE — Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires • Application Locale Conforme</p>
       </footer>
+
+      {/* Floating AI Assistant Trigger Button (Discret & Toujours accessible) */}
+      <button
+        type="button"
+        onClick={() => setIsAssistantOpen(true)}
+        className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-30 bg-slate-900 hover:bg-slate-800 text-cyan-400 p-3 sm:p-3.5 rounded-full shadow-xl border border-cyan-500/30 hover:scale-105 active:scale-95 transition-all flex items-center space-x-2 group cursor-pointer"
+        title="Assistant IA VP Expertise (Gemini 2.5 Flash)"
+      >
+        <Sparkles className="w-5 h-5 animate-pulse text-cyan-400 group-hover:rotate-12 transition-transform" />
+        <span className="hidden lg:inline text-xs font-bold text-white pr-1">Assistant IA</span>
+      </button>
+
+      {/* AI Assistant Drawer */}
+      <AIAssistantDrawer
+        isOpen={isAssistantOpen}
+        onClose={() => setIsAssistantOpen(false)}
+        selectedMissionId={selectedMissionId}
+        missions={missions}
+      />
 
       {/* Quick Add Modal */}
       <QuickAddModal

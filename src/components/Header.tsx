@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2 } from 'lucide-react';
+import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles } from 'lucide-react';
 import { auth, signInWithGoogle, logOut } from '../firebase.js';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
@@ -7,6 +7,7 @@ interface HeaderProps {
   activeTab: 'today' | 'missions' | 'billing' | 'compta';
   setActiveTab: (tab: 'today' | 'missions' | 'billing' | 'compta') => void;
   onOpenQuickAdd: () => void;
+  onOpenAssistant: () => void;
   urgentCount?: number;
   unbilledTotal?: number;
 }
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   onOpenQuickAdd,
+  onOpenAssistant,
   urgentCount = 0,
   unbilledTotal = 0,
 }) => {
@@ -152,6 +154,17 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="hidden 2xl:inline">{authLoading ? 'Connexion...' : 'Connexion'}</span>
               </button>
             )}
+
+            {/* AI Assistant Button */}
+            <button
+              onClick={onOpenAssistant}
+              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 sm:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
+              title="Assistant IA Gemini 2.5 Flash"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-700 animate-pulse shrink-0" />
+              <span className="hidden sm:inline">Assistant IA</span>
+              <span className="sm:hidden text-[11px]">IA</span>
+            </button>
 
             {/* Quick Add Button */}
             <button

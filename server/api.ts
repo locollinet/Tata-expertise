@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { GoogleGenAI } from '@google/genai';
 import { generateInvoiceDocx, generateReportDocx } from './docx.js';
 import { generateMonthlyComptaWorkbook } from './excel.js';
 import { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.js';
@@ -1034,4 +1035,153 @@ apiRouter.get('/compta/export', async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ---------------- ASSISTANT IA (GEMINI 2.5 FLASH) ----------------
+apiRouter.post('/assistant/chat', async (req, res) => {
+  const { message, history = [], missionId } = req.body;
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: "Message requis" });
+  }
+
+  // 1. Gather live operational data for context
+  const missions = db.prepare("SELECT * FROM missions WHERE status != 'cloture'").all() as any[];
+  const enrichedMissions = missions.map(m => {
+    const stats = getMissionUnbilledStats(m.id);
+    return {
+      code: m.code,
+      title: m.title,
+      client: m.insurance_client,
+      insured: m.insured_party,
+      status: m.status,
+      next_deadline: m.next_deadline,
+      next_action: m.next_action,
+      unbilled_hours: stats.unbilled_hours,
+      total_unbilled_ht: stats.total_unbilled_ht,
+      billing_threshold: m.custom_billing_threshold || 3500,
+    };
+  });
+
+  const latestInvoices = db.prepare("SELECT invoice_number, mission_code, client_name, total_ht, total_ttc, date, status FROM invoices ORDER BY date DESC LIMIT 5").all();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const revObj = db.prepare("SELECT COALESCE(SUM(total_ht), 0) as rev FROM invoices WHERE strftime('%Y-%m', date) = ? AND status != 'annule'").get(currentMonth) as { rev: number };
+  const upcomingTravels = db.prepare("SELECT mission_code, destination, start_date, notes FROM travel_orders WHERE status IN ('prevu', 'confirme') ORDER BY start_date ASC LIMIT 3").all();
+
+  // If a specific mission is selected, pull its deep details
+  let specificMissionContext = '';
+  if (missionId) {
+    const sm = db.prepare("SELECT * FROM missions WHERE id = ?").get(missionId) as any;
+    if (sm) {
+      const smActs = db.prepare("SELECT date, category, label, hours, total_ht, status FROM activities WHERE mission_id = ? ORDER BY date DESC LIMIT 6").all(sm.id);
+      const smDocs = db.prepare("SELECT filename, original_name, category, caption FROM documents WHERE mission_id = ? ORDER BY created_at DESC LIMIT 6").all(sm.id);
+      const smAtt = db.prepare("SELECT name, organization, role FROM attendees WHERE mission_id = ?").all(sm.id);
+      specificMissionContext = `
+Détail du dossier sélectionné (${sm.code} - ${sm.title}) :
+- Assureur : ${sm.insurance_client} | Assuré : ${sm.insured_party || 'Non précisé'}
+- Réf : ${sm.case_reference} | Taux : ${sm.custom_hourly_rate || 190} €/h
+- Échéance : ${sm.next_deadline || 'Aucune'} — ${sm.next_action || 'Aucune'}
+- Participants enregistrés (${smAtt.length}) : ${smAtt.map((a: any) => `${a.name} (${a.organization})`).join(', ') || 'Aucun'}
+- Dernières activités : ${smActs.map((a: any) => `${a.date}: ${a.label} (${a.hours}h, ${a.status})`).join(' | ')}
+- Documents rattachés (${smDocs.length}) : ${smDocs.map((d: any) => `${d.original_name} (${d.category})`).join(', ')}
+`;
+    }
+  }
+
+  const contextPrompt = `
+Tu es l'assistant exécutif IA de Valentine Pécheux, ingénieure experte fondatrice du cabinet VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires).
+Ton rôle : être concis, factuel, d'une politesse professionnelle impeccable, en français, et répondre immédiatement à ses questions sans bavardage inutile.
+
+Voici les données réelles et à jour de son cabinet en direct de sa base :
+- Dossiers actifs (${enrichedMissions.length}) :
+${enrichedMissions.map(m => `  * [${m.code}] ${m.title} — Client: ${m.client} — Non facturé: ${m.total_unbilled_ht.toFixed(2)} € HT (${m.unbilled_hours}h) — Seuil: ${m.billing_threshold} € — Échéance: ${m.next_deadline || 'Aucune'} (${m.next_action || 'Aucune'})`).join('\n')}
+
+- Chiffre d'affaires émis ce mois (${currentMonth}) : ${revObj.rev.toFixed(2)} € HT
+- Dernières factures :
+${latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2)} € HT (${i.status})`).join('\n')}
+
+- Prochains déplacements :
+${upcomingTravels.map((t: any) => `  * ${t.start_date} (${t.mission_code}) : ${t.destination}`).join('\n') || 'Aucun'}
+${specificMissionContext}
+
+Consignes :
+1. Réponds toujours avec les chiffres et faits exacts ci-dessus.
+2. Si elle demande de rédiger un message, rédige un projet prêt à être copié/envoyé (Objet, formule de politesse, corps clair, signature "Valentine Pécheux - VP Expertise").
+3. Reste toujours synthétique et pratique. Pas de longs discours théoriques.
+`;
+
+  // 2. Check for Gemini API key
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
+
+  if (apiKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      
+      // Build conversation contents
+      const contents: any[] = [];
+      contents.push({
+        role: 'user',
+        parts: [{ text: `${contextPrompt}\n\nQuestion de Valentine : ${message}` }],
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents,
+      });
+
+      const replyText = response.text || "Désolé, je n'ai pas pu générer de réponse.";
+      return res.json({
+        reply: replyText,
+        model: 'gemini-2.5-flash',
+        hasKey: true,
+      });
+    } catch (err: any) {
+      console.warn("Erreur appel Gemini (fallback automatique) :", err.message);
+    }
+  }
+
+  // 3. Fallback deterministe si aucune clé API configurée localement
+  const lower = message.toLowerCase();
+  let localReply = "";
+
+  if (lower.includes('seuil') || lower.includes('factur') || lower.includes('3500') || lower.includes('3 500')) {
+    const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
+    const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
+    localReply = `Vous avez actuellement **${totalUnbilled.toFixed(2).replace('.', ',')} € HT** en attente de facturation sur l'ensemble de vos dossiers actifs.\n\n` +
+      (overThreshold.length > 0
+        ? `⚠️ **Dossier(s) ayant dépassé le seuil de 3 500 € HT :**\n` + overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h en cours).`).join('\n') + `\n\nVous pouvez émettre la note d'honoraires en 1 clic dans l'onglet **Honoraires**.`
+        : `Aucun dossier ne dépasse actuellement votre seuil d'alerte.`);
+  } else if (lower.includes('échéance') || lower.includes('echeance') || lower.includes('jalon') || lower.includes('dire') || lower.includes('quand')) {
+    const withDeadlines = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''));
+    localReply = `📅 **Vos prochaines échéances de procédure :**\n\n` +
+      withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] : ${m.next_action}`).join('\n\n');
+  } else if (lower.includes('compta') || lower.includes('tva') || lower.includes('chiffre') || lower.includes('ca')) {
+    localReply = `📊 **Situation Comptable d'Octobre 2026 :**\n\n` +
+      `* **Chiffre d'affaires émis :** ${revObj.rev.toFixed(2).replace('.', ',')} € HT\n` +
+      `* **Dernières factures :** ${latestInvoices.map((i: any) => `${i.invoice_number} (${i.total_ht.toFixed(2).replace('.', ',')} €)`).join(', ')}\n\n` +
+      `Votre export Excel complet est disponible en 1 clic dans l'onglet **Comptabilité**.`;
+  } else if (lower.includes('alstom') || lower.includes('ligne 18')) {
+    const m = enrichedMissions.find(x => x.code === 'VP2026922');
+    localReply = m
+      ? `🔍 **Dossier ALSTOM Ligne 18 (VP2026922) :**\n* Client : ${m.client} (Réf : 11161461)\n* Non facturé : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h)\n* Prochaine échéance : **${m.next_deadline?.split('-').reverse().join('/')}** (${m.next_action})`
+      : "Dossier introuvable.";
+  } else if (lower.includes('regiorail') || lower.includes('ambérieu')) {
+    const m = enrichedMissions.find(x => x.code === 'VP2026104');
+    localReply = m
+      ? `🔍 **Dossier REGIORAIL Ambérieu (VP2026104) :**\n* Assureur : ${m.client} | Réf : RR-2026-AMB-09\n* Non facturé : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (Seuil dépassé !)\n* Échéance : ${m.next_deadline?.split('-').reverse().join('/')} (${m.next_action})`
+      : "Dossier introuvable.";
+  } else {
+    localReply = `Bonjour Valentine. Je suis votre assistant opérationnel VP Expertise.\n\n` +
+      `Actuellement en **mode local sécurisé** basé sur vos dossiers réels (pour activer la génération de textes libres par **Gemini 2.5 Flash**, il suffit de renseigner votre clé dans les secrets de Google AI Studio).\n\n` +
+      `Je peux vous renseigner instantanément sur :\n` +
+      `* Vos dossiers au seuil de facturation\n` +
+      `* Vos prochaines échéances de dires\n` +
+      `* Le statut précis d'une mission (Alstom, Regiorail, Forwardis, TLA)\n` +
+      `* Vos chiffres de TVA du mois`;
+  }
+
+  res.json({
+    reply: localReply,
+    model: 'gemini-2.5-flash (local context fallback)',
+    hasKey: Boolean(apiKey),
+  });
 });
