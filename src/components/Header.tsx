@@ -87,16 +87,16 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-colors whitespace-nowrap relative ${
+                  className={`flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-colors whitespace-nowrap relative cursor-pointer ${
                     isActive
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span>{tab.label}</span>
+                  <Icon className="w-4 h-4 shrink-0 pointer-events-none" />
+                  <span className="pointer-events-none">{tab.label}</span>
                   {tab.badge && (
-                    <span className={`ml-1 text-[10px] font-bold text-white px-1.5 py-0.2 rounded-full ${tab.badgeColor}`}>
+                    <span className={`ml-1 text-[10px] font-bold text-white px-1.5 py-0.2 rounded-full pointer-events-none ${tab.badgeColor}`}>
                       {tab.badge}
                     </span>
                   )}

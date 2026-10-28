@@ -62,12 +62,17 @@ export function App() {
     setIsQuickAddOpen(true);
   };
 
-  const handleNavigateToMission = (code: string) => {
-    const found = missions.find(m => m.code === code);
+  const handleNavigateToMission = (codeOrId: string) => {
+    const target = (codeOrId || '').trim().toLowerCase();
+    const found = missions.find(m => 
+      m.code.toLowerCase() === target || 
+      m.id.toLowerCase() === target ||
+      (m.case_reference && m.case_reference.toLowerCase() === target)
+    );
     if (found) {
       setSelectedMissionId(found.id);
-      setActiveTab('missions');
     }
+    setActiveTab('missions');
   };
 
   const handleNavigateToBilling = (missionCode?: string) => {

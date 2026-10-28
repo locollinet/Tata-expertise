@@ -1,5 +1,5 @@
-import React from 'react';
-import { AlertCircle, Clock, Receipt, Mail, Train, Calendar, ChevronRight, CheckCircle2, ArrowRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, Clock, Receipt, Mail, Train, Calendar, ChevronRight, CheckCircle2, ArrowRight, Filter } from 'lucide-react';
 import { DashboardSummary } from '@shared/types.js';
 
 interface TodayViewProps {
@@ -38,6 +38,18 @@ export const TodayView: React.FC<TodayViewProps> = ({
     latest_invoices,
     upcoming_travels,
   } = summary;
+
+  const [actionFilter, setActionFilter] = useState<'all' | 'echeance' | 'rappel_facturation' | 'deplacement' | 'email_urgent'>('all');
+
+  const filteredActions = urgent_actions.filter((action) => {
+    if (actionFilter === 'all') return true;
+    return action.type === actionFilter;
+  });
+
+  const echeanceCount = urgent_actions.filter((a) => a.type === 'echeance').length;
+  const billingCount = urgent_actions.filter((a) => a.type === 'rappel_facturation').length;
+  const travelCount = urgent_actions.filter((a) => a.type === 'deplacement').length;
+  const emailCount = urgent_actions.filter((a) => a.type === 'email_urgent').length;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -153,23 +165,107 @@ export const TodayView: React.FC<TodayViewProps> = ({
       {/* Main Action Feed: "Qu'est-ce que je dois faire maintenant ?" */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-              <AlertCircle className="w-5 h-5 text-amber-500" />
-              <span>Actions & Rappels prioritaires</span>
-            </h2>
-            <span className="text-xs text-slate-500">{urgent_actions.length} élément(s)</span>
+          {/* Header with interactive filter pills */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setActionFilter('all')}
+              className="flex items-center space-x-2 text-left cursor-pointer group select-none hover:opacity-90 transition-opacity"
+              title="Cliquer pour afficher toutes les actions"
+            >
+              <div className="p-1 rounded-md bg-amber-100 text-amber-700 group-hover:bg-amber-200 transition-colors">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <h2 className="text-base font-bold text-slate-900 group-hover:text-[#0f3854] transition-colors">
+                Actions & Rappels prioritaires
+              </h2>
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">
+                {urgent_actions.length}
+              </span>
+            </button>
+
+            {/* Quick interactive filter pills */}
+            <div className="flex items-center space-x-1 overflow-x-auto pb-1 sm:pb-0 text-xs">
+              <button
+                type="button"
+                onClick={() => setActionFilter('all')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                  actionFilter === 'all'
+                    ? 'bg-[#0f3854] text-white shadow-2xs font-semibold'
+                    : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+                }`}
+              >
+                Tous ({urgent_actions.length})
+              </button>
+              {echeanceCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActionFilter('echeance')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    actionFilter === 'echeance'
+                      ? 'bg-[#0f3854] text-white shadow-2xs font-semibold'
+                      : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
+                  }`}
+                >
+                  Échéances ({echeanceCount})
+                </button>
+              )}
+              {billingCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActionFilter('rappel_facturation')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    actionFilter === 'rappel_facturation'
+                      ? 'bg-amber-500 text-slate-900 font-bold shadow-2xs'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                  }`}
+                >
+                  Honoraires ({billingCount})
+                </button>
+              )}
+              {travelCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActionFilter('deplacement')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    actionFilter === 'deplacement'
+                      ? 'bg-indigo-600 text-white shadow-2xs font-semibold'
+                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200'
+                  }`}
+                >
+                  Déplacements ({travelCount})
+                </button>
+              )}
+              {emailCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActionFilter('email_urgent')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    actionFilter === 'email_urgent'
+                      ? 'bg-rose-600 text-white shadow-2xs font-semibold'
+                      : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  Mails ({emailCount})
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="space-y-2.5">
-            {urgent_actions.length === 0 ? (
+            {filteredActions.length === 0 ? (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                <p className="text-sm font-medium">Aucune action urgente en attente.</p>
-                <p className="text-xs text-slate-400 mt-1">Tous les jalons et relances sont traités.</p>
+                <p className="text-sm font-medium">Aucune action dans cette catégorie.</p>
+                <button
+                  onClick={() => setActionFilter('all')}
+                  className="mt-2 text-xs text-[#0f3854] font-semibold hover:underline"
+                >
+                  Afficher toutes les actions ({urgent_actions.length})
+                </button>
               </div>
             ) : (
-              urgent_actions.map((action) => {
+              filteredActions.map((action) => {
                 const isBilling = action.type === 'rappel_facturation';
                 const isEmail = action.type === 'email_urgent';
                 const isTravel = action.type === 'deplacement';
@@ -189,7 +285,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     }`}
                     title={isBilling ? `Ouvrir la facturation de ${action.mission_code}` : `Ouvrir le dossier ${action.mission_code}`}
                   >
-                    <div className="flex items-start space-x-3">
+                    <div className="flex items-start space-x-3 pointer-events-none">
                       <div className="mt-0.5 shrink-0 group-hover:scale-110 transition-transform">
                         {isBilling ? (
                           <Receipt className="w-5 h-5 text-amber-600" />
@@ -215,7 +311,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center justify-end pt-1 sm:pt-0">
+                    <div className="shrink-0 flex items-center justify-end pt-1 sm:pt-0 pointer-events-none">
                       {isBilling ? (
                         <span className="w-full sm:w-auto justify-center px-3.5 py-1.5 bg-amber-500 group-hover:bg-amber-600 text-slate-900 rounded-lg text-xs font-bold shadow-2xs transition-all flex items-center space-x-1">
                           <span>Facturer</span>
