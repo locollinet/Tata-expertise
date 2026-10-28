@@ -1294,7 +1294,7 @@ Consignes :
 apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
-    const instruction = (req.body.text || req.body.instruction || '').trim();
+    const instruction = (req.body.text || req.body.instruction || req.body.textPrompt || req.body.message || '').trim();
     const preselectedMissionId = req.body.missionId;
 
     if (!file && !instruction) {

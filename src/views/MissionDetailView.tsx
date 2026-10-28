@@ -1225,7 +1225,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   type="button"
                   onClick={() => {
                     if (!rawFieldNotes.trim()) return;
-                    setReportObs(prev => prev ? `${prev}\n\n--- Extrait Notes Terrain ---\n${rawFieldNotes}` : rawFieldNotes);
+                    setReportObs((prev: string) => prev ? `${prev}\n\n--- Extrait Notes Terrain ---\n${rawFieldNotes}` : rawFieldNotes);
                     alert("Notes insérées dans le paragraphe 2 (Constatations matérielles) !");
                   }}
                   disabled={!rawFieldNotes.trim()}
