@@ -72,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="shrink-0 flex flex-col justify-center">
               <div className="flex items-center space-x-2">
                 <span className="font-extrabold text-base tracking-tight text-slate-900 whitespace-nowrap">VP EXPERTISE</span>
-                <span className="hidden xl:inline-block text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium whitespace-nowrap">Cabinet d'Ingénierie</span>
+                <span className="hidden 2xl:inline-block text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium whitespace-nowrap">Cabinet d'Ingénierie</span>
               </div>
               <p className="text-[11px] text-slate-500 hidden 2xl:block whitespace-nowrap">Mécanique & Matériels Ferroviaires — Valentine Pécheux</p>
             </div>
@@ -114,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
               <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="hidden xl:inline">Firebase Cloud</span>
+              <span className="hidden 2xl:inline">Firebase Cloud</span>
             </div>
 
             {/* User authentication */}
@@ -149,7 +149,7 @@ export const Header: React.FC<HeaderProps> = ({
                 title="Connexion Google / Firebase"
               >
                 <LogIn className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <span className="hidden xl:inline">{authLoading ? 'Connexion...' : 'Connexion'}</span>
+                <span className="hidden 2xl:inline">{authLoading ? 'Connexion...' : 'Connexion'}</span>
               </button>
             )}
 

@@ -526,7 +526,7 @@ apiRouter.post('/invoices/:id/emit', (req, res) => {
     // 3. Insert or update corresponding accounting entry for the month
     const month = inv.date.slice(0, 7);
     db.prepare(`
-      INSERT INTO accounting_entries (id, month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_amount, amount_ttc, comment)
+      INSERT OR REPLACE INTO accounting_entries (id, month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_amount, amount_ttc, comment)
       VALUES (?, ?, 'recette', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       `acc-${inv.invoice_number}`, month, `R-${inv.invoice_number.split('-')[1]}`, inv.date,
