@@ -1,8 +1,53 @@
+# Secrets et configuration locale
+.env
+.env.local
+.env.*.local
+
+# Dépendances
 node_modules/
-build/
+
+# Builds et artefacts
 dist/
+dist-ssr/
+build/
 coverage/
+*.local
+
+# Bases de données persistantes locales et uploads
+data/
+uploads/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Fichiers sources confidentiels originaux et extractions
+sources/
+work/
+VP_EXPERTISE_BRIEF_V3/
+VP_EXPERTISE_BRIEF_V3.zip
+*.xlsx
+*.docx
+*.rtfd/
+*.rtf
+*.pdf
+
+# Exception pour les modèles ou documents de démo publics si créés
+!public/
+!public/**/*
+
+# Fichiers système et IDE
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 *.log
-.env*
-!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

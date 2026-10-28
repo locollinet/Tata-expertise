@@ -8,6 +8,8 @@ interface TodayViewProps {
   onNavigateToMission: (missionCode: string) => void;
   onNavigateToBilling: (missionCode?: string) => void;
   onOpenQuickAdd: () => void;
+  onNavigateToMissions?: () => void;
+  onNavigateToCompta?: () => void;
 }
 
 export const TodayView: React.FC<TodayViewProps> = ({
@@ -16,6 +18,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onNavigateToMission,
   onNavigateToBilling,
   onOpenQuickAdd,
+  onNavigateToMissions,
+  onNavigateToCompta,
 }) => {
   if (loading || !summary) {
     return (
@@ -70,59 +74,77 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
       </div>
 
-      {/* KPI Overview Grid */}
+      {/* KPI Overview Grid - All 4 cards clickable */}
       <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-medium text-slate-500 flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToBilling()}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs hover:shadow-md hover:border-amber-300 cursor-pointer transition-all active:scale-[0.98] group"
+          title="Ouvrir la gestion des honoraires"
+        >
+          <span className="text-xs font-semibold text-slate-500 flex items-center justify-between group-hover:text-amber-700 transition-colors">
             <span className="truncate">À facturer</span>
-            <Receipt className="w-4 h-4 text-amber-500 shrink-0 ml-1" />
+            <Receipt className="w-4 h-4 text-amber-500 shrink-0 ml-1 group-hover:scale-110 transition-transform" />
           </span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-lg sm:text-xl font-bold text-slate-900 truncate">
+            <span className="text-lg sm:text-xl font-extrabold text-slate-900 truncate">
               {total_unbilled_ht.toFixed(2).replace('.', ',')} €
             </span>
             <span className="text-[10px] text-slate-500 font-semibold ml-1">HT</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1 truncate">{unbilled_hours_total}h en cours</p>
+          <p className="text-[11px] text-slate-500 mt-1 truncate">{unbilled_hours_total}h en cours → Facturer</p>
         </div>
 
-        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-medium text-slate-500 flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToMissions && onNavigateToMissions()}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs hover:shadow-md hover:border-sky-300 cursor-pointer transition-all active:scale-[0.98] group"
+          title="Consulter tous les dossiers"
+        >
+          <span className="text-xs font-semibold text-slate-500 flex items-center justify-between group-hover:text-sky-700 transition-colors">
             <span className="truncate">Dossiers actifs</span>
-            <Calendar className="w-4 h-4 text-sky-600 shrink-0 ml-1" />
+            <Calendar className="w-4 h-4 text-sky-600 shrink-0 ml-1 group-hover:scale-110 transition-transform" />
           </span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-lg sm:text-xl font-bold text-slate-900">{active_missions_count}</span>
+            <span className="text-lg sm:text-xl font-extrabold text-slate-900">{active_missions_count}</span>
             <span className="text-[10px] text-slate-500 font-semibold ml-1">affaires</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1 truncate">En instruction</p>
+          <p className="text-[11px] text-slate-500 mt-1 truncate">En instruction → Voir registre</p>
         </div>
 
-        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-medium text-slate-500 flex items-center justify-between">
+        <div
+          onClick={() => onNavigateToCompta && onNavigateToCompta()}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs hover:shadow-md hover:border-emerald-300 cursor-pointer transition-all active:scale-[0.98] group"
+          title="Consulter le livre comptable du mois"
+        >
+          <span className="text-xs font-semibold text-slate-500 flex items-center justify-between group-hover:text-emerald-700 transition-colors">
             <span className="truncate">CA émis (mois)</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 ml-1" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 ml-1 group-hover:scale-110 transition-transform" />
           </span>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-lg sm:text-xl font-bold text-slate-900 truncate">
+            <span className="text-lg sm:text-xl font-extrabold text-slate-900 truncate">
               {monthly_revenue_ht.toFixed(2).replace('.', ',')} €
             </span>
             <span className="text-[10px] text-slate-500 font-semibold ml-1">HT</span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1 truncate">Octobre 2026</p>
+          <p className="text-[11px] text-slate-500 mt-1 truncate">Octobre 2026 → Voir compta</p>
         </div>
 
-        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs">
-          <span className="text-xs font-medium text-slate-500 flex items-center justify-between">
+        <div
+          onClick={() => upcoming_travels[0] && onNavigateToMission(upcoming_travels[0].mission_code)}
+          className={`bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-2xs transition-all ${
+            upcoming_travels[0] ? 'hover:shadow-md hover:border-indigo-300 cursor-pointer active:scale-[0.98] group' : ''
+          }`}
+          title={upcoming_travels[0] ? `Ouvrir le dossier ${upcoming_travels[0].mission_code}` : ''}
+        >
+          <span className="text-xs font-semibold text-slate-500 flex items-center justify-between group-hover:text-indigo-700 transition-colors">
             <span className="truncate">Déplacement</span>
-            <Train className="w-4 h-4 text-indigo-600 shrink-0 ml-1" />
+            <Train className="w-4 h-4 text-indigo-600 shrink-0 ml-1 group-hover:scale-110 transition-transform" />
           </span>
           <div className="mt-2">
             <span className="text-xs sm:text-sm font-bold text-slate-900 block line-clamp-1">
               {upcoming_travels[0] ? upcoming_travels[0].destination : "Aucun trajet"}
             </span>
             <span className="text-[11px] text-slate-500 block truncate">
-              {upcoming_travels[0] ? `Le ${upcoming_travels[0].start_date.split('-').reverse().join('/')}` : "À jour"}
+              {upcoming_travels[0] ? `Le ${upcoming_travels[0].start_date.split('-').reverse().join('/')} → Ouvrir` : "À jour"}
             </span>
           </div>
         </div>
@@ -155,18 +177,20 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 return (
                   <div
                     key={action.id}
-                    className={`p-3.5 sm:p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    onClick={() => isBilling ? onNavigateToBilling(action.mission_code) : onNavigateToMission(action.mission_code)}
+                    className={`p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer group shadow-2xs hover:shadow-md active:scale-[0.995] ${
                       isBilling
-                        ? 'bg-amber-50/60 border-amber-200 hover:border-amber-300'
+                        ? 'bg-amber-50/70 border-amber-200 hover:border-amber-400'
                         : isEmail
-                        ? 'bg-rose-50/50 border-rose-200 hover:border-rose-300'
+                        ? 'bg-rose-50/60 border-rose-200 hover:border-rose-400'
                         : isTravel
-                        ? 'bg-indigo-50/40 border-indigo-200 hover:border-indigo-300'
-                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                        ? 'bg-indigo-50/50 border-indigo-200 hover:border-indigo-400'
+                        : 'bg-white border-slate-200 hover:border-[#0f3854]/40 hover:bg-slate-50/50'
                     }`}
+                    title={isBilling ? `Ouvrir la facturation de ${action.mission_code}` : `Ouvrir le dossier ${action.mission_code}`}
                   >
                     <div className="flex items-start space-x-3">
-                      <div className="mt-0.5 shrink-0">
+                      <div className="mt-0.5 shrink-0 group-hover:scale-110 transition-transform">
                         {isBilling ? (
                           <Receipt className="w-5 h-5 text-amber-600" />
                         ) : isEmail ? (
@@ -179,10 +203,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-bold text-slate-900">{action.mission_code}</span>
+                          <span className="text-xs font-bold text-slate-900 group-hover:text-[#0f3854] transition-colors">{action.mission_code}</span>
                           <span className="text-xs text-slate-500 truncate max-w-[200px] sm:max-w-md">— {action.mission_title}</span>
                         </div>
-                        <p className="text-xs sm:text-sm font-medium text-slate-800 mt-0.5 leading-snug">{action.label}</p>
+                        <p className="text-xs sm:text-sm font-semibold text-slate-800 mt-0.5 leading-snug">{action.label}</p>
                         {action.deadline && (
                           <p className="text-[11px] text-slate-500 mt-1">
                             Échéance : <span className="font-semibold text-slate-700">{action.deadline.split('-').reverse().join('/')}</span>
@@ -193,21 +217,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
                     <div className="shrink-0 flex items-center justify-end pt-1 sm:pt-0">
                       {isBilling ? (
-                        <button
-                          onClick={() => onNavigateToBilling(action.mission_code)}
-                          className="w-full sm:w-auto justify-center px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-900 rounded-lg text-xs font-semibold shadow-2xs transition-colors flex items-center space-x-1"
-                        >
+                        <span className="w-full sm:w-auto justify-center px-3.5 py-1.5 bg-amber-500 group-hover:bg-amber-600 text-slate-900 rounded-lg text-xs font-bold shadow-2xs transition-all flex items-center space-x-1">
                           <span>Facturer</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
+                          <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                        </span>
                       ) : (
-                        <button
-                          onClick={() => onNavigateToMission(action.mission_code)}
-                          className="w-full sm:w-auto justify-center px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium shadow-2xs transition-colors flex items-center space-x-1"
-                        >
+                        <span className="w-full sm:w-auto justify-center px-3.5 py-1.5 bg-white border border-slate-200 group-hover:bg-slate-100 group-hover:border-slate-300 text-slate-800 rounded-lg text-xs font-semibold shadow-2xs transition-all flex items-center space-x-1">
                           <span>Ouvrir</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 group-hover:translate-x-1 transition-all" />
+                        </span>
                       )}
                     </div>
                   </div>
@@ -221,29 +239,33 @@ export const TodayView: React.FC<TodayViewProps> = ({
         <div className="space-y-6">
           {/* Upcoming travel checklist card */}
           {upcoming_travels.length > 0 && (
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+            <div
+              onClick={() => onNavigateToMission(upcoming_travels[0].mission_code)}
+              className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-3 cursor-pointer hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.99]"
+              title={`Ouvrir le dossier ${upcoming_travels[0].mission_code}`}
+            >
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                  <Train className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2 group-hover:text-indigo-900 transition-colors">
+                  <Train className="w-4 h-4 text-indigo-600 group-hover:scale-110 transition-transform" />
                   <span>Prochain déplacement</span>
                 </h3>
-                <span className="text-xs text-indigo-700 bg-indigo-50 font-medium px-2 py-0.5 rounded-full">
+                <span className="text-xs text-indigo-700 bg-indigo-50 font-semibold px-2 py-0.5 rounded-full">
                   {upcoming_travels[0].start_date.split('-').reverse().join('/')}
                 </span>
               </div>
 
               <div className="text-xs space-y-1">
-                <p className="font-semibold text-slate-800">{upcoming_travels[0].destination}</p>
-                <p className="text-slate-500">Dossier : {upcoming_travels[0].mission_code}</p>
+                <p className="font-bold text-slate-900 text-sm">{upcoming_travels[0].destination}</p>
+                <p className="text-slate-500 font-medium">Dossier : <span className="text-[#0f3854] font-bold">{upcoming_travels[0].mission_code}</span> → Cliquer pour ouvrir</p>
                 {upcoming_travels[0].train_info && (
-                  <p className="text-slate-600 bg-slate-50 p-2 rounded border border-slate-100">
+                  <p className="text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 font-mono text-[11px]">
                     {upcoming_travels[0].train_info}
                   </p>
                 )}
               </div>
 
               {upcoming_travels[0].checklist && upcoming_travels[0].checklist.length > 0 && (
-                <div className="pt-2 border-t border-slate-100">
+                <div className="pt-2 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">Checklist matériel :</span>
                   <div className="space-y-1.5">
                     {upcoming_travels[0].checklist.map((item: any) => (
@@ -274,24 +296,29 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </h3>
               <button
                 onClick={() => onNavigateToBilling()}
-                className="text-xs text-[#0f3854] hover:underline font-medium"
+                className="text-xs text-[#0f3854] hover:underline font-semibold"
               >
-                Voir tout
+                Voir tout →
               </button>
             </div>
 
             <div className="divide-y divide-slate-100">
               {latest_invoices.map((inv: any) => (
-                <div key={inv.id} className="py-2.5 flex items-center justify-between text-xs">
+                <div
+                  key={inv.id}
+                  onClick={() => onNavigateToBilling(inv.mission_code)}
+                  className="py-2.5 px-2 -mx-2 rounded-lg flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 transition-colors group"
+                  title={`Ouvrir la facture ${inv.invoice_number} (${inv.mission_code})`}
+                >
                   <div>
                     <div className="flex items-center space-x-1.5">
-                      <span className="font-bold text-slate-900">{inv.invoice_number}</span>
-                      <span className="text-slate-400">({inv.mission_code})</span>
+                      <span className="font-bold text-slate-900 group-hover:text-[#0f3854] transition-colors">{inv.invoice_number}</span>
+                      <span className="text-slate-400 font-mono text-[11px]">({inv.mission_code})</span>
                     </div>
                     <p className="text-slate-500 text-[11px] truncate max-w-[170px]">{inv.client_name}</p>
                   </div>
                   <div className="text-right">
-                    <span className="font-bold text-slate-800 block">
+                    <span className="font-bold text-slate-800 block group-hover:text-[#0f3854] transition-colors">
                       {inv.total_ttc.toFixed(2).replace('.', ',')} €
                     </span>
                     <span className="text-[10px] text-slate-400">{inv.date.split('-').reverse().join('/')}</span>

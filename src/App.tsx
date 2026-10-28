@@ -97,6 +97,8 @@ export function App() {
             onNavigateToMission={handleNavigateToMission}
             onNavigateToBilling={handleNavigateToBilling}
             onOpenQuickAdd={() => handleOpenQuickAdd()}
+            onNavigateToMissions={() => { setActiveTab('missions'); setSelectedMissionId(null); }}
+            onNavigateToCompta={() => { setActiveTab('compta'); setSelectedMissionId(null); }}
           />
         )}
 
