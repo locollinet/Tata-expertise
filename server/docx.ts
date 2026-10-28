@@ -30,7 +30,7 @@ function createVPHeader(): Header {
                       new ImageRun({
                         data: fs.readFileSync(logoPath),
                         transformation: { width: 55, height: 58 },
-                      }),
+                      } as any),
                     ],
                   })
                 : new Paragraph({

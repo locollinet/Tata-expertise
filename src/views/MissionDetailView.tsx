@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, ArrowRight, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
   CheckCircle2, AlertCircle, Save, ExternalLink, Calendar, Copy, Check,
-  FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders
+  FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera
 } from 'lucide-react';
 import { api } from '../api.js';
 import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';

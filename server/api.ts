@@ -1109,79 +1109,184 @@ Consignes :
 3. Reste toujours synthétique et pratique. Pas de longs discours théoriques.
 `;
 
-  // 2. Check for Gemini API key
+  // 2. Multi-model Gemini call with automatic fallback chain
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
 
   if (apiKey) {
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Build conversation contents
-      const contents: any[] = [];
-      contents.push({
-        role: 'user',
-        parts: [{ text: `${contextPrompt}\n\nQuestion de Valentine : ${message}` }],
-      });
+    // Try reliable candidate models in sequence
+    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-      });
+    // Format chat history if provided
+    let conversationContext = '';
+    if (Array.isArray(history) && history.length > 0) {
+      const recentHistory = history.slice(-6);
+      conversationContext = `Historique récent de la discussion :\n` +
+        recentHistory.map((h: any) => `${h.sender === 'user' ? 'Valentine' : 'Assistant'} : ${h.text}`).join('\n') + '\n\n';
+    }
 
-      const replyText = response.text || "Désolé, je n'ai pas pu générer de réponse.";
-      return res.json({
-        reply: replyText,
-        model: 'gemini-2.5-flash',
-        hasKey: true,
-      });
-    } catch (err: any) {
-      console.warn("Erreur appel Gemini (fallback automatique) :", err.message);
+    const fullPrompt = `${contextPrompt}\n\n${conversationContext}Demande de Valentine :\n${message}`;
+
+    for (const model of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+          config: {
+            systemInstruction: "Tu es l'assistant personnel opérationnel de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires). Tu réponds toujours de manière personnalisée, concrète et utile en français. Si elle te demande de rédiger un mail ou une relance, fournis un texte complet et prêt à l'envoi. Adapte toujours ta réponse à la demande précise, sans formule robotique répétitive.",
+          },
+        });
+
+        const replyText = response.text?.trim();
+        if (replyText && replyText.length > 0) {
+          return res.json({
+            reply: replyText,
+            model,
+            hasKey: true,
+          });
+        }
+      } catch (err: any) {
+        console.warn(`Modèle Gemini ${model} indisponible (${err.message}). Essai du suivant...`);
+      }
     }
   }
 
-  // 3. Fallback deterministe si aucune clé API configurée localement
+  // 3. Fallback contextuel intelligent si l'API externe est temporairement inaccessible
   const lower = message.toLowerCase();
   let localReply = "";
 
-  if (lower.includes('seuil') || lower.includes('factur') || lower.includes('3500') || lower.includes('3 500')) {
+  // Cas A : Rédaction de mail, relance ou courrier
+  if (lower.includes('rédig') || lower.includes('redig') || lower.includes('relanc') || lower.includes('mail') || lower.includes('courrier') || lower.includes('ecri') || lower.includes('écri')) {
+    if (lower.includes('alstom') || lower.includes('ligne 18') || lower.includes('trémie') || lower.includes('vinci')) {
+      localReply = `✉️ **Projet d'e-mail de relance — ALSTOM Ligne 18 :**\n\n` +
+        `**Objet :** Dossier VP2026922 (SGP Ligne 18 - Trémie OA-08) — Observations techniques suite aux Dires de VINCI\n\n` +
+        `Maître, Chers confrères,\n\n` +
+        `Dans le cadre des opérations d'expertise relatives au sinistre sur la dalle de couverture de la trémie OA-08 (Réf. 11161461), je vous informe que la note d'observation technique de VP EXPERTISE est en cours de finalisation en vue de l'échéance fixée au **05/11/2026**.\n\n` +
+        `Afin de consolider les conclusions sur les contraintes dynamiques et la flexion résiduelle, je vous saurais gré de bien vouloir nous transmettre sans délai les procès-verbaux de contrôle du ferraillage ainsi que les notes de calcul d'étaiement initialement sollicitées.\n\n` +
+        `Restant à votre entière disposition pour tout échange contradictoire préalable.\n\n` +
+        `Bien confraternellement,\n\n` +
+        `**Valentine Pécheux**\n` +
+        `Ingénieure Spécialiste Matériels Roulants & Infrastructures Ferroviaires\n` +
+        `Cabinet VP EXPERTISE — 06 12 34 56 78`;
+    } else if (lower.includes('regiorail') || lower.includes('ambérieu') || lower.includes('collision')) {
+      localReply = `✉️ **Projet d'e-mail de relance — REGIORAIL Ambérieu :**\n\n` +
+        `**Objet :** Dossier VP2026104 — Sinistre triage Ambérieu — Transmission du rapport d'incident SNCF Réseau\n\n` +
+        `Bonjour,\n\n` +
+        `Faisant suite à notre dernière réunion d'expertise du dossier référencé RR-2026-AMB-09, je me permets de vous relancer concernant la communication du rapport interne d'incident et des relevés de vitesse de la rame refoulée.\n\n` +
+        `Pour rappel, le délai d'instruction imparti court jusqu'au **28/11/2026** pour le dépôt de la synthèse technique.\n\n` +
+        `Bien cordialement,\n\n` +
+        `**Valentine Pécheux**\n` +
+        `VP EXPERTISE`;
+    } else {
+      localReply = `✉️ **Projet de message prêt à l'envoi :**\n\n` +
+        `**Objet :** Dossier d'expertise ferroviaire — Point d'étape et demande de pièces complémentaires\n\n` +
+        `Bonjour,\n\n` +
+        `Dans le cadre de l'instruction contradictoire en cours, je reviens vers vous concernant les documents techniques attendus pour la poursuite de nos investigations.\n\n` +
+        `Afin de respecter le calendrier de procédure et de préparer utilement la prochaine réunion d'expertise, je vous remercie par avance pour votre retour d'ici la fin de semaine.\n\n` +
+        `Restant à votre écoute,\n\n` +
+        `Bien cordialement,\n\n` +
+        `**Valentine Pécheux**\n` +
+        `Cabinet VP EXPERTISE`;
+    }
+  }
+  // Cas B : Seuils de facturation et encours
+  else if (lower.includes('seuil') || lower.includes('factur') || lower.includes('3500') || lower.includes('3 500') || lower.includes('combien') || lower.includes('honorair') || lower.includes('à facturer')) {
     const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
     const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
-    localReply = `Vous avez actuellement **${totalUnbilled.toFixed(2).replace('.', ',')} € HT** en attente de facturation sur l'ensemble de vos dossiers actifs.\n\n` +
+    localReply = `💰 **Synthèse de votre facturation en cours :**\n\n` +
+      `* **Total en attente d'émission :** **${totalUnbilled.toFixed(2).replace('.', ',')} € HT**\n\n` +
       (overThreshold.length > 0
-        ? `⚠️ **Dossier(s) ayant dépassé le seuil de 3 500 € HT :**\n` + overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h en cours).`).join('\n') + `\n\nVous pouvez émettre la note d'honoraires en 1 clic dans l'onglet **Honoraires**.`
-        : `Aucun dossier ne dépasse actuellement votre seuil d'alerte.`);
-  } else if (lower.includes('échéance') || lower.includes('echeance') || lower.includes('jalon') || lower.includes('dire') || lower.includes('quand')) {
+        ? `⚠️ **Dossier(s) ayant dépassé le seuil d'alerte (${overThreshold[0].billing_threshold} € HT) :**\n` +
+          overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h de vacations + frais).`).join('\n') +
+          `\n\n👉 Vous pouvez générer les notes d'honoraires Word officielles au format VP Expertise en un clic dans l'onglet **Honoraires**.`
+        : `✅ Aucun dossier ne dépasse actuellement votre seuil d'alerte.`);
+  }
+  // Cas C : Échéances, dates et calendrier
+  else if (lower.includes('échéance') || lower.includes('echeance') || lower.includes('jalon') || lower.includes('dire') || lower.includes('quand') || lower.includes('planning') || lower.includes('date')) {
     const withDeadlines = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''));
     localReply = `📅 **Vos prochaines échéances de procédure :**\n\n` +
-      withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] : ${m.next_action}`).join('\n\n');
-  } else if (lower.includes('compta') || lower.includes('tva') || lower.includes('chiffre') || lower.includes('ca')) {
+      withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] ${m.title}\n  ↳ *Action :* ${m.next_action}`).join('\n\n') +
+      `\n\n🚆 **Prochain déplacement terrain :**\n` +
+      upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (${t.mission_code})`).join('\n');
+  }
+  // Cas D : Comptabilité et TVA
+  else if (lower.includes('compta') || lower.includes('tva') || lower.includes('chiffre') || lower.includes('ca') || lower.includes('bilan')) {
     localReply = `📊 **Situation Comptable d'Octobre 2026 :**\n\n` +
       `* **Chiffre d'affaires émis :** ${revObj.rev.toFixed(2).replace('.', ',')} € HT\n` +
-      `* **Dernières factures :** ${latestInvoices.map((i: any) => `${i.invoice_number} (${i.total_ht.toFixed(2).replace('.', ',')} €)`).join(', ')}\n\n` +
-      `Votre export Excel complet est disponible en 1 clic dans l'onglet **Comptabilité**.`;
-  } else if (lower.includes('alstom') || lower.includes('ligne 18')) {
+      `* **TVA collectée estimée (20%) :** ${(revObj.rev * 0.20).toFixed(2).replace('.', ',')} €\n` +
+      `* **Dernières factures émises :**\n` +
+      latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2).replace('.', ',')} € HT (${i.status})`).join('\n') +
+      `\n\nL'export journal comptable Excel est prêt dans l'onglet **Comptabilité**.`;
+  }
+  // Cas E : Questions sur un dossier particulier
+  else if (lower.includes('alstom') || lower.includes('ligne 18')) {
     const m = enrichedMissions.find(x => x.code === 'VP2026922');
     localReply = m
-      ? `🔍 **Dossier ALSTOM Ligne 18 (VP2026922) :**\n* Client : ${m.client} (Réf : 11161461)\n* Non facturé : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h)\n* Prochaine échéance : **${m.next_deadline?.split('-').reverse().join('/')}** (${m.next_action})`
-      : "Dossier introuvable.";
+      ? `🔍 **Point sur le dossier ALSTOM Ligne 18 (VP2026922) :**\n\n` +
+        `* **Intitulé :** ${m.title}\n` +
+        `* **Client :** ${m.client} (Réf : 11161461)\n` +
+        `* **Vacations en cours :** ${m.unbilled_hours} h (${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT)\n` +
+        `* **Échéance critique :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+        `* **Action requise :** ${m.next_action}`
+      : "Dossier ALSTOM introuvable.";
   } else if (lower.includes('regiorail') || lower.includes('ambérieu')) {
     const m = enrichedMissions.find(x => x.code === 'VP2026104');
     localReply = m
-      ? `🔍 **Dossier REGIORAIL Ambérieu (VP2026104) :**\n* Assureur : ${m.client} | Réf : RR-2026-AMB-09\n* Non facturé : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (Seuil dépassé !)\n* Échéance : ${m.next_deadline?.split('-').reverse().join('/')} (${m.next_action})`
-      : "Dossier introuvable.";
-  } else {
-    localReply = `Bonjour Valentine. Je suis votre assistant opérationnel VP Expertise.\n\n` +
-      `Actuellement en **mode local sécurisé** basé sur vos dossiers réels (pour activer la génération de textes libres par **Gemini 2.5 Flash**, il suffit de renseigner votre clé dans les secrets de Google AI Studio).\n\n` +
-      `Je peux vous renseigner instantanément sur :\n` +
-      `* Vos dossiers au seuil de facturation\n` +
-      `* Vos prochaines échéances de dires\n` +
-      `* Le statut précis d'une mission (Alstom, Regiorail, Forwardis, TLA)\n` +
-      `* Vos chiffres de TVA du mois`;
+      ? `🔍 **Point sur le dossier REGIORAIL Ambérieu (VP2026104) :**\n\n` +
+        `* **Intitulé :** ${m.title}\n` +
+        `* **Client :** ${m.client} (Réf : RR-2026-AMB-09)\n` +
+        `* **Statut financier :** ⚠️ Seuil dépassé avec **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer\n` +
+        `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+        `* **Action requise :** ${m.next_action}`
+      : "Dossier REGIORAIL introuvable.";
+  } else if (lower.includes('forwardis') || lower.includes('clermont') || lower.includes('gravanche')) {
+    const m = enrichedMissions.find(x => x.code === 'VP2025915');
+    localReply = m
+      ? `🔍 **Point sur le dossier FORWARDIS Clermont-Gravanche (VP2025915) :**\n\n` +
+        `* **Intitulé :** ${m.title}\n` +
+        `* **Client :** ${m.client} (Réf : FWD-2025-03)\n` +
+        `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
+        `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+        `* **Action requise :** ${m.next_action}`
+      : "Dossier FORWARDIS introuvable.";
+  } else if (lower.includes('tla') || lower.includes('ettendorf')) {
+    const m = enrichedMissions.find(x => x.code === 'VP2026728');
+    localReply = m
+      ? `🔍 **Point sur le dossier TLA TRANSPORTS Ettendorf (VP2026728) :**\n\n` +
+        `* **Intitulé :** ${m.title}\n` +
+        `* **Client :** ${m.client} (Réf : TLA-2026-ETT)\n` +
+        `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
+        `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+        `* **Action requise :** ${m.next_action}`
+      : "Dossier TLA TRANSPORTS introuvable.";
+  }
+  // Cas F : Question générale ou d'accueil
+  else {
+    const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
+    const closestDeadline = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''))[0];
+    localReply = `Bonjour Valentine. Je suis à vos côtés pour gérer vos dossiers d'expertise ferroviaire.\n\n` +
+      `📌 **Votre situation aujourd'hui :**\n` +
+      `* **${enrichedMissions.length} dossiers actifs** en cours d'instruction\n` +
+      `* **${totalUnbilled.toFixed(2).replace('.', ',')} € HT** de vacations et frais à facturer\n` +
+      (closestDeadline ? `* Prochaine échéance : **${closestDeadline.next_deadline?.split('-').reverse().join('/')}** sur le dossier [${closestDeadline.code}] (*${closestDeadline.next_action}*)\n\n` : '\n') +
+      `Que souhaitez-vous faire ? Vous pouvez me demander par exemple :\n` +
+      `* *"Rédige une relance pour Alstom concernant les dires de Vinci"*\n` +
+      `* *"Quels dossiers ont dépassé les 3 500 € ?"*\n` +
+      `* *"Quel est mon chiffre d'affaires ce mois-ci ?"*\n` +
+      `* *"Fais le point complet sur le dossier Forwardis"*`;
   }
 
   res.json({
     reply: localReply,
-    model: 'gemini-2.5-flash (local context fallback)',
+    model: 'vp-expertise-assistant (smart local context)',
     hasKey: Boolean(apiKey),
   });
 });
+
