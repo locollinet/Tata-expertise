@@ -64,3 +64,39 @@ test("Enregistrement sécurisé en base SQLite d'une note de frais validée via 
   const deleted = db.prepare('SELECT * FROM expenses WHERE id = ?').get(testId);
   assert.equal(deleted, undefined, "Nettoyage réussi");
 });
+
+test("Fast-Path : Détection instantanée des requêtes courantes de Valentine", () => {
+  const isDraftingOrCreative = (msg) => /(rédig|redig|relanc|mail|courrier|ecri|écri|brouillon|conseil|recommand|avis|pourquoi|analyse|explique|propose)/i.test(msg);
+  const isBillingQuery = (msg) => /(seuil|palier|3500|3 500|à facturer|a facturer|combien.*factur|total.*non facturé|honorair|attente.*facturation)/i.test(msg);
+  const isDeadlineQuery = (msg) => /(échéance|echeance|jalon|dire|quand|planning|date.*prochain|prochain.*date|calendrier)/i.test(msg);
+  const isAccountingQuery = (msg) => /(compta|tva|chiffre| ca |^ca$|ca du mois|ca ce mois|bilan|chiffre d[' ]affaires)/i.test(msg);
+
+  // Palier de facturation (suggestion chip 1)
+  const q1 = "Quels dossiers ont atteint leur palier de facturation ?";
+  assert.equal(isDraftingOrCreative(q1), false);
+  assert.equal(isBillingQuery(q1), true);
+
+  // Échéances et dires (suggestion chip 2)
+  const q2 = "Quelles sont les prochaines échéances et dires attendus ?";
+  assert.equal(isDraftingOrCreative(q2), false);
+  assert.equal(isDeadlineQuery(q2), true);
+
+  // CA et TVA (suggestion chip 3)
+  const q3 = "Quel est mon chiffre d'affaires et ma TVA ce mois-ci ?";
+  assert.equal(isDraftingOrCreative(q3), false);
+  assert.equal(isAccountingQuery(q3), true);
+
+  // Rédaction de relance
+  const q4 = "Rédige-moi un mail courtois pour relancer un avocat sur la remise de son Dire n°2.";
+  assert.equal(isDraftingOrCreative(q4), true);
+
+  // Lookup dossier dynamique
+  const missions = db.prepare('SELECT code, title, insurance_client FROM missions').all();
+  assert.ok(missions.length > 0, "Des missions doivent exister");
+  const testMission = missions[0];
+  const queryMission = `Point sur ${testMission.code}`;
+  const matched = missions.find(m => queryMission.toLowerCase().includes(m.code.toLowerCase()));
+  assert.ok(matched, "Le dossier doit être reconnu dynamiquement");
+  assert.equal(matched.code, testMission.code);
+});
+

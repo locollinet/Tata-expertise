@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateInvoiceDocx, generateReportDocx } from './docx.js';
 import { generateMonthlyComptaWorkbook } from './excel.js';
 import { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.js';
@@ -1109,19 +1109,29 @@ Consignes :
 3. Reste toujours synthétique et pratique. Pas de longs discours théoriques.
 `;
 
-  // 2. Traitement Fast-Path Déterministe (< 10ms) pour les requêtes factuelles courantes
+  // 2. Traitement Fast-Path Déterministe (< 5ms) pour les requêtes factuelles courantes
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
   const lower = message.toLowerCase();
 
   const isDraftingOrCreative = /(rédig|redig|relanc|mail|courrier|ecri|écri|brouillon|conseil|recommand|avis|pourquoi|analyse|explique|propose)/i.test(message);
-  const isBillingQuery = /(seuil|3500|3 500|à facturer|a facturer|combien.*factur|total.*non facturé|honorair|attente.*facturation)/i.test(message);
-  const isDeadlineQuery = /(échéance|echeance|jalon|dire|quand|planning|date.*prochain|prochain.*date)/i.test(message);
+  const isBillingQuery = /(seuil|palier|3500|3 500|à facturer|a facturer|combien.*factur|total.*non facturé|honorair|attente.*facturation)/i.test(message);
+  const isDeadlineQuery = /(échéance|echeance|jalon|dire|quand|planning|date.*prochain|prochain.*date|calendrier)/i.test(message);
   const isAccountingQuery = /(compta|tva|chiffre| ca |^ca$|ca du mois|ca ce mois|bilan|chiffre d[' ]affaires)/i.test(message);
-  const isMissionLookup = /(alstom|ligne 18|trémie|regiorail|ambérieu|forwardis|clermont|gravanche|tla|ettendorf)/i.test(message);
-  const isTravelQuery = /(déplacement|deplacement|voyage|trajet|sur site)/i.test(message);
+  const isTravelQuery = /(déplacement|deplacement|voyage|trajet|sur site|visite.*site)/i.test(message);
+
+  // Dynamic mission lookup against database missions
+  const matchedMission = enrichedMissions.find(m => {
+    const codeClean = m.code.toLowerCase();
+    const numClean = codeClean.replace(/\D/g, '');
+    return lower.includes(codeClean) ||
+      (numClean.length >= 3 && lower.includes(numClean)) ||
+      (m.client && lower.includes(m.client.toLowerCase())) ||
+      (m.insured && lower.includes(m.insured.toLowerCase())) ||
+      (m.title && lower.includes(m.title.toLowerCase().slice(0, 12)));
+  });
 
   // Si Valentine demande un chiffre ou fait direct sans rédaction créative, réponse instantanée depuis SQLite
-  if (!isDraftingOrCreative && (isBillingQuery || isDeadlineQuery || isAccountingQuery || isMissionLookup || isTravelQuery)) {
+  if (!isDraftingOrCreative && (isBillingQuery || isDeadlineQuery || isAccountingQuery || matchedMission || isTravelQuery)) {
     let fastReply = "";
     if (isBillingQuery) {
       const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
@@ -1153,48 +1163,16 @@ Consignes :
         (upcomingTravels.length > 0
           ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (Dossier ${t.mission_code}) ${t.notes ? `— ${t.notes}` : ''}`).join('\n')
           : 'Aucun déplacement planifié pour le moment.');
-    } else if (isMissionLookup) {
-      if (lower.includes('alstom') || lower.includes('ligne 18')) {
-        const m = enrichedMissions.find(x => x.code === 'VP2026922');
-        fastReply = m
-          ? `🔍 **Point sur le dossier ALSTOM Ligne 18 (VP2026922) :**\n\n` +
-            `* **Intitulé :** ${m.title}\n` +
-            `* **Client :** ${m.client} (Réf : 11161461)\n` +
-            `* **Vacations en cours :** ${m.unbilled_hours} h (${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT)\n` +
-            `* **Échéance critique :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
-            `* **Action requise :** ${m.next_action}`
-          : "Dossier ALSTOM introuvable.";
-      } else if (lower.includes('regiorail') || lower.includes('ambérieu')) {
-        const m = enrichedMissions.find(x => x.code === 'VP2026104');
-        fastReply = m
-          ? `🔍 **Point sur le dossier REGIORAIL Ambérieu (VP2026104) :**\n\n` +
-            `* **Intitulé :** ${m.title}\n` +
-            `* **Client :** ${m.client} (Réf : RR-2026-AMB-09)\n` +
-            `* **Statut financier :** ⚠️ Seuil dépassé avec **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer\n` +
-            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
-            `* **Action requise :** ${m.next_action}`
-          : "Dossier REGIORAIL introuvable.";
-      } else if (lower.includes('forwardis') || lower.includes('clermont') || lower.includes('gravanche')) {
-        const m = enrichedMissions.find(x => x.code === 'VP2025915');
-        fastReply = m
-          ? `🔍 **Point sur le dossier FORWARDIS Clermont-Gravanche (VP2025915) :**\n\n` +
-            `* **Intitulé :** ${m.title}\n` +
-            `* **Client :** ${m.client} (Réf : FWD-2025-03)\n` +
-            `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
-            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
-            `* **Action requise :** ${m.next_action}`
-          : "Dossier FORWARDIS introuvable.";
-      } else if (lower.includes('tla') || lower.includes('ettendorf')) {
-        const m = enrichedMissions.find(x => x.code === 'VP2026728');
-        fastReply = m
-          ? `🔍 **Point sur le dossier TLA TRANSPORTS Ettendorf (VP2026728) :**\n\n` +
-            `* **Intitulé :** ${m.title}\n` +
-            `* **Client :** ${m.client} (Réf : TLA-2026-ETT)\n` +
-            `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
-            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
-            `* **Action requise :** ${m.next_action}`
-          : "Dossier TLA TRANSPORTS introuvable.";
-      }
+    } else if (matchedMission) {
+      const m = matchedMission;
+      const over = m.total_unbilled_ht >= m.billing_threshold;
+      fastReply = `🔍 **Point sur le dossier ${m.code} (${m.title}) :**\n\n` +
+        `* **Client / Assureur :** ${m.client} ${m.insured ? `| **Assuré :** ${m.insured}` : ''}\n` +
+        `* **Statut financier :** ${over ? `⚠️ Seuil dépassé : ` : ''}**${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer (${m.unbilled_hours} h de vacations + frais)\n` +
+        `* **Seuil d'alerte configuré :** ${m.billing_threshold.toLocaleString('fr-FR')} € HT\n` +
+        `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
+        `* **Action requise :** ${m.next_action || 'Dossier à jour'}\n` +
+        `\n👉 Vous pouvez ouvrir directement ce dossier dans l'onglet **Dossiers** pour consulter l'intégralité des pièces, participants et photos.`;
     }
 
     if (fastReply) {
@@ -1206,12 +1184,12 @@ Consignes :
     }
   }
 
-  // 3. Appel Gemini pour requêtes créatives / rédaction / ouvertes (avec timeout et modèles valides)
+  // 3. Appel Gemini 3.8 Flash pour requêtes créatives / rédaction / ouvertes
   if (apiKey) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
+      'gemini-3.8-flash',
+      'gemini-flash-latest',
     ].filter(Boolean) as string[];
 
     const ai = new GoogleGenAI({
@@ -1236,12 +1214,13 @@ Consignes :
     for (const model of candidateModels) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 4000ms)`)), 4000)
+          setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 2500ms)`)), 2500)
         );
         const generatePromise = ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
           config: {
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction: "Tu es l'assistant personnel opérationnel de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires). Tu réponds toujours de manière personnalisée, concrète et utile en français. Si elle te demande de rédiger un mail ou une relance, fournis un texte complet et prêt à l'envoi. Adapte toujours ta réponse à la demande précise, sans formule robotique répétitive.",
           },
         });
@@ -1256,7 +1235,11 @@ Consignes :
           });
         }
       } catch (err: any) {
-        console.warn(`Modèle Gemini ${model} indisponible (${err.message}). Essai du suivant...`);
+        console.warn(`Modèle Gemini ${model} indisponible (${err.message})...`);
+        // If it's a timeout or auth error, don't cascade another timeout
+        if (err.message && (err.message.includes('Timeout') || err.message.includes('API_KEY_INVALID') || err.message.includes('API key') || err.message.includes('401') || err.message.includes('403'))) {
+          break; // Stop immediately to provide instant local fallback
+        }
       }
     }
   }
@@ -1429,8 +1412,8 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
+        'gemini-3.8-flash',
+        'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
       const fileBuffer = fs.readFileSync(file.path);
@@ -1492,10 +1475,21 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
   }
 }`;
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
       for (const mName of candidateModels) {
         try {
-          const result = await ai.models.generateContent({
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> 3500ms)`)), 3500)
+          );
+          const generatePromise = ai.models.generateContent({
             model: mName,
             contents: [
               {
@@ -1511,8 +1505,12 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
                 ],
               },
             ],
+            config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            },
           });
 
+          const result: any = await Promise.race([generatePromise, timeoutPromise]);
           const rawText = result.text || '';
           const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
           const parsed = JSON.parse(cleaned);
@@ -1523,6 +1521,9 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
           }
         } catch (modelErr: any) {
           console.warn(`[Ingest] Modèle ${mName} indisponible :`, modelErr.message);
+          if (modelErr.message && (modelErr.message.includes('Timeout') || modelErr.message.includes('API_KEY_INVALID') || modelErr.message.includes('API key') || modelErr.message.includes('401') || modelErr.message.includes('403'))) {
+            break;
+          }
         }
       }
     }
