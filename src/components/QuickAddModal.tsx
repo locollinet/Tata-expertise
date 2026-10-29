@@ -208,42 +208,44 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         </div>
 
         {/* Tab switch */}
-        <div className="flex border-b border-slate-200 bg-slate-100/70 p-1 m-4 mb-2 rounded-lg">
+        <div className="flex bg-slate-100 p-1 mx-5 sm:mx-6 my-3 rounded-xl border border-slate-200/80">
           <button
             type="button"
             onClick={() => { setTab('activity'); setSuccessFeedback(null); }}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
+            className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg flex items-center justify-center space-x-1.5 transition-all ${
               tab === 'activity'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Clock className="w-4 h-4 text-[#0f3854]" />
-            <span>Pointage temps</span>
+            <Clock className="w-4 h-4 text-[#0f3854] shrink-0" />
+            <span className="sm:hidden">Temps</span>
+            <span className="hidden sm:inline">Pointage temps</span>
           </button>
           <button
             type="button"
             onClick={() => { setTab('expense'); setSuccessFeedback(null); }}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
+            className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg flex items-center justify-center space-x-1.5 transition-all ${
               tab === 'expense'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Receipt className="w-4 h-4 text-emerald-600" />
+            <Receipt className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>Frais & Km</span>
           </button>
           <button
             type="button"
             onClick={() => { setTab('photo'); setSuccessFeedback(null); }}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
+            className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg flex items-center justify-center space-x-1.5 transition-all ${
               tab === 'photo'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Camera className="w-4 h-4 text-sky-600" />
-            <span>Photo terrain</span>
+            <Camera className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="sm:hidden">Photos</span>
+            <span className="hidden sm:inline">Photo terrain</span>
           </button>
         </div>
 
@@ -328,18 +330,19 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
               {/* Quick Hours Presets */}
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                <span className="text-[11px] font-medium">Préréglages :</span>
+                <span className="text-[11px] font-medium shrink-0">Préréglages :</span>
                 {[
                   { l: '15m', val: '0.25' },
                   { l: '30m', val: '0.5' },
                   { l: '1h', val: '1' },
                   { l: '2h', val: '2' },
-                  { l: '3,5h (1/2 j)', val: '3.5' },
-                  { l: '7h (1 j)', val: '7' },
+                  { l: '3,5h', val: '3.5', title: '1/2 journée' },
+                  { l: '7h', val: '7', title: '1 journée' },
                 ].map((item) => (
                   <button
                     key={item.val}
                     type="button"
+                    title={item.title}
                     onClick={() => setHours(item.val)}
                     className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
                       hours === item.val
@@ -396,14 +399,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               </div>
 
               {/* Rate & HT Preview Box */}
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
-                <div>
-                  <span className="text-slate-500">Taux appliqué : </span>
-                  <span className="font-semibold text-slate-700">{hourlyRate} €/h HT</span>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 text-xs">
+                <div className="flex items-center justify-between sm:justify-start sm:gap-1.5">
+                  <span className="text-slate-500">Taux appliqué :</span>
+                  <span className="font-semibold text-slate-700 whitespace-nowrap">{hourlyRate} €/h HT</span>
                 </div>
-                <div>
-                  <span className="text-slate-500">Montant à facturer : </span>
-                  <span className="font-bold text-[#0f3854] text-sm">{calculatedActivityHT.toFixed(2).replace('.', ',')} € HT</span>
+                <div className="flex items-center justify-between sm:justify-end sm:gap-1.5 border-t sm:border-t-0 pt-1.5 sm:pt-0 border-slate-200/60">
+                  <span className="text-slate-500">Montant à facturer :</span>
+                  <span className="font-bold text-[#0f3854] text-sm whitespace-nowrap">{calculatedActivityHT.toFixed(2).replace('.', ',')} € HT</span>
                 </div>
               </div>
             </>
@@ -482,14 +485,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               </div>
 
               {/* Expense Preview */}
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
-                <div>
-                  <span className="text-slate-500">Montant HT : </span>
-                  <span className="font-semibold text-slate-700">{calculatedExpenseHT.toFixed(2).replace('.', ',')} €</span>
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 text-xs">
+                <div className="flex items-center justify-between sm:justify-start sm:gap-1.5">
+                  <span className="text-slate-500">Montant HT :</span>
+                  <span className="font-semibold text-slate-700 whitespace-nowrap">{calculatedExpenseHT.toFixed(2).replace('.', ',')} €</span>
                 </div>
-                <div>
-                  <span className="text-slate-500">Montant TTC : </span>
-                  <span className="font-bold text-emerald-700 text-sm">{calculatedExpenseTTC.toFixed(2).replace('.', ',')} €</span>
+                <div className="flex items-center justify-between sm:justify-end sm:gap-1.5 border-t sm:border-t-0 pt-1.5 sm:pt-0 border-slate-200/60">
+                  <span className="text-slate-500">Montant TTC :</span>
+                  <span className="font-bold text-emerald-700 text-sm whitespace-nowrap">{calculatedExpenseTTC.toFixed(2).replace('.', ',')} €</span>
                 </div>
               </div>
             </>
@@ -589,32 +592,32 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           )}
 
           {/* Action buttons */}
-          <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+          <div className="pt-3 border-t border-slate-100 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2.5">
             <button
               type="button"
               onClick={() => executeSubmit(true)}
               disabled={loading}
-              className="px-3.5 py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors"
+              className="w-full sm:w-auto px-3.5 py-2.5 sm:py-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors text-center"
               title="Enregistre la ligne et garde la fenêtre ouverte pour pointer un autre dossier"
             >
               + Enregistrer et enchaîner
             </button>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={loading}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                className="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors text-center"
               >
                 Fermer
               </button>
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2 rounded-lg bg-[#0f3854] hover:bg-[#16496d] text-white text-xs font-semibold shadow-xs transition-colors flex items-center space-x-1.5"
+                className="flex-1 sm:flex-none px-5 py-2.5 sm:py-2 rounded-lg bg-[#0f3854] hover:bg-[#16496d] text-white text-xs font-semibold shadow-xs transition-colors flex items-center justify-center space-x-1.5"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4 shrink-0" />
                 <span>{loading ? "Enregistrement..." : "Enregistrer et fermer"}</span>
               </button>
             </div>

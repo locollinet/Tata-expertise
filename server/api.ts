@@ -1109,12 +1109,111 @@ Consignes :
 3. Reste toujours synthétique et pratique. Pas de longs discours théoriques.
 `;
 
-  // 2. Multi-model Gemini call with automatic fallback chain
+  // 2. Traitement Fast-Path Déterministe (< 10ms) pour les requêtes factuelles courantes
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
+  const lower = message.toLowerCase();
 
+  const isDraftingOrCreative = /(rédig|redig|relanc|mail|courrier|ecri|écri|brouillon|conseil|recommand|avis|pourquoi|analyse|explique|propose)/i.test(message);
+  const isBillingQuery = /(seuil|3500|3 500|à facturer|a facturer|combien.*factur|total.*non facturé|honorair|attente.*facturation)/i.test(message);
+  const isDeadlineQuery = /(échéance|echeance|jalon|dire|quand|planning|date.*prochain|prochain.*date)/i.test(message);
+  const isAccountingQuery = /(compta|tva|chiffre| ca |^ca$|ca du mois|ca ce mois|bilan|chiffre d[' ]affaires)/i.test(message);
+  const isMissionLookup = /(alstom|ligne 18|trémie|regiorail|ambérieu|forwardis|clermont|gravanche|tla|ettendorf)/i.test(message);
+  const isTravelQuery = /(déplacement|deplacement|voyage|trajet|sur site)/i.test(message);
+
+  // Si Valentine demande un chiffre ou fait direct sans rédaction créative, réponse instantanée depuis SQLite
+  if (!isDraftingOrCreative && (isBillingQuery || isDeadlineQuery || isAccountingQuery || isMissionLookup || isTravelQuery)) {
+    let fastReply = "";
+    if (isBillingQuery) {
+      const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
+      const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
+      fastReply = `💰 **Synthèse de votre facturation en cours :**\n\n` +
+        `* **Total en attente d'émission :** **${totalUnbilled.toFixed(2).replace('.', ',')} € HT**\n\n` +
+        (overThreshold.length > 0
+          ? `⚠️ **Dossier(s) ayant dépassé le seuil d'alerte (${overThreshold[0].billing_threshold} € HT) :**\n` +
+            overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h de vacations + frais).`).join('\n') +
+            `\n\n👉 Vous pouvez générer les notes d'honoraires Word officielles au format VP Expertise en un clic dans l'onglet **Honoraires**.`
+          : `✅ Aucun dossier ne dépasse actuellement votre seuil d'alerte.`);
+    } else if (isDeadlineQuery) {
+      const withDeadlines = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''));
+      fastReply = `📅 **Vos prochaines échéances de procédure :**\n\n` +
+        withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] ${m.title}\n  ↳ *Action :* ${m.next_action}`).join('\n\n') +
+        `\n\n🚆 **Prochain déplacement terrain :**\n` +
+        (upcomingTravels.length > 0
+          ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (${t.mission_code})`).join('\n')
+          : 'Aucun déplacement planifié pour le moment.');
+    } else if (isAccountingQuery) {
+      fastReply = `📊 **Situation Comptable d'Octobre 2026 :**\n\n` +
+        `* **Chiffre d'affaires émis :** ${revObj.rev.toFixed(2).replace('.', ',')} € HT\n` +
+        `* **TVA collectée estimée (20%) :** ${(revObj.rev * 0.20).toFixed(2).replace('.', ',')} €\n` +
+        `* **Dernières factures émises :**\n` +
+        latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2).replace('.', ',')} € HT (${i.status})`).join('\n') +
+        `\n\nL'export journal comptable Excel est prêt dans l'onglet **Comptabilité**.`;
+    } else if (isTravelQuery) {
+      fastReply = `🚆 **Vos prochains déplacements terrain :**\n\n` +
+        (upcomingTravels.length > 0
+          ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (Dossier ${t.mission_code}) ${t.notes ? `— ${t.notes}` : ''}`).join('\n')
+          : 'Aucun déplacement planifié pour le moment.');
+    } else if (isMissionLookup) {
+      if (lower.includes('alstom') || lower.includes('ligne 18')) {
+        const m = enrichedMissions.find(x => x.code === 'VP2026922');
+        fastReply = m
+          ? `🔍 **Point sur le dossier ALSTOM Ligne 18 (VP2026922) :**\n\n` +
+            `* **Intitulé :** ${m.title}\n` +
+            `* **Client :** ${m.client} (Réf : 11161461)\n` +
+            `* **Vacations en cours :** ${m.unbilled_hours} h (${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT)\n` +
+            `* **Échéance critique :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+            `* **Action requise :** ${m.next_action}`
+          : "Dossier ALSTOM introuvable.";
+      } else if (lower.includes('regiorail') || lower.includes('ambérieu')) {
+        const m = enrichedMissions.find(x => x.code === 'VP2026104');
+        fastReply = m
+          ? `🔍 **Point sur le dossier REGIORAIL Ambérieu (VP2026104) :**\n\n` +
+            `* **Intitulé :** ${m.title}\n` +
+            `* **Client :** ${m.client} (Réf : RR-2026-AMB-09)\n` +
+            `* **Statut financier :** ⚠️ Seuil dépassé avec **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer\n` +
+            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+            `* **Action requise :** ${m.next_action}`
+          : "Dossier REGIORAIL introuvable.";
+      } else if (lower.includes('forwardis') || lower.includes('clermont') || lower.includes('gravanche')) {
+        const m = enrichedMissions.find(x => x.code === 'VP2025915');
+        fastReply = m
+          ? `🔍 **Point sur le dossier FORWARDIS Clermont-Gravanche (VP2025915) :**\n\n` +
+            `* **Intitulé :** ${m.title}\n` +
+            `* **Client :** ${m.client} (Réf : FWD-2025-03)\n` +
+            `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
+            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+            `* **Action requise :** ${m.next_action}`
+          : "Dossier FORWARDIS introuvable.";
+      } else if (lower.includes('tla') || lower.includes('ettendorf')) {
+        const m = enrichedMissions.find(x => x.code === 'VP2026728');
+        fastReply = m
+          ? `🔍 **Point sur le dossier TLA TRANSPORTS Ettendorf (VP2026728) :**\n\n` +
+            `* **Intitulé :** ${m.title}\n` +
+            `* **Client :** ${m.client} (Réf : TLA-2026-ETT)\n` +
+            `* **Non facturé :** ${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT\n` +
+            `* **Prochaine échéance :** **${m.next_deadline?.split('-').reverse().join('/')}**\n` +
+            `* **Action requise :** ${m.next_action}`
+          : "Dossier TLA TRANSPORTS introuvable.";
+      }
+    }
+
+    if (fastReply) {
+      return res.json({
+        reply: fastReply,
+        model: 'vp-expertise-fastpath (instantané)',
+        hasKey: Boolean(apiKey),
+      });
+    }
+  }
+
+  // 3. Appel Gemini pour requêtes créatives / rédaction / ouvertes (avec timeout et modèles valides)
   if (apiKey) {
-    // Try reliable candidate models in sequence
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    const candidateModels = [
+      process.env.GEMINI_MODEL,
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ].filter(Boolean) as string[];
+
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -1136,7 +1235,10 @@ Consignes :
 
     for (const model of candidateModels) {
       try {
-        const response = await ai.models.generateContent({
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 4000ms)`)), 4000)
+        );
+        const generatePromise = ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
           config: {
@@ -1144,6 +1246,7 @@ Consignes :
           },
         });
 
+        const response: any = await Promise.race([generatePromise, timeoutPromise]);
         const replyText = response.text?.trim();
         if (replyText && replyText.length > 0) {
           return res.json({
@@ -1158,8 +1261,7 @@ Consignes :
     }
   }
 
-  // 3. Fallback contextuel intelligent si l'API externe est temporairement inaccessible
-  const lower = message.toLowerCase();
+  // 4. Fallback contextuel intelligent si l'API externe est temporairement inaccessible
   let localReply = "";
 
   // Cas A : Rédaction de mail, relance ou courrier
@@ -1327,9 +1429,6 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-3.8-flash',
-        'gemini-3.1-flash-lite',
-        'gemini-2.5-flash',
         'gemini-2.0-flash',
         'gemini-1.5-flash',
       ].filter(Boolean) as string[];
