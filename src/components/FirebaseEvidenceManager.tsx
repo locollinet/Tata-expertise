@@ -193,8 +193,14 @@ export const FirebaseEvidenceManager: React.FC<FirebaseEvidenceManagerProps> = (
     }
   };
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   const handleDeleteEvidence = async (item: EvidenceItem) => {
-    if (!confirm(`Supprimer définitivement "${item.title}" ?`)) return;
+    if (deleteConfirmId !== item.id) {
+      setDeleteConfirmId(item.id);
+      return;
+    }
+    setDeleteConfirmId(null);
     try {
       await deleteDoc(doc(db, collectionPath, item.id));
     } catch (err) {
@@ -359,10 +365,15 @@ export const FirebaseEvidenceManager: React.FC<FirebaseEvidenceManagerProps> = (
 
                   <button
                     onClick={() => handleDeleteEvidence(item)}
-                    className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors"
-                    title="Supprimer cet élément"
+                    className={`p-1 rounded transition-colors text-xs flex items-center gap-1 ${
+                      deleteConfirmId === item.id
+                        ? 'bg-rose-50 text-rose-600 font-semibold px-2'
+                        : 'text-slate-400 hover:text-rose-600'
+                    }`}
+                    title={deleteConfirmId === item.id ? "Cliquez pour confirmer la suppression" : "Supprimer cet élément"}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
+                    {deleteConfirmId === item.id && <span>Confirmer</span>}
                   </button>
                 </div>
               </div>
