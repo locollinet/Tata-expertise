@@ -598,8 +598,11 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                               {card.matched_mission_code && onNavigateToMission && (
                                 <button
                                   type="button"
-                                  onClick={() => onNavigateToMission(card.matched_mission_code!)}
-                                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline flex items-center space-x-1"
+                                  onClick={() => {
+                                    onNavigateToMission(card.matched_mission_code!);
+                                    onClose();
+                                  }}
+                                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline flex items-center space-x-1 cursor-pointer"
                                 >
                                   <span>Consulter le dossier {card.matched_mission_code}</span>
                                   <ChevronRight className="w-3.5 h-3.5" />
@@ -819,6 +822,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                         });
                                       }
                                       handleCancelAction(m.id);
+                                      onClose();
                                     }}
                                     className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
                                   >

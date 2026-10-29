@@ -15,6 +15,7 @@ import { api } from './api.js';
 export function App() {
   const [activeTab, setActiveTab] = useState<'today' | 'missions' | 'billing' | 'compta'>('today');
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+  const [sourceTab, setSourceTab] = useState<'today' | 'missions' | 'billing'>('missions');
   const [billingPreselectedCode, setBillingPreselectedCode] = useState<string | undefined>(undefined);
 
   const [missions, setMissions] = useState<Mission[]>([]);
@@ -22,7 +23,25 @@ export function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Deep linking via URL query parameters (e.g. ?tab=missions&mission=m-vp2026922)
+  // Sync browser URL & history without full page reload
+  const updateURL = (tab: string, missionId?: string | null, replace = false) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      if (missionId && tab === 'missions') {
+        url.searchParams.set('mission', missionId);
+      } else {
+        url.searchParams.delete('mission');
+      }
+      if (replace) {
+        window.history.replaceState({ tab, missionId }, '', url.toString());
+      } else {
+        window.history.pushState({ tab, missionId }, '', url.toString());
+      }
+    } catch (_) {}
+  };
+
+  // Deep linking via URL query parameters & browser Back button support
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab') as 'today' | 'missions' | 'billing' | 'compta' | null;
@@ -38,6 +57,17 @@ export function App() {
     if (assistant === 'open' || assistant === 'true' || assistant === '1') {
       setIsAssistantOpen(true);
     }
+
+    const handlePopState = (e: PopStateEvent) => {
+      const p = new URLSearchParams(window.location.search);
+      const curTab = (p.get('tab') as any) || e.state?.tab || 'today';
+      const curMission = p.get('mission') || e.state?.missionId || null;
+      setActiveTab(curTab);
+      setSelectedMissionId(curMission);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   // Modals & Drawers
@@ -91,35 +121,58 @@ export function App() {
     setIsQuickAddOpen(true);
   };
 
-  const handleNavigateToMission = (codeOrId: string) => {
+  const handleNavigateToMission = (codeOrId: string, origin?: 'today' | 'missions' | 'billing') => {
     const target = (codeOrId || '').trim().toLowerCase();
     const found = missions.find(m => 
       m.code.toLowerCase() === target || 
       m.id.toLowerCase() === target ||
       (m.case_reference && m.case_reference.toLowerCase() === target)
     );
-    if (found) {
-      setSelectedMissionId(found.id);
-    } else if (codeOrId) {
-      setSelectedMissionId(codeOrId);
-    }
+    const mId = found ? found.id : codeOrId;
+    setSelectedMissionId(mId);
+    setSourceTab(origin || (activeTab === 'missions' ? 'missions' : activeTab as any));
     setActiveTab('missions');
+    updateURL('missions', found ? found.code : mId);
   };
 
   const handleNavigateToBilling = (missionCode?: string) => {
     setBillingPreselectedCode(missionCode);
     setActiveTab('billing');
     setSelectedMissionId(null);
+    updateURL('billing', null);
+  };
+
+  const handleTabChange = (tab: 'today' | 'missions' | 'billing' | 'compta') => {
+    setActiveTab(tab);
+    if (tab !== 'missions') {
+      setSelectedMissionId(null);
+      updateURL(tab, null);
+    } else {
+      updateURL('missions', selectedMissionId);
+    }
+  };
+
+  const handleBackFromMission = () => {
+    if (sourceTab === 'today') {
+      setActiveTab('today');
+      setSelectedMissionId(null);
+      updateURL('today', null);
+    } else if (sourceTab === 'billing') {
+      setActiveTab('billing');
+      setSelectedMissionId(null);
+      updateURL('billing', null);
+    } else {
+      setSelectedMissionId(null);
+      setActiveTab('missions');
+      updateURL('missions', null);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       <Header
         activeTab={activeTab}
-        setActiveTab={(tab) => {
-          setActiveTab(tab);
-          if (tab !== 'missions') setSelectedMissionId(null);
-        }}
+        setActiveTab={handleTabChange}
         onOpenQuickAdd={() => handleOpenQuickAdd()}
         onOpenAssistant={() => setIsAssistantOpen(true)}
         urgentCount={summary?.urgent_actions?.length || 0}
@@ -131,11 +184,11 @@ export function App() {
           <TodayView
             summary={summary}
             loading={loading}
-            onNavigateToMission={handleNavigateToMission}
+            onNavigateToMission={(code) => handleNavigateToMission(code, 'today')}
             onNavigateToBilling={handleNavigateToBilling}
             onOpenQuickAdd={() => handleOpenQuickAdd()}
-            onNavigateToMissions={() => { setActiveTab('missions'); setSelectedMissionId(null); }}
-            onNavigateToCompta={() => { setActiveTab('compta'); setSelectedMissionId(null); }}
+            onNavigateToMissions={() => handleTabChange('missions')}
+            onNavigateToCompta={() => handleTabChange('compta')}
           />
         )}
 
@@ -144,6 +197,7 @@ export function App() {
             <MissionDetailView
               key={selectedMissionId}
               missionId={selectedMissionId}
+              sourceTab={sourceTab}
               initialMission={
                 missionsCache[selectedMissionId] ||
                 missions.find(m => m.id === selectedMissionId || m.code.toLowerCase() === selectedMissionId.toLowerCase())
@@ -155,9 +209,7 @@ export function App() {
                   [fullData.code.toLowerCase()]: fullData,
                 }));
               }}
-              onBack={() => {
-                setSelectedMissionId(null);
-              }}
+              onBack={handleBackFromMission}
               onOpenQuickAdd={(mId) => handleOpenQuickAdd(mId)}
               onPrepareBilling={(mId) => {
                 const m = missions.find(x => x.id === mId) || missionsCache[mId];
@@ -167,7 +219,11 @@ export function App() {
           ) : (
             <MissionsView
               missions={missions}
-              onSelectMission={(m) => setSelectedMissionId(m.id)}
+              onSelectMission={(m) => {
+                setSelectedMissionId(m.id);
+                setSourceTab('missions');
+                updateURL('missions', m.code);
+              }}
               onOpenCreateMission={() => setIsCreateMissionOpen(true)}
             />
           )
@@ -178,6 +234,7 @@ export function App() {
             missions={missions}
             initialMissionCode={billingPreselectedCode}
             onRefreshMissions={refreshData}
+            onNavigateToMission={(code) => handleNavigateToMission(code, 'billing')}
           />
         )}
 
@@ -190,7 +247,7 @@ export function App() {
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] flex items-center justify-around shadow-lg">
         <button
           type="button"
-          onClick={() => { setActiveTab('today'); setSelectedMissionId(null); }}
+          onClick={() => handleTabChange('today')}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] font-semibold transition-colors ${
             activeTab === 'today' ? 'text-[#0f3854]' : 'text-slate-500 hover:text-slate-800'
           }`}
@@ -208,7 +265,7 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => { setActiveTab('missions'); setSelectedMissionId(null); }}
+          onClick={() => handleTabChange('missions')}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] font-semibold transition-colors ${
             activeTab === 'missions' ? 'text-[#0f3854]' : 'text-slate-500 hover:text-slate-800'
           }`}
@@ -232,7 +289,7 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => { setActiveTab('billing'); setSelectedMissionId(null); }}
+          onClick={() => handleTabChange('billing')}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] font-semibold transition-colors ${
             activeTab === 'billing' ? 'text-[#0f3854]' : 'text-slate-500 hover:text-slate-800'
           }`}

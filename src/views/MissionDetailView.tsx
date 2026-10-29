@@ -12,6 +12,7 @@ import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 interface MissionDetailViewProps {
   missionId: string;
   initialMission?: any;
+  sourceTab?: 'today' | 'missions' | 'billing';
   onBack: () => void;
   onCacheMission?: (mission: any) => void;
   onOpenQuickAdd: (missionId: string) => void;
@@ -21,6 +22,7 @@ interface MissionDetailViewProps {
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   missionId,
   initialMission,
+  sourceTab = 'missions',
   onBack,
   onCacheMission,
   onOpenQuickAdd,
@@ -322,7 +324,13 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Retour aux dossiers</span>
+          <span>
+            {sourceTab === 'today'
+              ? "Retour à Aujourd'hui"
+              : sourceTab === 'billing'
+              ? "Retour aux honoraires"
+              : "Retour aux dossiers"}
+          </span>
         </button>
 
         {loading && (

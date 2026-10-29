@@ -7,12 +7,14 @@ interface BillingViewProps {
   missions: Mission[];
   initialMissionCode?: string;
   onRefreshMissions: () => void;
+  onNavigateToMission?: (codeOrId: string) => void;
 }
 
 export const BillingView: React.FC<BillingViewProps> = ({
   missions,
   initialMissionCode,
   onRefreshMissions,
+  onNavigateToMission,
 }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,11 +71,14 @@ export const BillingView: React.FC<BillingViewProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!selectedMissionId && missions.length > 0) {
-      const match = initialMissionCode ? missions.find(m => m.code === initialMissionCode) : missions[0];
+    if (initialMissionCode && missions.length > 0) {
+      const target = initialMissionCode.trim().toLowerCase();
+      const match = missions.find(m => m.code.toLowerCase() === target || m.id.toLowerCase() === target);
       if (match) setSelectedMissionId(match.id);
+    } else if (!selectedMissionId && missions.length > 0) {
+      setSelectedMissionId(missions[0].id);
     }
-  }, [missions, selectedMissionId, initialMissionCode]);
+  }, [missions, initialMissionCode]);
 
   useEffect(() => {
     loadSelectedMission();
@@ -452,7 +457,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         {inv.date.split('-').reverse().join('/')}
                       </td>
                       <td className="py-2.5 px-3 font-medium text-slate-800">
-                        {inv.mission_code}
+                        {onNavigateToMission ? (
+                          <button
+                            type="button"
+                            onClick={() => onNavigateToMission(inv.mission_code)}
+                            className="text-[#0f3854] hover:underline font-bold text-left cursor-pointer inline-flex items-center space-x-1"
+                            title={`Consulter le dossier ${inv.mission_code}`}
+                          >
+                            <span>{inv.mission_code}</span>
+                            <CornerDownRight className="w-3 h-3 text-slate-400" />
+                          </button>
+                        ) : (
+                          inv.mission_code
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-slate-700">
                         {inv.client_name}
