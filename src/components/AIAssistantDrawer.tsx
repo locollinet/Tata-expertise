@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Bot, Sparkles, Send, X, Copy, Check, RotateCcw, AlertCircle,
   ChevronRight, Camera, Paperclip, FileText, Receipt, FolderPlus,
-  ArrowRight, UploadCloud, CheckCircle2
+  ArrowRight, UploadCloud, CheckCircle2, Mic, Square, Radio, Image as ImageIcon,
+  Clock, BookOpen, Volume2
 } from 'lucide-react';
 import { api } from '../api.js';
 import { Mission } from '@shared/types.js';
 
 interface ActionCardData {
-  action_type: 'expense' | 'document' | 'new_mission' | 'activity';
+  action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note';
   confidence: number;
   matched_mission_id?: string | null;
   matched_mission_code?: string | null;
@@ -28,12 +29,14 @@ interface ActionCardData {
     document_title?: string;
     document_category?: string;
     deadline?: string;
+    caption?: string;
+    section?: string;
+    hours?: number;
     new_mission_title?: string;
     new_mission_case_reference?: string;
     new_mission_client?: string;
     new_mission_insured?: string;
     new_mission_court?: string;
-    hours?: number;
   };
   committed?: boolean;
   committedMessage?: string;
@@ -82,11 +85,18 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Audio Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<any>(null);
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: `Bonjour Valentine !\n\nJe suis votre **assistant opérationnel & terrain VP Expertise**.\n\nVous pouvez :\n* 📷 **Prendre en photo un reçu de train ou note de frais** (reçu CB, billet SNCF, hôtel, repas) pour l'enregistrer en 1 clic.\n* 📄 **Déposer un Dire d'avocat ou un PV** pour l'analyser et le classer dans le bon dossier.\n* 💬 **Me poser des questions libres** sur vos seuils de facturation, échéances ou chiffre d'affaires.`,
+      text: `Bonjour Valentine !\n\nJe suis votre **assistant opérationnel & terrain VP Expertise**.\n\nVous pouvez directement :\n* 🎙️ **Dicter ou enregistrer une note vocale** (au micro ou en déposant un fichier audio) pour créer vos constats techniques ou pointer vos vacations.\n* 📷 **Prendre en photo une avarie mécanique ou un reçu** (bogies, essieux, rails, billets SNCF, hôtels, péages) pour analyse et intégration immédiate.\n* 📝 **Déposer une note de visite ou un Dire d'avocat** pour enrichir automatiquement vos rapports Word.\n* 💬 **Me poser des questions libres** sur vos seuils d'honoraires, vacations et échéances de procédure.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -95,6 +105,76 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Microphone recording handlers
+  const startRecording = async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Enregistrement audio non supporté sur ce navigateur.");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (audioBlob.size > 500) {
+          const audioFile = new File([audioBlob], `note_vocale_${Date.now()}.webm`, { type: 'audio/webm' });
+          handleFilePicked(audioFile);
+        }
+      };
+
+      mediaRecorder.start(250);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn("Microphone access error :", err);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `warn-${Date.now()}`,
+          sender: 'assistant',
+          text: "⚠️ Impossible d'accéder au micro. Veuillez autoriser le microphone dans votre navigateur ou déposer un fichier audio (.mp3, .m4a, .wav).",
+          timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    audioChunksRef.current = [];
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    setIsRecording(false);
+    setRecordingSeconds(0);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -109,13 +189,16 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading, selectedFile]);
+  }, [messages, loading, selectedFile, isRecording]);
 
   // Clean preview blob URL on unmount or file change
   useEffect(() => {
     return () => {
       if (filePreview && filePreview.startsWith('blob:')) {
         URL.revokeObjectURL(filePreview);
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
       }
     };
   }, [filePreview]);
@@ -643,16 +726,27 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                                     : card.action_type === 'new_mission'
                                     ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : card.action_type === 'field_photo'
+                                    ? 'bg-cyan-100 text-cyan-900 border border-cyan-300'
+                                    : card.action_type === 'field_note'
+                                    ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                    : card.action_type === 'activity'
+                                    ? 'bg-blue-100 text-blue-900 border border-blue-300'
                                     : 'bg-indigo-100 text-indigo-900 border border-indigo-300'
                                 }`}>
                                   {card.action_type === 'expense' && <Receipt className="w-3.5 h-3.5" />}
                                   {card.action_type === 'document' && <FileText className="w-3.5 h-3.5" />}
                                   {card.action_type === 'new_mission' && <FolderPlus className="w-3.5 h-3.5" />}
+                                  {card.action_type === 'field_photo' && <ImageIcon className="w-3.5 h-3.5" />}
+                                  {card.action_type === 'field_note' && <BookOpen className="w-3.5 h-3.5" />}
+                                  {card.action_type === 'activity' && <Clock className="w-3.5 h-3.5" />}
                                   <span>
                                     {card.action_type === 'expense' && 'Note de frais détectée'}
                                     {card.action_type === 'document' && 'Pièce de procédure détectée'}
                                     {card.action_type === 'new_mission' && 'Nouveau dossier détecté'}
-                                    {card.action_type === 'activity' && 'Pointage de temps détecté'}
+                                    {card.action_type === 'field_photo' && 'Photo technique de terrain'}
+                                    {card.action_type === 'field_note' && 'Note & analyse technique'}
+                                    {card.action_type === 'activity' && 'Pointage de vacation'}
                                   </span>
                                 </span>
 
@@ -662,9 +756,9 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     target="_blank"
                                     rel="noreferrer"
                                     className="text-[11px] text-[#0f3854] hover:underline font-semibold flex items-center space-x-1"
-                                    title="Voir le justificatif scanné"
+                                    title="Voir le fichier transmis"
                                   >
-                                    <span>Voir le reçu</span>
+                                    <span>Voir le fichier</span>
                                     <ChevronRight className="w-3 h-3" />
                                   </a>
                                 )}
@@ -688,6 +782,114 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                       </option>
                                     ))}
                                   </select>
+                                </div>
+                              )}
+
+                              {/* Field Photo Specific Form Fields */}
+                              {card.action_type === 'field_photo' && (
+                                <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
+                                  {card.filename && (
+                                    <div className="flex items-center space-x-3 pb-2 border-b border-slate-100">
+                                      <img
+                                        src={`/uploads/${card.filename}`}
+                                        alt="Aperçu photo terrain"
+                                        className="w-16 h-16 rounded-lg object-cover border border-slate-200 shrink-0"
+                                      />
+                                      <div className="text-xs text-slate-500">
+                                        <p className="font-semibold text-slate-800">Cliché technique terrain</p>
+                                        <p className="text-[11px] text-slate-400">Sera automatiquement inséré dans la galerie photo et le rapport Word</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-semibold uppercase">Légende technique d'expertise</label>
+                                    <input
+                                      type="text"
+                                      value={card.payload.caption || card.payload.label || ''}
+                                      onChange={(e) => updateCardField(m.id, 'caption', e.target.value)}
+                                      placeholder="ex: Bogie avant gauche — Fissure transversale sur le longeron..."
+                                      className="w-full text-xs p-1.5 border rounded bg-slate-50/50 font-medium"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Field Note Specific Form Fields */}
+                              {card.action_type === 'field_note' && (
+                                <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Section du rapport</label>
+                                      <select
+                                        value={card.payload.section || 'section_observations'}
+                                        onChange={(e) => updateCardField(m.id, 'section', e.target.value)}
+                                        className="w-full text-xs p-1 border rounded bg-slate-50/50 font-medium"
+                                      >
+                                        <option value="section_observations">Constatations contradictoires</option>
+                                        <option value="section_analysis">Analyse technique</option>
+                                        <option value="section_facts">Rappel des faits</option>
+                                        <option value="section_conclusions">Conclusions / Avis</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Vacation liée (heures)</label>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        value={card.payload.hours ?? 0}
+                                        onChange={(e) => updateCardField(m.id, 'hours', parseFloat(e.target.value) || 0)}
+                                        placeholder="0.0"
+                                        className="w-full text-xs p-1 border rounded bg-slate-50/50 font-mono font-bold"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-semibold uppercase">Observations techniques rédigées</label>
+                                    <textarea
+                                      rows={3}
+                                      value={card.payload.notes || card.payload.label || ''}
+                                      onChange={(e) => updateCardField(m.id, 'notes', e.target.value)}
+                                      className="w-full text-xs p-1.5 border rounded bg-slate-50/50 leading-relaxed font-sans"
+                                      placeholder="Observations contradictoires sur site..."
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Activity Specific Form Fields */}
+                              {card.action_type === 'activity' && (
+                                <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Date</label>
+                                      <input
+                                        type="date"
+                                        value={card.payload.date || ''}
+                                        onChange={(e) => updateCardField(m.id, 'date', e.target.value)}
+                                        className="w-full text-xs p-1 border rounded bg-slate-50/50"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Heures (h)</label>
+                                      <input
+                                        type="number"
+                                        step="0.25"
+                                        value={card.payload.hours ?? 1}
+                                        onChange={(e) => updateCardField(m.id, 'hours', parseFloat(e.target.value) || 0)}
+                                        className="w-full text-xs p-1 border rounded font-mono bg-slate-50/50 font-bold"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-semibold uppercase">Libellé de la vacation</label>
+                                    <input
+                                      type="text"
+                                      value={card.payload.label || ''}
+                                      onChange={(e) => updateCardField(m.id, 'label', e.target.value)}
+                                      placeholder="ex: Réunion contradictoire et examen de pièces"
+                                      className="w-full text-xs p-1 border rounded bg-slate-50/50 font-medium"
+                                    />
+                                  </div>
                                 </div>
                               )}
 
@@ -948,13 +1150,17 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                   alt="Aperçu reçu"
                   className="w-8 h-8 rounded object-cover border border-sky-200 shrink-0"
                 />
+              ) : selectedFile.type.startsWith('audio/') || /\.(m4a|mp3|wav|ogg|webm)$/i.test(selectedFile.name) ? (
+                <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0 border border-red-200">
+                  <Volume2 className="w-4 h-4 text-red-600 animate-pulse" />
+                </div>
               ) : (
                 <FileText className="w-6 h-6 text-sky-700 shrink-0" />
               )}
               <div className="truncate">
                 <span className="font-bold text-sky-900 block truncate">{selectedFile.name}</span>
                 <span className="text-[10px] text-sky-600">
-                  {Math.round(selectedFile.size / 1024)} Ko • Prêt pour analyse
+                  {Math.round(selectedFile.size / 1024)} Ko • {selectedFile.type.startsWith('audio/') || /\.(m4a|mp3|wav|ogg|webm)$/i.test(selectedFile.name) ? 'Note vocale prête pour analyse' : 'Prêt pour analyse'}
                 </span>
               </div>
             </div>
@@ -973,92 +1179,136 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
           </div>
         )}
 
-        {/* Input Bar with Camera & File Triggers */}
+        {/* Input Bar with Microphone, Camera & File Triggers */}
         <div className="p-3 sm:p-4 bg-white border-t border-slate-200 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="flex items-center space-x-1.5"
-          >
-            {/* Hidden native camera trigger */}
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  handleFilePicked(e.target.files[0]);
-                }
+          {/* Active Audio Recording Bar */}
+          {isRecording ? (
+            <div className="flex items-center justify-between w-full p-2.5 bg-red-50 border border-red-200 rounded-xl animate-in fade-in">
+              <div className="flex items-center space-x-2 text-red-700 font-semibold text-xs">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
+                </span>
+                <Radio className="w-4 h-4 text-red-600 animate-pulse" />
+                <span>Dictée vocale en cours... ({Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, '0')})</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={cancelRecording}
+                  className="px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer transition-colors"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg flex items-center space-x-1.5 cursor-pointer shadow-xs transition-colors"
+                >
+                  <Square className="w-3 h-3 fill-current" />
+                  <span>Terminer & Analyser</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSend();
               }}
-            />
+              className="flex items-center space-x-1.5"
+            >
+              {/* Hidden native camera trigger */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleFilePicked(e.target.files[0]);
+                  }
+                }}
+              />
 
-            {/* Hidden file picker trigger */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,application/pdf"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  handleFilePicked(e.target.files[0]);
+              {/* Hidden file picker trigger (accepts images, PDF, and audio voice memos) */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf,audio/*,.m4a,.mp3,.wav,.ogg,.webm"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleFilePicked(e.target.files[0]);
+                  }
+                }}
+              />
+
+              {/* Microphone Button (Record voice notes live) */}
+              <button
+                type="button"
+                disabled={loading}
+                onClick={startRecording}
+                className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                title="Dicter une note vocale ou enregistrer (Microphone)"
+              >
+                <Mic className="w-5 h-5 text-slate-600 hover:text-red-600" />
+              </button>
+
+              {/* Camera Button (Mobile / Field photos & receipts) */}
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => cameraInputRef.current?.click()}
+                className="p-2 text-slate-500 hover:text-[#0f3854] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer shrink-0"
+                title="Prendre une photo de terrain ou reçu (Appareil photo)"
+              >
+                <Camera className="w-5 h-5 text-slate-600" />
+              </button>
+
+              {/* Paperclip Button (Files: audio, pdf, images) */}
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 text-slate-500 hover:text-[#0f3854] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer shrink-0"
+                title="Joindre un fichier (Photo, Mémo vocal, PDF)"
+              >
+                <Paperclip className="w-5 h-5 text-slate-600" />
+              </button>
+
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  selectedFile
+                    ? "Consigne (ex: 'Dossier Alstom') ou valider direct..."
+                    : "Question, consigne ou glisser un fichier/audio..."
                 }
-              }}
-            />
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:bg-white transition-all"
+                disabled={loading}
+              />
 
-            {/* Camera Button (Mobile / Field receipt snapshot) */}
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => cameraInputRef.current?.click()}
-              className="p-2 text-slate-500 hover:text-[#0f3854] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer shrink-0"
-              title="Prendre une photo de reçu (Appareil photo mobile)"
-            >
-              <Camera className="w-5 h-5 text-slate-600" />
-            </button>
+              <button
+                type="submit"
+                disabled={loading || (!input.trim() && !selectedFile)}
+                className="p-2 bg-[#0f3854] hover:bg-[#16496d] disabled:opacity-40 text-white rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
+                title="Envoyer"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          )}
 
-            {/* Paperclip Button (Desktop / File picker) */}
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 text-slate-500 hover:text-[#0f3854] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer shrink-0"
-              title="Joindre un justificatif ou document (PDF, JPG, PNG)"
-            >
-              <Paperclip className="w-5 h-5 text-slate-600" />
-            </button>
-
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                selectedFile
-                  ? "Consigne (ex: 'Dossier Alstom') ou valider direct..."
-                  : "Question, consigne ou glisser un reçu..."
-              }
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:bg-white transition-all"
-              disabled={loading}
-            />
-
-            <button
-              type="submit"
-              disabled={loading || (!input.trim() && !selectedFile)}
-              className="p-2 bg-[#0f3854] hover:bg-[#16496d] disabled:opacity-40 text-white rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
-              title="Envoyer"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </form>
-
-          <p className="text-[10px] text-slate-400 text-center mt-1.5 flex items-center justify-center space-x-1.5">
-            <span>📷 Prise de photo terrain</span>
+          <p className="text-[10px] text-slate-400 text-center mt-1.5 flex items-center justify-center space-x-1.5 flex-wrap">
+            <span>📷 Photos de terrain</span>
             <span>•</span>
-            <span>⚡ Glisser-déposer PDF/Reçus</span>
+            <span>🎙️ Notes vocales au micro</span>
+            <span>•</span>
+            <span>⚡ Reçus & Dires</span>
             <span>•</span>
             <span>Contrôle 100% avant enregistrement</span>
           </p>

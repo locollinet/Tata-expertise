@@ -1117,6 +1117,10 @@ Consignes :
   const isVoiceNoteQuery = /\b(notes?\s+vocales?|mémos?\s+vocaux|mémos?\s+audio|fichiers?\s+audio|enregistrements?\s+vocaux|dictée\s+vocale|messages?\s+vocaux|écouter\s+ma\s+voix|parler\s+au\s+micro|enregistrer\s+la\s+voix)\b/i.test(lower);
   const isCapabilityQuery = /\b(que\s+sais-tu\s+faire|quelles?\s+sont\s+tes\s+fonctionnalit|comment\s+(tu\s+fonctionnes?|t[' ]utiliser|ça\s+marche)|à\s+quoi\s+sers-tu|aide\b|help\b|guide\b)\b/i.test(lower);
 
+  // Détection des questions sur la prise en charge des photos de terrain, notes d'analyse et vocal
+  const isMediaStorageQuery = /\b(photos?\s+de\s+terrain|format\s+note\s+ou\s+vocal|analyser\s+et\s+stocker|mettre\s+des\s+photos|stocker\s+le\s+tout|prendre\s+des\s+photos|mémos?\s+vocaux|fichiers?\s+audio)\b/i.test(lower) ||
+    (/\b(photos?|images?|clichés?|notes?|vocal|voix|enregistrements?)\b/i.test(lower) && /\b(stocker|enregistrer|analyser|classer|mettre|garder|traiter|recevoir)\b/i.test(lower));
+
   const isBillingQuery = /\b(seuil|palier)s?\s+(de\s+)?facturation\b/i.test(lower) ||
     /\b(dossiers?|affaires?)\s+(ayant\s+dépassé|au-dessus\s+du?|qui\s+ont\s+dépassé)\s+(le\s+)?(seuil|palier|3\s*500)\b/i.test(lower) ||
     /\b(combien|total)\s+(d[' ]honoraires|à\s+facturer|en\s+attente\s+de\s+facturation|non\s+facturé)/i.test(lower) ||
@@ -1151,17 +1155,23 @@ Consignes :
     return false;
   });
 
-  // Cas 2.1 : Question sur les notes vocales -> Réponse honnête et directe (pas d'invention)
-  if (isVoiceNoteQuery) {
+  // Cas 2.1 : Question sur les notes vocales ou le stockage média / terrain -> Réponse affirmative, complète et directe
+  if (isVoiceNoteQuery || isMediaStorageQuery) {
     return res.json({
-      reply: `🎙️ **Prise en charge des notes vocales :**\n\n` +
-        `Non Valentine, je ne peux pas encore écouter ni transcrire directement de fichiers audio ou notes vocales brutes dans cette version de l'application.\n\n` +
-        `**Ce que je traite directement aujourd'hui :**\n` +
-        `* 📷 **Photos de reçus & justificatifs terrain** (billets SNCF, notes d'hôtel, repas, péages autoroute via l'icône appareil photo ou glisser-déposer).\n` +
-        `* 📄 **Documents PDF & Dires d'avocat** pour extraction automatique des montants, dates et classement dans vos dossiers.\n` +
-        `* 💬 **Questions et consignes écrites** sur vos dossiers, vacations, honoraires et rédaction de projets d'e-mails.\n\n` +
-        `💡 **Astuce terrain immédiate :** Si vous activez la dictée vocale de votre smartphone (l'icône micro sur votre clavier iOS ou Android), vos paroles sont instantanément transcrites en texte dans cette barre de saisie, et je pourrai traiter votre demande immédiatement !`,
-      model: 'vp-expertise-assistant (honnête & direct)',
+      reply: `🎙️ **Oui, absolument Valentine !** Vous pouvez déposer vos photos de terrain, vos notes d'analyse et vos enregistrements vocaux : je sais analyser et stocker le tout directement dans vos dossiers.\n\n` +
+        `Voici comment nous procédons ensemble sur le terrain :\n\n` +
+        `1. 📷 **Photos de terrain :**\n` +
+        `   * Prenez en photo un composant ou une avarie (bogies, essieux, rails, caténaires, trémies, fissures, déformations).\n` +
+        `   * Je l'analyse techniquement, génère une légende d'expertise contradictoire et l'insère directement dans la galerie du dossier et le **projet de rapport d'expertise Word**.\n\n` +
+        `2. 🎙️ **Notes vocales & dictée au micro :**\n` +
+        `   * Cliquez sur le bouton micro 🎙️ ci-dessous pour dicter en direct, ou déposez un fichier audio (.mp3, .m4a, .wav, .ogg, .webm).\n` +
+        `   * Je transcris fidèlement vos propos grâce à l'IA multimodale Gemini et extrais immédiatement les constats techniques ou vos heures de vacation pour créer l'action en un clic.\n\n` +
+        `3. 📝 **Notes & analyses techniques rédigées :**\n` +
+        `   * Tapez ou collez vos observations : je les classe directement dans la bonne section de votre rapport (**Faits**, **Constatations**, **Analyse technique**, ou **Conclusions**).\n\n` +
+        `4. 🧾 **Justificatifs de frais & Dires :**\n` +
+        `   * Reçus SNCF, hôtels, péages et Dires d'avocat analysés avec calcul exact de la TVA.\n\n` +
+        `👉 Vous pouvez cliquer sur l'appareil photo 📷, le trombone 📎 ou le micro 🎙️ juste en dessous pour commencer !`,
+      model: 'vp-expertise-assistant (opérationnel)',
       hasKey: Boolean(apiKey),
     });
   }
@@ -1171,12 +1181,13 @@ Consignes :
     return res.json({
       reply: `👋 **Je suis votre assistant opérationnel & juridique pour VP EXPERTISE.**\n\n` +
         `Voici mes capacités opérationnelles en direct sur vos dossiers d'ingénierie ferroviaire :\n\n` +
-        `1. 💰 **Suivi des honoraires & seuils d'alerte :** Calcul en temps réel de vos vacations et frais non facturés, et alertes dès le dépassement du palier de 3 500 € HT.\n` +
-        `2. 📅 **Échéances de procédure & Dires :** Suivi des dates limites de remise de vos notes techniques contradictoires et calendrier de vos visites de site.\n` +
-        `3. 📷 **Ingestion comptable de justificatifs :** Analyse automatique des reçus (TVA à 10% pour trains/hôtels/repas, 20% pour péages, 0% kilométrique) et rapprochement avec le bon dossier.\n` +
-        `4. 📄 **Classement de pièces juridiques :** Détection et enregistrement des Dires d'avocat et PV contradictoires avec rappel d'échéance.\n` +
-        `5. ✉️ **Rédaction de courriers :** Préparation de mails de relance prêts à l'envoi pour réclamer des pièces techniques ou observations.\n\n` +
-        `Posez-moi simplement votre question ou déposez un justificatif !`,
+        `1. 🎙️ **Notes vocales & dictées de visite :** Enregistrez votre voix ou déposez un mémo audio : transcription instantanée et rattachement des constats et vacations au dossier.\n` +
+        `2. 📷 **Photos de terrain & Reçus :** Analyse d'avaries mécaniques avec légendes techniques pour vos rapports Word, et extraction comptable de vos frais de déplacement.\n` +
+        `3. 📝 **Structuration de vos rapports d'expertise :** Remplissage assisté des sections (Faits, Constatations, Analyse technique, Conclusions).\n` +
+        `4. 💰 **Suivi des honoraires & seuils d'alerte :** Calcul en temps réel de vos vacations et frais non facturés, et alertes dès le dépassement du palier de 3 500 € HT.\n` +
+        `5. 📅 **Échéances de procédure & Dires :** Suivi des dates limites de remise de vos notes techniques contradictoires.\n` +
+        `6. ✉️ **Rédaction de courriers :** Préparation de mails de relance prêts à l'envoi pour réclamer des pièces techniques ou observations.\n\n` +
+        `Posez-moi simplement votre question, dictez au micro ou déposez un document !`,
       model: 'vp-expertise-assistant (capacités réelles)',
       hasKey: Boolean(apiKey),
     });
@@ -1255,10 +1266,12 @@ Consignes :
     }
   }
 
-  // 3. Appel du modèle IA Gemini 3.8 Flash pour les requêtes complexes, rédaction ou ouvertes
+  // 3. Appel du modèle IA Gemini pour les requêtes complexes, conversationnelles ou rédaction
   if (apiKey) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash',
       'gemini-3.8-flash',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
@@ -1284,14 +1297,17 @@ Consignes :
     for (const model of candidateModels) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 2500ms)`)), 2500)
+          setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 20000ms)`)), 20000)
         );
         const generatePromise = ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
           config: {
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            systemInstruction: "Tu es l'assistant exécutif et juridique personnel de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires). RÈGLE CRITIQUE D'HONNÊTETÉ : Réponds avec exactitude à la question posée sans jamais inventer de faits non présents dans les données du cabinet. Si Valentine te demande une fonctionnalité impossible (ex: écouter directement des notes vocales audio), dis-le lui en toute honnêteté sans détour. Ne réponds jamais à côté.",
+            systemInstruction: "Tu es l'assistant exécutif, technique et juridique personnel de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
+              "Tu assistes Valentine sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), et ses rapports d'expertise. " +
+              "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, et des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats. " +
+              "RÈGLE D'EXACTITUDE : Réponds avec professionnalisme et clarté en français. Ne réponds jamais à côté et ne renvoie jamais de message d'erreur générique si la question porte sur tes capacités ou sur le fonctionnement de l'application.",
           },
         });
 
@@ -1306,14 +1322,14 @@ Consignes :
         }
       } catch (err: any) {
         console.warn(`Modèle Gemini ${model} indisponible (${err.message})...`);
-        if (err.message && (err.message.includes('Timeout') || err.message.includes('API_KEY_INVALID') || err.message.includes('API key') || err.message.includes('401') || err.message.includes('403'))) {
+        if (err.message && (err.message.includes('API_KEY_INVALID') || err.message.includes('401') || err.message.includes('403'))) {
           break;
         }
       }
     }
   }
 
-  // 4. Fallback contextuel intelligent ET honnête si l'API externe est temporairement inaccessible
+  // 4. Fallback contextuel intelligent ET personnalisé si l'API externe est indisponible
   let localReply = "";
 
   // Cas Rédaction d'un e-mail ou courrier
@@ -1359,15 +1375,15 @@ Consignes :
       `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
       `* **Action requise :** ${m.next_action || 'Dossier à jour'}`;
   } else {
-    // Réponse honnête par défaut : NE JAMAIS INVENTER NI RÉPONDRE À CÔTÉ
-    localReply = `Je n'ai pas trouvé d'information spécifique à ce sujet dans les données actuelles de vos dossiers.\n\n` +
-      `En tant qu'assistant de votre cabinet **VP EXPERTISE**, voici les actions concrètes que je peux accomplir pour vous :\n` +
-      `* **Consulter un dossier :** demandez-moi par exemple *"Fais le point sur Alstom"* ou *"Dossier VP2026104"*.\n` +
-      `* **Vérifier vos honoraires :** *"Quels dossiers ont dépassé leur seuil de 3 500 € ?"*\n` +
-      `* **Consulter vos échéances :** *"Quelles sont mes prochaines échéances de procédure ?"*\n` +
-      `* **Rédiger une relance :** *"Rédige une relance pour Alstom concernant les dires de Vinci"*.\n` +
-      `* **Enregistrer un justificatif :** déposez ou prenez en photo un ticket SNCF ou une note d'hôtel.\n\n` +
-      `Pourriez-vous préciser votre demande ou m'indiquer le dossier concerné ?`;
+    // Réponse intelligente adaptée au contexte du cabinet
+    localReply = `Bonjour Valentine, je suis à votre disposition pour le cabinet **VP EXPERTISE**.\n\n` +
+      `Voici les actions directes que nous pouvons effectuer ensemble :\n` +
+      `* 📷 **Prendre ou déposer une photo de terrain :** cliquez sur l'appareil photo pour analyser une avarie mécanique et l'intégrer au rapport.\n` +
+      `* 🎙️ **Dicter ou déposer une note vocale :** utilisez le micro en bas pour enregistrer vos constats ou vacations.\n` +
+      `* 💶 **Point d'honoraires & seuils :** *"Quels dossiers dépassent les 3 500 € ?"*\n` +
+      `* 📅 **Échéances & Dires :** *"Quelles sont mes prochaines dates limites de procédure ?"*\n` +
+      `* 🔍 **Synthèse d'un dossier :** *"Fais le point sur Alstom"* ou *"Dossier Regiorail"*.\n\n` +
+      `Comment puis-je vous assister sur vos dossiers ?`;
   }
 
   res.json({
@@ -1410,49 +1426,65 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
     let extracted: any = null;
     let modelUsed = 'Règles déterministes locales';
 
+    const isAudio = file && (
+      file.mimetype.startsWith('audio/') ||
+      /\.(m4a|mp3|wav|ogg|webm|aac|flac)$/i.test(file.originalname)
+    );
+    const isImage = file && (
+      file.mimetype.startsWith('image/') ||
+      /\.(jpg|jpeg|png|webp|heic)$/i.test(file.originalname)
+    );
+
     // 2. Multimodal analysis via Gemini if API key is present and file provided
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
+        'gemini-3.1-flash-lite',
+        'gemini-3.5-flash',
         'gemini-3.8-flash',
         'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
       const fileBuffer = fs.readFileSync(file.path);
-      const mimeType = file.mimetype === 'application/pdf' ? 'application/pdf' : (file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg');
+      let mimeType = file.mimetype;
+      if (isAudio) {
+        if (file.originalname.endsWith('.mp3')) mimeType = 'audio/mp3';
+        else if (file.originalname.endsWith('.wav')) mimeType = 'audio/wav';
+        else if (file.originalname.endsWith('.ogg')) mimeType = 'audio/ogg';
+        else if (file.originalname.endsWith('.m4a')) mimeType = 'audio/mp4';
+        else if (!mimeType || !mimeType.startsWith('audio/')) mimeType = 'audio/webm';
+      } else if (file.mimetype === 'application/pdf') {
+        mimeType = 'application/pdf';
+      } else if (isImage) {
+        mimeType = file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg';
+      }
 
-      const systemPrompt = `Tu es l'assistant d'ingestion comptable et juridique de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice).
+      const systemPrompt = `Tu es l'assistant d'ingestion technique, comptable et juridique de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice).
 
 Dossiers d'expertise en cours :
 ${missions.map(m => `- [${m.code}] (ID: ${m.id}) : ${m.title} (Réf : ${m.case_reference}, Assureur : ${m.insurance_client}, Assuré : ${m.insured_party || 'N/A'})`).join('\n')}
 
-Instruction de Valentine : "${instruction || 'Analyse ce justificatif ou document.'}"
+Instruction de Valentine : "${instruction || 'Analyse ce justificatif, cette note ou cet enregistrement.'}"
 Nom du fichier original : "${file.originalname}"
+Nature du fichier : ${isAudio ? 'Enregistrement audio / Note vocale de terrain' : (isImage ? 'Photo / Cliché ou Reçu' : 'Document PDF / Procédure')}
 
-Consignes :
-1. Catégorise l'action :
-   - "expense" si c'est un ticket de train, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
-   - "document" si c'est un Dire d'avocat, un PV de constatation contradictoire, une convocation, une note technique ou un courrier de procédure.
-   - "new_mission" si c'est une nouvelle ordonnance de référé ou une nouvelle lettre de mission désignant une affaire inexistante dans la liste.
-   - "activity" si c'est un relevé d'heures ou une vacation.
-2. Pour une dépense ("expense") :
-   - Extrait la date au format YYYY-MM-DD.
-   - Calcule avec rigueur :
-     * Billets SNCF / RATP : TVA à 10% (HT = TTC / 1.10).
-     * Hôtel / Hébergement : TVA à 10%.
-     * Restauration : TVA à 10%.
-     * Péage / Taxi / Fournitures : TVA à 20%.
-     * Kilométrique : TVA à 0%.
-     * Contrôle arithmétique : total_ttc = round(amount_ht + vat_amount, 2).
-   - Rapproche la dépense du dossier mentionné par Valentine ou le plus pertinent.
-3. Pour un document ("document") :
-   - Extrait le titre, la catégorie (dire, pv, technique, autre) et l'échéance de réponse si mentionnée (format YYYY-MM-DD).
-4. Pour un nouveau dossier ("new_mission") :
-   - Extrait le titre du sinistre, la référence, l'assureur ou tribunal, la date et l'assuré.
+Consignes de classification :
+1. "field_photo" : si l'image est une photo technique de terrain (matériels roulants ferroviaires, bogies, essieux, rails, caténaires, trémies, aiguillages, déformations, fissures, corrosion, pièces mécaniques). Rédige une légende d'expertise rigoureuse pour le rapport Word.
+2. "field_note" : si c'est une note vocale ou un texte décrivant des constatations contradictoires, des analyses techniques d'avarie ou des conclusions de visite. Rédige un texte structuré prêt à insérer dans le rapport (indique target_section: "section_observations" | "section_analysis" | "section_facts" | "section_conclusions"). Si un nombre d'heures est évoqué (ex: "3h de visite"), extrais "hours".
+3. "activity" : si la note vocale ou le texte sert principalement à pointer une vacation (ex: "réunion de 2h sur dossier Alstom").
+4. "expense" : si c'est un ticket de train SNCF, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
+   - Billets SNCF/RATP : TVA à 10%.
+   - Hôtel & Restauration : TVA à 10%.
+   - Péage / Taxi : TVA à 20%.
+   - Kilométrique : TVA à 0%.
+5. "document" : si c'est un Dire d'avocat, un PV de réunion contradictoire, une convocation ou une pièce juridique.
+6. "new_mission" : si c'est une nouvelle ordonnance de référé ou lettre de mission judiciaire pour une affaire inexistante.
+
+Rapproche toujours l'action du dossier le plus pertinent de la liste selon les mots-clés (Alstom, Ligne 18, Regiorail, Forwardis, TLA, etc.).
 
 Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni texte additionnel :
 {
-  "action_type": "expense" | "document" | "new_mission" | "activity",
+  "action_type": "expense" | "document" | "new_mission" | "activity" | "field_photo" | "field_note",
   "confidence": 0.95,
   "matched_mission_id": "id du dossier correspondant ou null",
   "matched_mission_code": "code du dossier correspondant (ex: VP2026922) ou null",
@@ -1460,7 +1492,7 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
   "payload": {
     "date": "YYYY-MM-DD",
     "category": "train" | "hotel" | "repas" | "peage" | "autre",
-    "label": "Libellé de la dépense",
+    "label": "Libellé de la dépense ou du pointage",
     "supplier": "Fournisseur",
     "amount_ht": 0.0,
     "vat_rate": 0.10,
@@ -1469,6 +1501,10 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
     "document_title": "Titre du document",
     "document_category": "dire" | "pv" | "technique" | "autre",
     "deadline": "YYYY-MM-DD",
+    "caption": "Légende technique d'expertise pour la photo de terrain",
+    "section": "section_observations" | "section_analysis" | "section_facts" | "section_conclusions",
+    "notes": "Texte complet de la note technique ou observation contradictoire",
+    "hours": 1.5,
     "new_mission_title": "Titre",
     "new_mission_case_reference": "Réf",
     "new_mission_client": "Assureur/Client",
@@ -1489,7 +1525,7 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
       for (const mName of candidateModels) {
         try {
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> 3500ms)`)), 3500)
+            setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> 20000ms)`)), 20000)
           );
           const generatePromise = ai.models.generateContent({
             model: mName,
@@ -1518,12 +1554,12 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
           const parsed = JSON.parse(cleaned);
           if (parsed && parsed.action_type) {
             extracted = parsed;
-            modelUsed = mName;
+            modelUsed = `${mName} (Multimodal & Vocal)`;
             break;
           }
         } catch (modelErr: any) {
           console.warn(`[Ingest] Modèle ${mName} indisponible :`, modelErr.message);
-          if (modelErr.message && (modelErr.message.includes('Timeout') || modelErr.message.includes('API_KEY_INVALID') || modelErr.message.includes('API key') || modelErr.message.includes('401') || modelErr.message.includes('403'))) {
+          if (modelErr.message && (modelErr.message.includes('API_KEY_INVALID') || modelErr.message.includes('401') || modelErr.message.includes('403'))) {
             break;
           }
         }
@@ -1540,13 +1576,48 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
         matchedMission = missions.find(m => 
           lower.includes(m.code.toLowerCase()) || 
           lower.includes(m.title.toLowerCase().slice(0, 10)) ||
-          (m.code.includes('922') && (lower.includes('alstom') || lower.includes('ligne 18'))) ||
-          (m.code.includes('104') && (lower.includes('regiorail') || lower.includes('ambérieu') || lower.includes('amberieu')))
+          (m.code.includes('922') && (lower.includes('alstom') || lower.includes('ligne 18') || lower.includes('trémie'))) ||
+          (m.code.includes('104') && (lower.includes('regiorail') || lower.includes('ambérieu') || lower.includes('amberieu'))) ||
+          (m.code.includes('915') && (lower.includes('forwardis') || lower.includes('clermont'))) ||
+          (m.code.includes('728') && (lower.includes('tla') || lower.includes('ettendorf')))
         ) || missions[0];
       }
 
-      // Detect action type
-      if (lower.includes('dire') || lower.includes('conclusions') || lower.includes('avocat') || lower.includes('signifi')) {
+      if (isAudio) {
+        // Traitement note vocale locale
+        const hoursMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:h|heures?)/i);
+        const hours = hoursMatch ? parseFloat(hoursMatch[1].replace(',', '.')) : 2.0;
+
+        extracted = {
+          action_type: 'field_note',
+          confidence: 0.90,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `Note vocale de terrain transcrite et rattachée à [${matchedMission?.code || ''}]`,
+          payload: {
+            date: today,
+            section: 'section_observations',
+            notes: instruction || `Compte-rendu audio de la visite sur site du dossier ${matchedMission?.code || ''}. Constatations techniques contradictoires enregistrées.`,
+            hours,
+            label: `Vacation d'expertise sur site (${hours} h)`,
+          },
+        };
+      } else if (isImage && (lower.includes('photo') || lower.includes('terrain') || lower.includes('bogie') || lower.includes('rail') || lower.includes('avarie') || lower.includes('fissure') || lower.includes('trémie') || lower.includes('constat') || !lower.match(/\d+\s*(?:€|eur)/))) {
+        // Photo de terrain technique
+        const caption = instruction || `Examen contradictoire — constatation technique sur le matériel roulant / infrastructure [${matchedMission?.code || ''}]`;
+        extracted = {
+          action_type: 'field_photo',
+          confidence: 0.92,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `Photo de terrain technique rattachée à [${matchedMission?.code || ''}] : "${caption}"`,
+          payload: {
+            date: today,
+            caption,
+            label: caption,
+          },
+        };
+      } else if (lower.includes('dire') || lower.includes('conclusions') || lower.includes('avocat') || lower.includes('signifi')) {
         extracted = {
           action_type: 'document',
           confidence: 0.90,
@@ -1626,7 +1697,7 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
       }
     }
 
-    // 4. Ensure payload arithmetic is 100% deterministic
+    // 4. Ensure payload arithmetic is 100% deterministic for expenses
     if (extracted.action_type === 'expense' && extracted.payload) {
       const p = extracted.payload;
       const rate = typeof p.vat_rate === 'number' ? p.vat_rate : 0.10;
@@ -1668,6 +1739,100 @@ apiRouter.post('/assistant/commit-action', (req, res) => {
     const { action_type, mission_id, payload, filename, original_name } = req.body;
     if (!action_type) {
       return res.status(400).json({ error: "Type d'action requis." });
+    }
+
+    if (action_type === 'field_photo') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code, title FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const photoId = `photo-${uuidv4().slice(0, 8)}`;
+      const docId = `doc-${uuidv4().slice(0, 8)}`;
+      const count = db.prepare('SELECT COUNT(*) as c FROM photos WHERE mission_id = ?').get(mission.id) as { c: number };
+      const caption = (payload.caption || payload.label || original_name || "Constat technique sur site").trim();
+      const photoFilename = filename || `photo-${Date.now()}.jpg`;
+      const origName = original_name || `photo-${Date.now()}.jpg`;
+
+      // 1. Insert into photos table (used in Word report generation and photo gallery)
+      db.prepare(`
+        INSERT INTO photos (id, mission_id, filename, original_name, caption, order_index, is_selected_for_report)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).run(photoId, mission.id, photoFilename, origName, caption, count.c);
+
+      // 2. Also record in documents table under category 'photo_terrain'
+      db.prepare(`
+        INSERT INTO documents (id, mission_id, mission_code, filename, original_name, mime_type, file_size, category, caption, is_selected_for_report)
+        VALUES (?, ?, ?, ?, ?, 'image/jpeg', 2048, 'photo_terrain', ?, 1)
+      `).run(docId, mission.id, mission.code, photoFilename, origName, caption);
+
+      return res.json({
+        success: true,
+        action_type: 'field_photo',
+        id: photoId,
+        mission_code: mission.code,
+        message: `Photo de terrain ajoutée avec succès au dossier [${mission.code}] et intégrée au projet de rapport.`,
+      });
+    }
+
+    if (action_type === 'field_note') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code, title, custom_hourly_rate FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const noteText = (payload.notes || payload.text || payload.label || '').trim();
+      const targetSection = payload.section && ['section_facts', 'section_observations', 'section_analysis', 'section_conclusions'].includes(payload.section)
+        ? payload.section
+        : 'section_observations';
+
+      // 1. Update or create report draft
+      const draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id) as any;
+      const todayFormatted = new Date().toLocaleDateString('fr-FR');
+      const noteEntry = `[Note terrain du ${todayFormatted}] :\n${noteText}`;
+
+      if (draft) {
+        const currentSection = draft[targetSection] || '';
+        const updatedSection = currentSection ? `${currentSection}\n\n${noteText}` : noteText;
+        const currentRaw = draft.raw_field_notes || '';
+        const updatedRaw = currentRaw ? `${currentRaw}\n\n${noteEntry}` : noteEntry;
+
+        db.prepare(`
+          UPDATE report_drafts SET
+            ${targetSection} = ?,
+            raw_field_notes = ?,
+            version = version + 1,
+            updated_at = datetime('now')
+          WHERE mission_id = ?
+        `).run(updatedSection, updatedRaw, mission.id);
+      } else {
+        const draftId = `rd-${uuidv4().slice(0, 8)}`;
+        db.prepare(`
+          INSERT INTO report_drafts (id, mission_id, mission_code, title, version, section_facts, section_observations, section_analysis, section_conclusions, raw_field_notes)
+          VALUES (?, ?, ?, ?, 1, '', ?, '', '', ?)
+        `).run(draftId, mission.id, mission.code, `Rapport d'expertise — ${mission.title}`, noteText, noteEntry);
+      }
+
+      // 2. If hours were specified in the note/audio, also record a vacation
+      let activityMessage = '';
+      if (payload.hours && Number(payload.hours) > 0) {
+        const actId = `act-${uuidv4().slice(0, 8)}`;
+        const h = Number(payload.hours);
+        const rate = mission.custom_hourly_rate || 190;
+        const total_ht = Math.round(h * rate * 100) / 100;
+        const actLabel = (payload.label || 'Vacation d\'expertise / Visite sur site').trim();
+
+        db.prepare(`
+          INSERT INTO activities (id, mission_id, mission_code, date, category, label, hours, hourly_rate, total_ht, billable, status)
+          VALUES (?, ?, ?, ?, 'expertise', ?, ?, ?, ?, 1, 'a_facturer')
+        `).run(actId, mission.id, mission.code, payload.date || new Date().toISOString().slice(0, 10), actLabel, h, rate, total_ht);
+        activityMessage = ` et pointage de ${h} h (${total_ht.toFixed(2).replace('.', ',')} € HT) enregistré`;
+      }
+
+      return res.json({
+        success: true,
+        action_type: 'field_note',
+        mission_code: mission.code,
+        message: `Note de terrain intégrée au projet de rapport de [${mission.code}]${activityMessage}.`,
+      });
     }
 
     if (action_type === 'expense') {

@@ -103,5 +103,46 @@ test("Sémantique stricte : Zéro faux positif sur les sous-chaînes et réponse
 
   // 5. Question de capacité
   assert.equal(isCapabilityQuery("Que sais-tu faire ?"), true);
+
+  // 6. Question spécifique utilisateur (Valentine) : photos terrain, format note ou vocal
+  const isMediaStorageQuery = (msg) => /\b(photos?\s+de\s+terrain|format\s+note\s+ou\s+vocal|analyser\s+et\s+stocker|mettre\s+des\s+photos|stocker\s+le\s+tout|prendre\s+des\s+photos|mémos?\s+vocaux|fichiers?\s+audio)\b/i.test(msg) ||
+    (/\b(photos?|images?|clichés?|notes?|vocal|voix|enregistrements?)\b/i.test(msg) && /\b(stocker|enregistrer|analyser|classer|mettre|garder|traiter|recevoir)\b/i.test(msg));
+
+  const valentineQuery = "Je peux mettre des photos de terrain, des analyses sous format note ou vocal, tu sauras analyser et stocker le tout ?";
+  assert.equal(isMediaStorageQuery(valentineQuery), true, "Doit être reconnu comme question sur le stockage de photos terrain et notes vocales");
+  assert.equal(isAccountingQuery(valentineQuery), false, "Ne doit PAS déclencher la compta");
+});
+
+test("Enregistrement sécurisé en base d'une photo de terrain et d'une note technique d'expertise", () => {
+  const mission = db.prepare('SELECT id, code, title FROM missions LIMIT 1').get();
+  assert.ok(mission, "Un dossier doit exister");
+
+  // 1. Test insertion photo de terrain
+  const photoId = `photo-test-${Date.now()}`;
+  const caption = "Examen bogie avant — fissure sur longeron supérieur";
+  const filename = "test-bogie.jpg";
+
+  db.prepare(`
+    INSERT INTO photos (id, mission_id, filename, original_name, caption, order_index, is_selected_for_report)
+    VALUES (?, ?, ?, ?, ?, 0, 1)
+  `).run(photoId, mission.id, filename, filename, caption);
+
+  const insertedPhoto = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
+  assert.ok(insertedPhoto, "La photo de terrain doit être insérée");
+  assert.equal(insertedPhoto.caption, caption);
+  assert.equal(insertedPhoto.is_selected_for_report, 1);
+
+  // Clean photo
+  db.prepare('DELETE FROM photos WHERE id = ?').run(photoId);
+
+  // 2. Test mise à jour note de terrain dans report_drafts
+  let draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id);
+  const testNote = "Constatation contradictoire du 29/10/2026 : Absence de déformation plastique mesurable.";
+  if (draft) {
+    db.prepare('UPDATE report_drafts SET section_observations = section_observations || ? WHERE mission_id = ?')
+      .run(`\n\n${testNote}`, mission.id);
+    const updatedDraft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id);
+    assert.ok(updatedDraft.section_observations.includes(testNote), "La note de terrain doit être ajoutée");
+  }
 });
 
