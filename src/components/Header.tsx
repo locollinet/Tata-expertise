@@ -108,10 +108,10 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Right Actions: Cloud Sync Status + Auth + Quick Add */}
-          <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
             {/* Cloud sync status indicator */}
             <div
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-lg text-xs font-semibold whitespace-nowrap"
+              className="flex items-center space-x-1.5 px-2 py-1.5 sm:px-2.5 sm:py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-lg text-xs font-semibold whitespace-nowrap"
               title="Toutes vos données et photos sont sauvegardées et synchronisées en temps réel"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
@@ -121,7 +121,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* User authentication */}
             {user ? (
-              <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-lg p-1 pr-2">
+              <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1 pr-1.5 sm:pr-2">
                 {user.photoURL ? (
                   <img src={user.photoURL} alt={user.displayName || 'Utilisateur'} className="w-7 h-7 rounded-md object-cover shrink-0" />
                 ) : (
@@ -147,7 +147,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleLogin}
                 disabled={authLoading}
-                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap"
+                className="inline-flex items-center space-x-1.5 px-2 py-1.5 sm:px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap"
                 title="Connexion à votre espace sécurisé"
               >
                 <LogIn className="w-3.5 h-3.5 text-slate-500 shrink-0" />
@@ -155,21 +155,20 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* AI Assistant Button */}
+            {/* AI Assistant Button (Desktop / Tablet) */}
             <button
               onClick={onOpenAssistant}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 sm:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
-              title="Assistant IA Gemini 2.5 Flash"
+              className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-1.5 sm:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
+              title="Assistant IA Gemini"
             >
               <Sparkles className="w-3.5 h-3.5 text-cyan-700 animate-pulse shrink-0" />
-              <span className="hidden sm:inline">Assistant IA</span>
-              <span className="sm:hidden text-[11px]">IA</span>
+              <span>Assistant IA</span>
             </button>
 
-            {/* Quick Add Button */}
+            {/* Quick Add Button (Desktop / Tablet) */}
             <button
               onClick={onOpenQuickAdd}
-              className="inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3 py-1.5 sm:py-2 rounded-lg text-xs font-semibold shadow-xs transition-all active:scale-95 whitespace-nowrap shrink-0"
+              className="hidden sm:inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3 py-1.5 sm:py-2 rounded-lg text-xs font-semibold shadow-xs transition-all active:scale-95 whitespace-nowrap shrink-0"
             >
               <Plus className="w-4 h-4 shrink-0" />
               <span>Saisie rapide</span>

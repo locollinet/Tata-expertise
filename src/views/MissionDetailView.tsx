@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, ArrowRight, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
   CheckCircle2, AlertCircle, Save, ExternalLink, Calendar, Copy, Check,
-  FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera
+  FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera,
+  ChevronDown, Smartphone, Mic
 } from 'lucide-react';
 import { api } from '../api.js';
 import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';
@@ -448,8 +449,146 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           </div>
         )}
 
-        {/* Tab Navigation */}
-        <div className="flex space-x-2 mt-6 border-b border-slate-200 overflow-x-auto pb-px">
+        {/* Mode Terrain Mobile Banner & Quick Actions */}
+        <div className="md:hidden mt-4 p-3 bg-gradient-to-r from-sky-50 to-indigo-50/70 border border-sky-200/90 rounded-xl space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-xs font-bold text-[#0f3854] flex items-center space-x-1">
+                <Smartphone className="w-3.5 h-3.5 text-[#0f3854]" />
+                <span>Mode Terrain — Collecte immédiate</span>
+              </span>
+            </div>
+            <span className="text-[10px] text-sky-800 bg-white px-2 py-0.5 rounded-full border border-sky-200 font-semibold shadow-2xs">
+              ☁️ Synchro MacBook
+            </span>
+          </div>
+
+          {/* Quick Action Buttons Grid for Field */}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setActiveTab('evidences')}
+              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
+            >
+              <Camera className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="truncate">Photo constat</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('report');
+                setTimeout(() => {
+                  const el = document.getElementById('field-notes-area');
+                  el?.scrollIntoView({ behavior: 'smooth' });
+                  el?.focus();
+                }, 100);
+              }}
+              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
+            >
+              <Mic className="w-4 h-4 text-sky-600 shrink-0" />
+              <span className="truncate">Note / Dictée</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenQuickAdd(mission.id)}
+              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
+            >
+              <Clock className="w-4 h-4 text-[#0f3854] shrink-0" />
+              <span className="truncate">Pointage temps</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenQuickAdd(mission.id)}
+              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
+            >
+              <Receipt className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="truncate">Note de frais</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Tab Selector (Fin du défilement horizontal) */}
+        <div className="md:hidden mt-4 pt-3 border-t border-slate-100">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Section active
+            </label>
+            <span className="text-[11px] font-bold text-[#0f3854]">
+              {[
+                { id: 'evidences', label: 'Photos terrain & Émargements' },
+                { id: 'report', label: 'Notes techniques & Rapport' },
+                { id: 'time', label: 'Temps & Frais' },
+                { id: 'overview', label: 'Synthèse & Parties' },
+                { id: 'docs', label: 'Pièces & Documents' },
+                { id: 'comms', label: 'Dires, Convocations & Courriers' },
+                { id: 'travel', label: 'Visites sur site & Logistique' },
+                { id: 'rates', label: 'Tarifs & Palier' },
+              ].find(t => t.id === activeTab)?.label}
+            </span>
+          </div>
+
+          <div className="relative">
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value as any)}
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl py-2.5 px-3 pr-8 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-[#0f3854] appearance-none"
+            >
+              <option value="evidences">📸 Photos terrain & Émargements</option>
+              <option value="report">📝 Notes techniques & Rapport</option>
+              <option value="time">⏱️ Temps & Frais</option>
+              <option value="overview">📋 Synthèse & Parties</option>
+              <option value="docs">📁 Pièces & Documents</option>
+              <option value="comms">✉️ Dires, Convocations & Courriers</option>
+              <option value="travel">🚆 Visites sur site & Logistique</option>
+              <option value="rates">⚙️ Tarifs & Palier</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3 top-3 pointer-events-none" />
+          </div>
+
+          {/* Quick Segmented 3 Field Pillars */}
+          <div className="grid grid-cols-3 gap-1.5 mt-2 bg-slate-100 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setActiveTab('evidences')}
+              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
+                activeTab === 'evidences'
+                  ? 'bg-white text-[#0f3854] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              📸 Photos
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('report')}
+              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
+                activeTab === 'report'
+                  ? 'bg-white text-[#0f3854] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              📝 Notes
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('time')}
+              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
+                activeTab === 'time'
+                  ? 'bg-white text-[#0f3854] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ⏱️ Temps
+            </button>
+          </div>
+        </div>
+
+        {/* Tab Navigation (Desktop) */}
+        <div className="hidden md:flex space-x-2 mt-6 border-b border-slate-200 overflow-x-auto pb-px">
           {[
             { id: 'time', label: 'Temps & Frais', icon: Clock, count: (mission.activities?.length || 0) + (mission.expenses?.length || 0) },
             { id: 'evidences', label: 'Photos terrain & Émargements', icon: Camera },
@@ -1248,12 +1387,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             </div>
 
             <textarea
+              id="field-notes-area"
               rows={4}
               value={rawFieldNotes}
               onChange={(e) => setRawFieldNotes(e.target.value)}
-              placeholder="Collez ici votre note iPhone brute (ex: 'Rendez-vous gare de triage 14h. Bogie avant droit fissuré au niveau de la crapaudine. Vitesse estimée 24 km/h lors du déraillement. Pièces saisies : boulon de fixation cisaillé. Voir photos 1 à 4...')"
+              placeholder="Saisissez ou dictez vos observations sur le terrain (ex: 'Rendez-vous gare de triage 14h. Bogie avant droit fissuré au niveau de la crapaudine. Vitesse estimée 24 km/h lors du déraillement. Pièces saisies : boulon de fixation cisaillé. Voir photos 1 à 4...')"
               className="w-full text-xs rounded-xl border border-amber-200 bg-white p-3 font-sans text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
             />
+            <p className="text-[11px] text-amber-800 flex items-center space-x-1.5 font-medium">
+              <span>🎙️</span>
+              <span><strong>Astuce iPhone :</strong> Touchez le champ et utilisez la touche micro du clavier pour dicter vos observations. Elles sont synchronisées en direct et prêtes pour la rédaction de votre rapport sur MacBook.</span>
+            </p>
           </div>
 
           {/* Structured Draft Report Editor */}

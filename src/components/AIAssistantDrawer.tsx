@@ -459,16 +459,24 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
   return (
     <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
       onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
-      className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end"
+      className="fixed inset-0 z-50 overflow-hidden bg-slate-900/50 backdrop-blur-xs flex justify-end"
     >
       <div
         className="w-full max-w-lg bg-white h-full shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out border-l border-slate-200 relative"
         role="dialog"
         aria-modal="true"
       >
+        {/* Mobile Pull Handle */}
+        <div className="w-10 h-1 bg-slate-600/70 rounded-full mx-auto my-1.5 md:hidden"></div>
+
         {/* Drag & Drop Visual Overlay */}
         {isDragging && (
           <div className="absolute inset-0 z-30 bg-sky-500/10 border-2 border-dashed border-[#0f3854] flex flex-col items-center justify-center pointer-events-none backdrop-blur-xs">
@@ -483,7 +491,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
         )}
 
         {/* Header */}
-        <div className="px-4 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+        <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center space-x-2.5">
             <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center border border-cyan-500/30">
               <Bot className="w-5 h-5" />
@@ -497,12 +505,12 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                {currentMission ? `Contexte actif : [${currentMission.code}]` : 'Connecté à vos dossiers & comptabilité'}
+                {currentMission ? `Contexte : [${currentMission.code}]` : 'Connecté à vos dossiers & comptabilité'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-1">
+          <div className="flex items-center space-x-1.5">
             <button
               onClick={handleReset}
               title="Nouvelle conversation"
@@ -512,10 +520,11 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
             </button>
             <button
               onClick={onClose}
-              title="Fermer"
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              title="Fermer la fenêtre"
+              className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
+              <span className="text-[11px]">Fermer</span>
             </button>
           </div>
         </div>
@@ -940,7 +949,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
         )}
 
         {/* Input Bar with Camera & File Triggers */}
-        <div className="p-3 bg-white border-t border-slate-200">
+        <div className="p-3 sm:p-4 bg-white border-t border-slate-200 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <form
             onSubmit={(e) => {
               e.preventDefault();

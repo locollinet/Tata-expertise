@@ -126,7 +126,7 @@ export function App() {
         unbilledTotal={summary?.total_unbilled_ht || 0}
       />
 
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-24 md:pb-8">
+      <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-28 md:pb-8">
         {activeTab === 'today' && (
           <TodayView
             summary={summary}
@@ -187,7 +187,7 @@ export function App() {
       </main>
 
       {/* Mobile Bottom Navigation Bar (Ergonomie Smartphone / Terrain) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 py-1.5 flex items-center justify-around shadow-lg">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] flex items-center justify-around shadow-lg">
         <button
           type="button"
           onClick={() => { setActiveTab('today'); setSelectedMissionId(null); }}
@@ -227,7 +227,7 @@ export function App() {
           <div className="w-12 h-12 rounded-full bg-[#0f3854] text-white flex items-center justify-center shadow-md active:scale-95 transition-transform border-2 border-white">
             <Plus className="w-6 h-6" />
           </div>
-          <span className="text-[10px] font-bold text-[#0f3854] mt-0.5">Flash</span>
+          <span className="text-[10px] font-bold text-[#0f3854] mt-0.5">Terrain</span>
         </button>
 
         <button
@@ -245,27 +245,27 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => { setActiveTab('compta'); setSelectedMissionId(null); }}
+          onClick={() => setIsAssistantOpen(true)}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-lg text-[10px] font-semibold transition-colors ${
-            activeTab === 'compta' ? 'text-[#0f3854]' : 'text-slate-500 hover:text-slate-800'
+            isAssistantOpen ? 'text-cyan-700 font-bold' : 'text-slate-500 hover:text-cyan-800'
           }`}
         >
-          <Calculator className="w-5 h-5" />
-          <span className="mt-0.5">Compta</span>
+          <Sparkles className="w-5 h-5 text-cyan-600 animate-pulse" />
+          <span className="mt-0.5">Assistant</span>
         </button>
       </nav>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-400">
+      {/* Footer (Desktop) */}
+      <footer className="hidden md:block border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-400">
         <p>VP EXPERTISE — Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires • Application Locale Conforme</p>
       </footer>
 
-      {/* Floating AI Assistant Trigger Button (Discret & Toujours accessible) */}
+      {/* Floating AI Assistant Trigger Button (Desktop / Tablet uniquement) */}
       <button
         type="button"
         onClick={() => setIsAssistantOpen(true)}
-        className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-30 bg-slate-900 hover:bg-slate-800 text-cyan-400 p-3 sm:p-3.5 rounded-full shadow-xl border border-cyan-500/30 hover:scale-105 active:scale-95 transition-all flex items-center space-x-2 group cursor-pointer"
-        title="Assistant IA VP Expertise (Gemini 2.5 Flash)"
+        className="hidden md:flex fixed bottom-6 right-6 z-30 bg-slate-900 hover:bg-slate-800 text-cyan-400 p-3 sm:p-3.5 rounded-full shadow-xl border border-cyan-500/30 hover:scale-105 active:scale-95 transition-all items-center space-x-2 group cursor-pointer"
+        title="Assistant IA VP Expertise (Gemini Flash)"
       >
         <Sparkles className="w-5 h-5 animate-pulse text-cyan-400 group-hover:rotate-12 transition-transform" />
         <span className="hidden lg:inline text-xs font-bold text-white pr-1">Assistant IA</span>

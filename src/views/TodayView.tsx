@@ -68,17 +68,17 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full md:w-auto shrink-0">
           <button
             onClick={onOpenQuickAdd}
-            className="px-4 py-2.5 bg-white text-[#0f3854] hover:bg-sky-50 rounded-lg text-sm font-semibold shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+            className="px-4 py-2.5 bg-white text-[#0f3854] hover:bg-sky-50 rounded-lg text-sm font-semibold shadow-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
           >
             <Clock className="w-4 h-4" />
             <span>Pointer une activité</span>
           </button>
           <button
             onClick={() => onNavigateToBilling()}
-            className="px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-semibold shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+            className="px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-semibold shadow-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
           >
             <Receipt className="w-4 h-4" />
             <span>Voir les honoraires</span>
