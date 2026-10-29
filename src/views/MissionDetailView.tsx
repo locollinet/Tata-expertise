@@ -72,6 +72,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [commSubject, setCommSubject] = useState('');
   const [commBody, setCommBody] = useState('');
   const [commUrgency, setCommUrgency] = useState<'normale' | 'urgente'>('normale');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setFeedback({ type, message });
+    setTimeout(() => setFeedback(null), 3500);
+  };
 
   const loadData = async () => {
     try {
@@ -131,7 +137,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       setShowAddPhoto(false);
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     } finally {
       setUploadingPhoto(false);
     }
@@ -144,17 +150,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       });
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
   const handleDeletePhoto = async (photoId: string) => {
-    if (!confirm("Voulez-vous supprimer cette photo ?")) return;
     try {
       await api.deletePhoto(photoId);
+      showToast("Photo supprimée.");
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -177,21 +183,22 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         throw new Error(err.error || "Erreur lors du téléversement");
       }
       setDocCaption('');
+      showToast("Document(s) téléversé(s) avec succès.");
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     } finally {
       setUploadingDocs(false);
     }
   };
 
   const handleDeleteDocument = async (docId: string) => {
-    if (!confirm("Voulez-vous supprimer cette pièce du dossier ?")) return;
     try {
       await api.deleteDocument(docId);
+      showToast("Document retiré du dossier.");
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -202,7 +209,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       });
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -217,10 +224,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         raw_field_notes: rawFieldNotes,
       });
       setReportSaved(true);
+      showToast("Rapport technique sauvegardé !");
       setTimeout(() => setReportSaved(false), 2500);
       loadData();
     } catch (err: any) {
-      alert("Erreur lors de la sauvegarde du rapport : " + err.message);
+      showToast("Erreur lors de la sauvegarde du rapport : " + err.message, 'error');
     }
   };
 
@@ -255,9 +263,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
       setBatchText('');
       setShowBatchAttendees(false);
+      showToast("Participants enregistrés avec succès !");
       loadData();
     } catch (err: any) {
-      alert("Erreur lors de l'ajout groupé : " + err.message);
+      showToast("Erreur lors de l'ajout groupé : " + err.message, 'error');
     } finally {
       setBatchSubmitting(false);
     }
@@ -279,9 +288,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       setAttOrg('');
       setAttRole('');
       setShowAddAttendee(false);
+      showToast("Participant ajouté.");
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -300,9 +310,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       setCommSubject('');
       setCommBody('');
       setShowAddComm(false);
+      showToast("Message rattaché au dossier.");
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   };
 
@@ -357,6 +368,21 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           </button>
         </div>
       </div>
+
+      {feedback && (
+        <div className={`p-3 rounded-xl text-xs flex items-center space-x-2 transition-all ${
+          feedback.type === 'success'
+            ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+            : 'bg-rose-50 border border-rose-200 text-rose-700'
+        }`}>
+          {feedback.type === 'success' ? (
+            <Check className="w-4 h-4 shrink-0 text-emerald-600" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+          )}
+          <span className="font-medium">{feedback.message}</span>
+        </div>
+      )}
 
       {/* Mission Header Card */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
@@ -1373,7 +1399,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   onClick={() => {
                     if (!rawFieldNotes.trim()) return;
                     setReportObs((prev: string) => prev ? `${prev}\n\n--- Extrait Notes Terrain ---\n${rawFieldNotes}` : rawFieldNotes);
-                    alert("Notes insérées dans le paragraphe 2 (Constatations matérielles) !");
+                    showToast("Notes insérées dans le paragraphe 2 (Constatations matérielles) !");
                   }}
                   disabled={!rawFieldNotes.trim()}
                   className="inline-flex items-center space-x-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50"

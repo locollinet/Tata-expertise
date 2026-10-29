@@ -62,10 +62,11 @@ async function startServer() {
       });
     }
   } else {
+    const isHmrEnabled = process.env.DISABLE_HMR === 'false';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
+        hmr: isHmrEnabled ? undefined : false,
       },
       appType: 'spa',
     });

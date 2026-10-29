@@ -32,6 +32,7 @@ export const ComptaView: React.FC = () => {
   const [entryAmountHT, setEntryAmountHT] = useState('');
   const [entryVatAmount, setEntryVatAmount] = useState('0');
   const [entryComment, setEntryComment] = useState('');
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const loadMonthData = async () => {
     setLoading(true);
@@ -67,13 +68,14 @@ export const ComptaView: React.FC = () => {
         comment: entryComment || undefined,
       });
       setShowAddModal(false);
+      setModalError(null);
       setEntryObject('');
       setEntryParty('');
       setEntryAmountHT('');
       setEntryVatAmount('0');
       loadMonthData();
     } catch (err: any) {
-      alert("Erreur : " + err.message);
+      setModalError(err.message);
     }
   };
 
@@ -266,6 +268,12 @@ export const ComptaView: React.FC = () => {
             </div>
 
             <form onSubmit={handleAddEntry} className="space-y-3">
+              {modalError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{modalError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-600 mb-1">Type *</label>

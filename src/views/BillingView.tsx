@@ -38,6 +38,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   // Credit Note (Avoir) state
   const [creditNoteModalInvoice, setCreditNoteModalInvoice] = useState<Invoice | null>(null);
   const [creditReason, setCreditReason] = useState('');
+  const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const loadInvoices = async () => {
     try {
@@ -133,28 +134,28 @@ export const BillingView: React.FC<BillingViewProps> = ({
   };
 
   const handleEmitInvoice = async (invoiceId: string) => {
-    if (!confirm("Confirmez-vous l'émission définitive de cette note d'honoraires ? Les temps et frais seront verrouillés.")) return;
     try {
       const res = await api.emitInvoice(invoiceId);
-      alert(res.message);
+      setActionFeedback({ type: 'success', message: res.message });
       loadInvoices();
       loadSelectedMission();
       onRefreshMissions();
+      setTimeout(() => setActionFeedback(null), 4000);
     } catch (err: any) {
-      alert("Erreur : " + err.message);
+      setActionFeedback({ type: 'error', message: "Erreur : " + err.message });
     }
   };
 
   const handleCancelInvoice = async (invoiceId: string) => {
-    if (!confirm("Voulez-vous annuler ce brouillon ? Les éléments réservés seront remis en état 'À facturer'.")) return;
     try {
       const res = await api.cancelInvoice(invoiceId);
-      alert(res.message);
+      setActionFeedback({ type: 'success', message: res.message });
       loadInvoices();
       loadSelectedMission();
       onRefreshMissions();
+      setTimeout(() => setActionFeedback(null), 4000);
     } catch (err: any) {
-      alert("Erreur : " + err.message);
+      setActionFeedback({ type: 'error', message: "Erreur : " + err.message });
     }
   };
 
@@ -167,11 +168,12 @@ export const BillingView: React.FC<BillingViewProps> = ({
         payment_method: paymentMethod,
         paid_amount: parseFloat(paymentAmount.replace(',', '.')) || paymentModalInvoice.net_payable,
       });
-      alert(res.message);
+      setActionFeedback({ type: 'success', message: res.message });
       setPaymentModalInvoice(null);
       loadInvoices();
+      setTimeout(() => setActionFeedback(null), 4000);
     } catch (err: any) {
-      alert("Erreur : " + err.message);
+      setActionFeedback({ type: 'error', message: "Erreur : " + err.message });
     }
   };
 
@@ -183,12 +185,13 @@ export const BillingView: React.FC<BillingViewProps> = ({
         original_invoice_id: creditNoteModalInvoice.id,
         reason: creditReason.trim(),
       });
-      alert(res.message);
+      setActionFeedback({ type: 'success', message: res.message });
       setCreditNoteModalInvoice(null);
       setCreditReason('');
       loadInvoices();
+      setTimeout(() => setActionFeedback(null), 4000);
     } catch (err: any) {
-      alert("Erreur : " + err.message);
+      setActionFeedback({ type: 'error', message: "Erreur : " + err.message });
     }
   };
 
@@ -423,6 +426,21 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </p>
           </div>
         </div>
+
+        {actionFeedback && (
+          <div className={`p-3 rounded-lg text-xs flex items-center space-x-2 ${
+            actionFeedback.type === 'success'
+              ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border border-rose-200 text-rose-700'
+          }`}>
+            {actionFeedback.type === 'success' ? (
+              <Check className="w-4 h-4 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            )}
+            <span>{actionFeedback.message}</span>
+          </div>
+        )}
 
         {invoices.length === 0 ? (
           <p className="text-xs text-slate-400 py-8 text-center">Aucune facture enregistrée.</p>

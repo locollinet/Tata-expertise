@@ -65,38 +65,43 @@ test("Enregistrement sécurisé en base SQLite d'une note de frais validée via 
   assert.equal(deleted, undefined, "Nettoyage réussi");
 });
 
-test("Fast-Path : Détection instantanée des requêtes courantes de Valentine", () => {
-  const isDraftingOrCreative = (msg) => /(rédig|redig|relanc|mail|courrier|ecri|écri|brouillon|conseil|recommand|avis|pourquoi|analyse|explique|propose)/i.test(msg);
-  const isBillingQuery = (msg) => /(seuil|palier|3500|3 500|à facturer|a facturer|combien.*factur|total.*non facturé|honorair|attente.*facturation)/i.test(msg);
-  const isDeadlineQuery = (msg) => /(échéance|echeance|jalon|dire|quand|planning|date.*prochain|prochain.*date|calendrier)/i.test(msg);
-  const isAccountingQuery = (msg) => /(compta|tva|chiffre| ca |^ca$|ca du mois|ca ce mois|bilan|chiffre d[' ]affaires)/i.test(msg);
+test("Sémantique stricte : Zéro faux positif sur les sous-chaînes et réponse honnête pour notes vocales", () => {
+  const isVoiceNoteQuery = (msg) => /\b(notes?\s+vocales?|mémos?\s+vocaux|mémos?\s+audio|fichiers?\s+audio|enregistrements?\s+vocaux|dictée\s+vocale|messages?\s+vocaux|écouter\s+ma\s+voix|parler\s+au\s+micro|enregistrer\s+la\s+voix)\b/i.test(msg);
+  const isCapabilityQuery = (msg) => /\b(que\s+sais-tu\s+faire|quelles?\s+sont\s+tes\s+fonctionnalit|comment\s+(tu\s+fonctionnes?|t[' ]utiliser|ça\s+marche)|à\s+quoi\s+sers-tu|aide\b|help\b|guide\b)\b/i.test(msg);
+  const isAccountingQuery = (msg) => /\b(chiffre\s+d[' ]?affaires|bilan\s+comptable|tva\s+collectée|point\s+compta|\bca\s+du\s+mois\b|\bca\s+ce\s+mois\b)\b/i.test(msg) || /\bquel\s+est\s+(mon\s+)?ca\b/i.test(msg);
+  const isDeadlineQuery = (msg) => /\b(prochaines?\s+échéances?|dates?\s+limites?|jalons?\s+de\s+procédure)\b/i.test(msg) || /\b(calendrier|planning|dates?)\b.*\b(dires?|échéances?|procédures?)\b/i.test(msg) || /\bquelles?\s+sont\s+mes\s+échéances\b/i.test(msg);
 
-  // Palier de facturation (suggestion chip 1)
-  const q1 = "Quels dossiers ont atteint leur palier de facturation ?";
-  assert.equal(isDraftingOrCreative(q1), false);
-  assert.equal(isBillingQuery(q1), true);
+  // 1. "Peux-tu recevoir toutes mes notes vocales ?" DOIT être reconnu comme Voice Note et JAMAIS comme Compta !
+  const voiceQ = "Peux-tu recevoir toutes mes notes vocales ?";
+  assert.equal(isVoiceNoteQuery(voiceQ), true, "Doit matcher voice note");
+  assert.equal(isAccountingQuery(voiceQ), false, "Ne doit SURTOUT PAS matcher compta à cause de 'vocales'");
 
-  // Échéances et dires (suggestion chip 2)
-  const q2 = "Quelles sont les prochaines échéances et dires attendus ?";
-  assert.equal(isDraftingOrCreative(q2), false);
-  assert.equal(isDeadlineQuery(q2), true);
+  // 2. Anti-pièges de sous-chaînes (mots contenant 'ca')
+  const queriesWithCa = [
+    "Comment contacter l'avocat adverse ?",
+    "Quels sont les justificatifs acceptés ?",
+    "Que faire en cas d'accident sur site ?",
+    "Où sont stockés les certificats de visite ?",
+    "Combien d'heures de vacation prévues ?"
+  ];
+  for (const q of queriesWithCa) {
+    assert.equal(isAccountingQuery(q), false, `La phrase "${q}" ne doit PAS déclencher la compta`);
+  }
 
-  // CA et TVA (suggestion chip 3)
-  const q3 = "Quel est mon chiffre d'affaires et ma TVA ce mois-ci ?";
-  assert.equal(isDraftingOrCreative(q3), false);
-  assert.equal(isAccountingQuery(q3), true);
+  // 3. Anti-pièges de sous-chaînes sur le verbe 'dire'
+  const queriesWithDire = [
+    "Peux-tu me dire comment faire ?",
+    "C'est-à-dire que nous attendons une réponse"
+  ];
+  for (const q of queriesWithDire) {
+    assert.equal(isDeadlineQuery(q), false, `La phrase "${q}" ne doit PAS déclencher les échéances`);
+  }
 
-  // Rédaction de relance
-  const q4 = "Rédige-moi un mail courtois pour relancer un avocat sur la remise de son Dire n°2.";
-  assert.equal(isDraftingOrCreative(q4), true);
+  // 4. Vraie question comptable
+  assert.equal(isAccountingQuery("Quel est mon chiffre d'affaires ce mois-ci ?"), true);
+  assert.equal(isAccountingQuery("Quel est le CA du mois ?"), true);
 
-  // Lookup dossier dynamique
-  const missions = db.prepare('SELECT code, title, insurance_client FROM missions').all();
-  assert.ok(missions.length > 0, "Des missions doivent exister");
-  const testMission = missions[0];
-  const queryMission = `Point sur ${testMission.code}`;
-  const matched = missions.find(m => queryMission.toLowerCase().includes(m.code.toLowerCase()));
-  assert.ok(matched, "Le dossier doit être reconnu dynamiquement");
-  assert.equal(matched.code, testMission.code);
+  // 5. Question de capacité
+  assert.equal(isCapabilityQuery("Que sais-tu faire ?"), true);
 });
 

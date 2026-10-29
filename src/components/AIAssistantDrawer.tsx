@@ -175,7 +175,15 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
   const handleFilePicked = async (file: File) => {
     if (file.size > 10 * 1024 * 1024) {
-      alert("Le fichier dépasse le plafond de 10 Mo. Merci de déposer un document plus léger.");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `warn-${Date.now()}`,
+          sender: 'assistant',
+          text: "⚠️ Le fichier sélectionné dépasse le plafond de 10 Mo. Merci de déposer une pièce plus compacte.",
+          timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
       return;
     }
     const processed = await compressImageIfNeeded(file);
@@ -319,7 +327,15 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
       onRefreshData?.();
     } catch (err: any) {
-      alert(`Erreur d'enregistrement : ${err.message}`);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          sender: 'assistant',
+          text: `❌ Erreur lors de l'enregistrement : ${err.message}`,
+          timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
     } finally {
       setSubmittingActionId(null);
     }
