@@ -8,6 +8,7 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateInvoiceDocx, generateReportDocx } from './docx.js';
 import { generateMonthlyComptaWorkbook } from './excel.js';
 import { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.js';
+import JSZip from 'jszip';
 
 export const apiRouter = Router();
 
@@ -2426,5 +2427,57 @@ apiRouter.post('/assistant/commit-action', (req, res) => {
   } catch (err: any) {
     console.error("[Assistant Commit Error] :", err);
     res.status(500).json({ error: err.message || "Erreur lors de l'enregistrement de l'action." });
+  }
+});
+
+// ---------------- SYNCHRONISATION DOSSIERS MAC / iCLOUD DRIVE (EXPORT ZIP ARBORESCENCE) ----------------
+apiRouter.get('/sync/export-zip', async (_req, res) => {
+  try {
+    const zip = new JSZip();
+    const rootFolder = zip.folder('VP_Expertise_iCloud')!;
+
+    const invoices = db.prepare('SELECT * FROM invoices ORDER BY date DESC').all() as any[];
+    for (const inv of invoices) {
+      const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id) as InvoiceLine[];
+      const fullInv: Invoice = {
+        ...inv,
+        split_details: inv.split_details ? JSON.parse(inv.split_details) : null,
+        lines,
+      };
+      const docxBuffer = await generateInvoiceDocx(fullInv);
+      const safeCode = (inv.our_ref || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
+      rootFolder.file(`${safeCode}/Factures/Facture_${inv.invoice_number}.docx`, docxBuffer);
+    }
+
+    const documents = db.prepare('SELECT * FROM documents').all() as any[];
+    for (const doc of documents) {
+      const filePath = path.join(uploadsDir, doc.filename);
+      if (fs.existsSync(filePath)) {
+        const safeCode = (doc.mission_code || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const subFolder = doc.category === 'photo_terrain'
+          ? 'Photos_Terrain'
+          : doc.category === 'justificatif_frais'
+          ? 'Justificatifs_Frais'
+          : 'Documents_Pieces';
+        rootFolder.file(`${safeCode}/${subFolder}/${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
+      }
+    }
+
+    const photos = db.prepare('SELECT * FROM photos').all() as any[];
+    for (const photo of photos) {
+      const filePath = path.join(uploadsDir, photo.filename);
+      if (fs.existsSync(filePath)) {
+        const safeCode = (photo.mission_code || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
+        rootFolder.file(`${safeCode}/Photos_Terrain/${photo.filename}`, fs.readFileSync(filePath));
+      }
+    }
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="VP_Expertise_iCloud_Dossiers.zip"');
+    res.send(zipBuffer);
+  } catch (err: any) {
+    console.error('[Export ZIP iCloud Error]:', err);
+    res.status(500).json({ error: err.message || "Erreur lors de la génération de l'archive iCloud" });
   }
 });

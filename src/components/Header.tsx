@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles, FolderSync } from 'lucide-react';
+import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles, FolderSync, Download, ExternalLink, X, FolderOpen } from 'lucide-react';
 import { auth, signInWithGoogle, logOut } from '../firebase.js';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { getLocalSyncStatus, connectLocalMacFolder, disconnectLocalMacFolder } from '../utils/localFolderSync.js';
+import { getLocalSyncStatus, connectLocalMacFolder, disconnectLocalMacFolder, enableAutoDownloadSync } from '../utils/localFolderSync.js';
 
 interface HeaderProps {
   activeTab: 'today' | 'missions' | 'billing' | 'compta';
@@ -24,6 +24,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [syncFolderName, setSyncFolderName] = useState<string | null>(null);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [iframeWarning, setIframeWarning] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -42,15 +44,36 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
 
-  const handleToggleMacSync = async () => {
+  const handleToggleMacSync = () => {
+    setIframeWarning(false);
+    setShowSyncModal(true);
+  };
+
+  const handlePickNativeFolder = async () => {
     try {
       const res = await connectLocalMacFolder();
+      if (res.iframeBlocked) {
+        setIframeWarning(true);
+        return;
+      }
       if (res.connected) {
         setSyncFolderName(res.folderName);
+        setShowSyncModal(false);
       }
     } catch {
-      // Cancelled by user
+      setIframeWarning(true);
     }
+  };
+
+  const handleEnableAutoMirror = () => {
+    const res = enableAutoDownloadSync();
+    setSyncFolderName(res.folderName);
+    setShowSyncModal(false);
+  };
+
+  const handleDisconnectSync = async () => {
+    await disconnectLocalMacFolder();
+    setSyncFolderName(null);
   };
 
   const handleLogin = async () => {
@@ -211,6 +234,133 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modal Synchronisation Dossier Local Mac / iCloud Drive */}
+      {showSyncModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0f3854]">
+                  <FolderSync className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Synchronisation Mac & iCloud Drive</h3>
+                  <p className="text-xs text-slate-500">
+                    Retrouvez toutes vos pièces, photos et factures Word rangées par dossier sur votre Mac
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSyncModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {syncFolderName && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-900">
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Synchronisation active : <strong>{syncFolderName}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnectSync}
+                  className="text-rose-700 hover:underline font-semibold ml-2"
+                >
+                  Déconnecter
+                </button>
+              </div>
+            )}
+
+            {iframeWarning && (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2">
+                <p className="font-semibold">
+                  L'aperçu intégré (iframe AI Studio) bloque l'ouverture directe du Finder macOS.
+                </p>
+                <p className="text-amber-800">
+                  Vous pouvez soit <strong>activer la copie automatique ci-dessous</strong> (qui fonctionne immédiatement ici), soit ouvrir l'application dans un onglet dédié pour choisir directement un dossier du Finder :
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1.5 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg font-semibold shadow-2xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Ouvrir dans un nouvel onglet plein écran</span>
+                  </a>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3 text-xs">
+              {/* Option 1: Télécharger l'archive ZIP complète rangée par dossier */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2">
+                <div className="font-bold text-slate-900 flex items-center space-x-1.5">
+                  <Download className="w-4 h-4 text-[#0f3854]" />
+                  <span>1. Télécharger tous mes dossiers rangés pour iCloud Drive (.zip)</span>
+                </div>
+                <p className="text-slate-600">
+                  Génère un dossier complet <code>VP_Expertise_iCloud</code> contenant chaque sous-dossier de mission (<code>VP2026728/Factures</code>, <code>Photos_Terrain</code>, <code>Documents_Pieces</code>) prêt à glisser dans votre iCloud Drive.
+                </p>
+                <a
+                  href="/api/sync/export-zip"
+                  download="VP_Expertise_iCloud_Dossiers.zip"
+                  className="inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3.5 py-2 rounded-lg font-semibold shadow-2xs transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger mes dossiers iCloud (.zip)</span>
+                </a>
+              </div>
+
+              {/* Option 2: Enregistrement automatique à chaque dépôt */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2">
+                <div className="font-bold text-slate-900 flex items-center space-x-1.5">
+                  <Cloud className="w-4 h-4 text-emerald-600" />
+                  <span>2. Copie automatique sur le Mac à chaque ajout (Universel / Safari)</span>
+                </div>
+                <p className="text-slate-600">
+                  Dès que vous déposez une photo, un document ou que vous générez une facture Word dans l'application, une copie nommée avec le numéro de dossier (ex. <code>VP2026728__Factures__Facture_2026-099.docx</code>) s'enregistre automatiquement sur votre Mac.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleEnableAutoMirror}
+                  className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg font-semibold shadow-2xs transition-colors cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Activer la copie automatique sur mon Mac</span>
+                </button>
+              </div>
+
+              {/* Option 3: Liaison directe d'un dossier Finder (Chrome / Edge hors iframe) */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2">
+                <div className="font-bold text-slate-900 flex items-center space-x-1.5">
+                  <FolderOpen className="w-4 h-4 text-sky-600" />
+                  <span>3. Relier directement un dossier du Finder (Chrome / URL directe)</span>
+                </div>
+                <p className="text-slate-600">
+                  Si vous utilisez l'URL directe de l'application sur Google Chrome (hors aperçu AI Studio), sélectionnez votre dossier <code>iCloud Drive / VP Expertise</code> dans le Finder : l'application y créera les sous-dossiers toute seule.
+                </p>
+                <button
+                  type="button"
+                  onClick={handlePickNativeFolder}
+                  className="inline-flex items-center space-x-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 px-3.5 py-2 rounded-lg font-semibold shadow-2xs transition-colors cursor-pointer"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-[#0f3854]" />
+                  <span>Choisir mon dossier iCloud Drive dans le Finder...</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

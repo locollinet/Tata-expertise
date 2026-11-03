@@ -56,24 +56,44 @@ export function isFileSystemAccessSupported(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 }
 
-export async function connectLocalMacFolder(): Promise<{ connected: boolean; folderName: string; mode: 'native' | 'safari_auto' }> {
+export function enableAutoDownloadSync(): { connected: boolean; folderName: string; mode: 'safari_auto' } {
+  const name = 'iCloud Drive (Enregistrement auto)';
+  localStorage.setItem('vp_local_sync_folder_name', name);
+  localStorage.setItem('vp_local_sync_mode', 'safari_auto');
+  window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
+  return { connected: true, folderName: name, mode: 'safari_auto' };
+}
+
+export async function connectLocalMacFolder(): Promise<{
+  connected: boolean;
+  folderName: string;
+  mode: 'native' | 'safari_auto';
+  iframeBlocked?: boolean;
+}> {
   if (isFileSystemAccessSupported()) {
-    const dirHandle = await (window as any).showDirectoryPicker({
-      id: 'vp_expertise_icloud',
-      mode: 'readwrite',
-      startIn: 'documents',
-    });
-    await saveDirectoryHandle(dirHandle);
-    localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
-    localStorage.setItem('vp_local_sync_mode', 'native');
-    window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
-    return { connected: true, folderName: dirHandle.name, mode: 'native' };
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker({
+        id: 'vp_expertise_icloud',
+        mode: 'readwrite',
+        startIn: 'documents',
+      });
+      await saveDirectoryHandle(dirHandle);
+      localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
+      localStorage.setItem('vp_local_sync_mode', 'native');
+      window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
+      return { connected: true, folderName: dirHandle.name, mode: 'native' };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        return { connected: false, folderName: '', mode: 'native' };
+      }
+      // Inside a cross-origin iframe (like AI Studio preview), browsers block showDirectoryPicker with SecurityError
+      if (err?.name === 'SecurityError' || String(err?.message || '').toLowerCase().includes('sub frame')) {
+        return { connected: false, folderName: '', mode: 'safari_auto', iframeBlocked: true };
+      }
+      throw err;
+    }
   } else {
-    // Safari fallback: enable automatic local download mirror for iCloud Drive
-    localStorage.setItem('vp_local_sync_folder_name', 'iCloud Drive (Téléchargements auto)');
-    localStorage.setItem('vp_local_sync_mode', 'safari_auto');
-    window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
-    return { connected: true, folderName: 'iCloud Drive (Téléchargements auto)', mode: 'safari_auto' };
+    return enableAutoDownloadSync();
   }
 }
 
