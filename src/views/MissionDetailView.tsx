@@ -8,7 +8,7 @@ import {
 import { api } from '../api.js';
 import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
-import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
+import { syncFileToLocalMacFolder, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
 
 interface MissionDetailViewProps {
   missionId: string;
@@ -165,6 +165,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         const err = await res.json();
         throw new Error(err.error || "Erreur lors de l'upload");
       }
+      const photoJson = await res.json();
+      await mirrorEvidenceToFirestore({
+        missionId: mission.id,
+        missionCode: mission.code,
+        file: photoFile,
+        title: photoCaption.trim() || photoFile.name,
+        caption: photoCaption.trim() || photoFile.name,
+        type: 'photo',
+        serverFilename: photoJson.filename,
+        isSelectedForReport: true,
+      });
       await syncFileToLocalMacFolder({
         missionCode: mission.code,
         subFolder: 'Photos_Terrain',
@@ -228,6 +239,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         : 'Documents_Pieces';
       for (let i = 0; i < filesToUpload.length; i++) {
         const f = filesToUpload[i];
+        await mirrorEvidenceToFirestore({
+          missionId: mission.id,
+          missionCode: mission.code,
+          file: f,
+          title: docCaption.trim() || f.name,
+          caption: docCaption.trim() || f.name,
+          type: docCategory === 'photo_terrain' ? 'photo' : 'document',
+          isSelectedForReport: docCategory === 'photo_terrain',
+        });
         await syncFileToLocalMacFolder({
           missionCode: mission.code,
           subFolder,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, FolderPlus, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { api } from '../api.js';
+import { ensureMissionFolderOnMac } from '../utils/localFolderSync.js';
 
 interface CreateMissionModalProps {
   isOpen: boolean;
@@ -94,6 +95,8 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
         custom_travel_rate: 135,
         custom_km_rate: 0.95,
       });
+      // Crée automatiquement le sous-dossier du nouveau dossier (et ses 4 répertoires) dans iCloud Drive sur son Mac
+      await ensureMissionFolderOnMac(code.trim());
       onSuccess(res.id);
       onClose();
     } catch (err: any) {

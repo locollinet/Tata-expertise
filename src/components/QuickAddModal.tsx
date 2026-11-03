@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { X, Clock, Receipt, Check, AlertCircle, Camera, Users, Search, Archive } from 'lucide-react';
 import { Mission, ACTIVITY_CATEGORY_LABELS, ActivityCategory } from '@shared/types.js';
 import { api } from '../api.js';
-import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
+import { syncFileToLocalMacFolder, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -221,6 +221,18 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           const err = await res.json();
           throw new Error(err.error || "Erreur lors de l'enregistrement de la photo");
         }
+        const photoJson = await res.json();
+
+        await mirrorEvidenceToFirestore({
+          missionId,
+          missionCode: selectedMission?.code || 'VP_Dossier',
+          file: photoFile,
+          title: photoCaption.trim() || defaultCaption,
+          caption: photoCaption.trim() || defaultCaption,
+          type: photoType === 'emargement' ? 'document' : 'photo',
+          serverFilename: photoJson.filename,
+          isSelectedForReport: photoForReport,
+        });
 
         await syncFileToLocalMacFolder({
           missionCode: selectedMission?.code || 'VP_Dossier',

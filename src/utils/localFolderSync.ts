@@ -1,6 +1,10 @@
 // Synchronisation automatique des documents, photos et factures vers un dossier local Mac / iCloud Drive
 // Utilise la File System Access API (Chrome / Edge / Brave sur macOS) avec persistance IndexedDB,
-// ainsi qu'un mode de téléchargement automatique préfixé pour Safari macOS.
+// ainsi qu'un mode de téléchargement automatique préfixé pour Safari macOS, et synchronisation dans Firebase Firestore.
+
+import { doc, setDoc } from 'firebase/firestore';
+import { db as firestoreDb, auth } from '../firebase.js';
+import { EvidenceItem } from '@shared/types.js';
 
 const DB_NAME = 'vp_expertise_local_sync';
 const STORE_NAME = 'handles';
@@ -57,11 +61,97 @@ export function isFileSystemAccessSupported(): boolean {
 }
 
 export function enableAutoDownloadSync(): { connected: boolean; folderName: string; mode: 'safari_auto' } {
-  const name = 'iCloud Drive (Enregistrement auto)';
+  const name = 'iCloud Drive (Copie auto)';
   localStorage.setItem('vp_local_sync_folder_name', name);
   localStorage.setItem('vp_local_sync_mode', 'safari_auto');
+  localStorage.removeItem('vp_local_sync_disabled');
   window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
   return { connected: true, folderName: name, mode: 'safari_auto' };
+}
+
+/**
+ * Crée automatiquement le dossier d'une mission (<Code_Mission>) et ses 4 sous-dossiers
+ * dans le dossier racine iCloud Drive relié sur le Mac.
+ */
+export async function ensureMissionFolderOnMac(missionCode: string): Promise<boolean> {
+  if (!isFileSystemAccessSupported()) return false;
+  try {
+    const rootHandle = await getSavedDirectoryHandle();
+    if (!rootHandle) return false;
+    let perm = await rootHandle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      perm = await rootHandle.requestPermission({ mode: 'readwrite' });
+    }
+    if (perm !== 'granted') return false;
+
+    const safeMission = (missionCode || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const missionDir = await rootHandle.getDirectoryHandle(safeMission, { create: true });
+    await missionDir.getDirectoryHandle('Photos_Terrain', { create: true });
+    await missionDir.getDirectoryHandle('Documents_Pieces', { create: true });
+    await missionDir.getDirectoryHandle('Justificatifs_Frais', { create: true });
+    await missionDir.getDirectoryHandle('Factures', { create: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Synchronise automatiquement TOUS les dossiers existants (et leurs factures Word + pièces)
+ * dans le dossier racine iCloud Drive du Mac dès sa connexion.
+ */
+export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: number; filesSynced: number }> {
+  let missionsSynced = 0;
+  let filesSynced = 0;
+  if (!isFileSystemAccessSupported()) return { missionsSynced, filesSynced };
+
+  try {
+    const rootHandle = await getSavedDirectoryHandle();
+    if (!rootHandle) return { missionsSynced, filesSynced };
+    let perm = await rootHandle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      perm = await rootHandle.requestPermission({ mode: 'readwrite' });
+    }
+    if (perm !== 'granted') return { missionsSynced, filesSynced };
+
+    // 1. Créer l'arborescence de tous les dossiers existants (en cours)
+    const missionsRes = await fetch('/api/missions');
+    if (missionsRes.ok) {
+      const missions = await missionsRes.json();
+      for (const m of missions) {
+        if (m.code) {
+          await ensureMissionFolderOnMac(m.code);
+          missionsSynced++;
+        }
+      }
+    }
+
+    // 2. Déposer toutes les factures Word (.docx) existantes dans <Code_Mission>/Factures/
+    const invoicesRes = await fetch('/api/invoices');
+    if (invoicesRes.ok) {
+      const invoices = await invoicesRes.json();
+      for (const inv of invoices) {
+        try {
+          const docxRes = await fetch(`/api/invoices/${inv.id}/docx`);
+          if (docxRes.ok) {
+            const blob = await docxRes.blob();
+            await syncFileToLocalMacFolder({
+              missionCode: inv.our_ref || 'Cabinet_VP',
+              subFolder: 'Factures',
+              fileName: `Facture_${inv.invoice_number}.docx`,
+              data: blob,
+            });
+            filesSynced++;
+          }
+        } catch {
+          // Ignore individual invoice error
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Erreur lors de la synchronisation initiale des dossiers existants :', err);
+  }
+  return { missionsSynced, filesSynced };
 }
 
 export async function connectLocalMacFolder(): Promise<{
@@ -69,6 +159,8 @@ export async function connectLocalMacFolder(): Promise<{
   folderName: string;
   mode: 'native' | 'safari_auto';
   iframeBlocked?: boolean;
+  missionsSynced?: number;
+  filesSynced?: number;
 }> {
   if (isFileSystemAccessSupported()) {
     try {
@@ -80,13 +172,23 @@ export async function connectLocalMacFolder(): Promise<{
       await saveDirectoryHandle(dirHandle);
       localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
       localStorage.setItem('vp_local_sync_mode', 'native');
+      localStorage.removeItem('vp_local_sync_disabled');
       window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
-      return { connected: true, folderName: dirHandle.name, mode: 'native' };
+
+      // Synchronise automatiquement tous les dossiers et factures existants dès la sélection du dossier racine !
+      const stats = await syncAllExistingMissionsToMac();
+
+      return {
+        connected: true,
+        folderName: dirHandle.name,
+        mode: 'native',
+        missionsSynced: stats.missionsSynced,
+        filesSynced: stats.filesSynced,
+      };
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         return { connected: false, folderName: '', mode: 'native' };
       }
-      // Inside a cross-origin iframe (like AI Studio preview), browsers block showDirectoryPicker with SecurityError
       if (err?.name === 'SecurityError' || String(err?.message || '').toLowerCase().includes('sub frame')) {
         return { connected: false, folderName: '', mode: 'safari_auto', iframeBlocked: true };
       }
@@ -101,17 +203,70 @@ export async function disconnectLocalMacFolder(): Promise<void> {
   await saveDirectoryHandle(null);
   localStorage.removeItem('vp_local_sync_folder_name');
   localStorage.removeItem('vp_local_sync_mode');
+  localStorage.setItem('vp_local_sync_disabled', '1');
   window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
 }
 
 export function getLocalSyncStatus(): { connected: boolean; folderName: string | null; mode: string | null } {
-  const folderName = localStorage.getItem('vp_local_sync_folder_name');
-  const mode = localStorage.getItem('vp_local_sync_mode');
+  const disabled = localStorage.getItem('vp_local_sync_disabled') === '1';
+  if (disabled) {
+    return { connected: false, folderName: null, mode: null };
+  }
+  const folderName = localStorage.getItem('vp_local_sync_folder_name') || 'iCloud Drive (Copie auto)';
+  const mode = localStorage.getItem('vp_local_sync_mode') || 'safari_auto';
   return {
-    connected: Boolean(folderName),
+    connected: true,
     folderName,
     mode,
   };
+}
+
+/**
+ * Enregistre simultanément une preuve / photo / document dans Firebase Firestore
+ * afin que tout dépôt fait depuis Saisie Rapide ou Pièces & Documents soit aussi dans Firebase.
+ */
+export async function mirrorEvidenceToFirestore(params: {
+  missionId: string;
+  missionCode: string;
+  file: File;
+  title?: string;
+  caption?: string;
+  type?: 'photo' | 'document' | 'constat';
+  serverFilename?: string;
+  isSelectedForReport?: boolean;
+}): Promise<void> {
+  try {
+    const uid = auth.currentUser?.uid || 'user-expert-valentine';
+    const evidenceId = `evid-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    let fileDataUrl = '';
+    if (params.file.type.startsWith('image/') && params.file.size < 900_000) {
+      fileDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(params.file);
+      });
+    }
+    const evidenceDoc: EvidenceItem = {
+      id: evidenceId,
+      mission_id: params.missionId,
+      mission_code: params.missionCode,
+      title: (params.title || params.caption || params.file.name).trim(),
+      type: params.type || (params.file.type.startsWith('image/') ? 'photo' : 'document'),
+      file_url: fileDataUrl || (params.serverFilename ? `/uploads/${params.serverFilename}` : ''),
+      filename: params.file.name,
+      file_size: params.file.size,
+      mime_type: params.file.type,
+      caption: (params.caption || params.title || params.file.name).trim(),
+      taken_at: new Date().toISOString(),
+      order_index: Date.now(),
+      is_selected_for_report: params.isSelectedForReport ?? true,
+      created_by: uid,
+      created_at: new Date().toISOString(),
+    };
+    await setDoc(doc(firestoreDb, `missions/${params.missionId}/evidences`, evidenceId), evidenceDoc);
+  } catch (err) {
+    console.warn('Miroir Firebase Firestore optionnel ignoré :', err);
+  }
 }
 
 /**
