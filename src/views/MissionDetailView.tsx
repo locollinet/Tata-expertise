@@ -3,11 +3,12 @@ import {
   ArrowLeft, ArrowRight, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
   CheckCircle2, AlertCircle, Save, ExternalLink, Calendar, Copy, Check,
   FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera,
-  ChevronDown, Smartphone, Mic
+  ChevronDown, Smartphone, Mic, Edit3, Archive, RotateCcw
 } from 'lucide-react';
 import { api } from '../api.js';
 import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
+import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
 
 interface MissionDetailViewProps {
   missionId: string;
@@ -74,6 +75,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [commUrgency, setCommUrgency] = useState<'normale' | 'urgente'>('normale');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Inline edit activity hours state
+  const [editingActId, setEditingActId] = useState<string | null>(null);
+  const [editActHours, setEditActHours] = useState<string>('');
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ type, message });
     setTimeout(() => setFeedback(null), 3500);
@@ -114,6 +119,34 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     );
   }
 
+  const handleSaveActivityHours = async (actId: string) => {
+    const numHours = parseFloat(editActHours.replace(',', '.'));
+    if (isNaN(numHours) || numHours <= 0) return;
+    try {
+      await api.updateActivity(actId, { hours: numHours });
+      setEditingActId(null);
+      showToast('Heures mises à jour.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleToggleMissionStatus = async () => {
+    try {
+      const nextStatus = mission.status === 'cloture' ? 'en_cours' : 'cloture';
+      await api.updateMission(mission.id, { status: nextStatus });
+      showToast(
+        nextStatus === 'cloture'
+          ? 'Dossier clôturé / archivé (masqué par défaut dans les recherches).'
+          : 'Dossier réouvert et remis en cours !'
+      );
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
   const handleUploadPhoto = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!photoFile) return;
@@ -132,6 +165,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         const err = await res.json();
         throw new Error(err.error || "Erreur lors de l'upload");
       }
+      await syncFileToLocalMacFolder({
+        missionCode: mission.code,
+        subFolder: 'Photos_Terrain',
+        fileName: photoFile.name,
+        data: photoFile,
+      });
       setPhotoFile(null);
       setPhotoCaption('');
       setShowAddPhoto(false);
@@ -182,8 +221,22 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         const err = await res.json();
         throw new Error(err.error || "Erreur lors du téléversement");
       }
+      const subFolder = docCategory === 'photo_terrain'
+        ? 'Photos_Terrain'
+        : docCategory === 'justificatif_frais'
+        ? 'Justificatifs_Frais'
+        : 'Documents_Pieces';
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const f = filesToUpload[i];
+        await syncFileToLocalMacFolder({
+          missionCode: mission.code,
+          subFolder,
+          fileName: f.name,
+          data: f,
+        });
+      }
       setDocCaption('');
-      showToast("Document(s) téléversé(s) avec succès.");
+      showToast("Document(s) téléversé(s) et synchronisé(s) avec succès.");
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -352,6 +405,31 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         )}
 
         <div className="flex items-center space-x-2">
+          <button
+            onClick={handleToggleMissionStatus}
+            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors cursor-pointer border ${
+              mission.status === 'cloture'
+                ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+            title={
+              mission.status === 'cloture'
+                ? 'Réouvrir ce dossier si le client revient plusieurs mois après'
+                : 'Clôturer / archiver ce dossier pour ne plus le voir dans les recherches par défaut'
+            }
+          >
+            {mission.status === 'cloture' ? (
+              <>
+                <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                <span>Réouvrir le dossier</span>
+              </>
+            ) : (
+              <>
+                <Archive className="w-3.5 h-3.5 text-slate-500" />
+                <span>Clôturer le dossier</span>
+              </>
+            )}
+          </button>
           <button
             onClick={() => onOpenQuickAdd(mission.id)}
             className="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors"
@@ -729,7 +807,44 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           {act.notes && <span className="block text-[11px] text-slate-400">{act.notes}</span>}
                         </td>
                         <td className="py-2 px-3 text-center font-bold text-slate-800">
-                          {act.hours.toString().replace('.', ',')} h
+                          {editingActId === act.id ? (
+                            <div className="inline-flex items-center space-x-1">
+                              <input
+                                type="number"
+                                step="0.25"
+                                min="0.25"
+                                value={editActHours}
+                                onChange={(e) => setEditActHours(e.target.value)}
+                                className="w-16 rounded border border-[#0f3854] px-1.5 py-0.5 text-center text-xs font-bold"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveActivityHours(act.id)}
+                                className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                                title="Valider"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center space-x-1">
+                              <span>{act.hours.toString().replace('.', ',')} h</span>
+                              {act.status !== 'facture' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingActId(act.id);
+                                    setEditActHours(String(act.hours));
+                                  }}
+                                  className="text-slate-400 hover:text-[#0f3854] p-0.5 rounded"
+                                  title="Modifier le nombre d'heures"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-600">
                           {act.hourly_rate} €

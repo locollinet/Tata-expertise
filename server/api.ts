@@ -284,15 +284,27 @@ apiRouter.put('/missions/:id', (req, res) => {
 });
 
 // ---------------- ACTIVITIES / POINTAGE ----------------
+const DEFAULT_ACTIVITY_LABELS: Record<string, string> = {
+  etude_documents: 'Étude de documents, analyse, gestion du dossier',
+  analyse: 'Étude de documents, analyse, gestion du dossier',
+  echanges_tel: 'Étude de documents, analyse, gestion du dossier',
+  expertise: 'Expertise contradictoire',
+  reunion: 'Expertise contradictoire',
+  visio: 'Visio-conférence',
+  deplacement: 'Déplacement Expert',
+  redaction: 'Rédaction Expert',
+};
+
 apiRouter.post('/activities', (req, res) => {
-  const { mission_id, date, category, label, hours, hourly_rate, notes, billable = true } = req.body;
-  if (!mission_id || !date || !label || hours === undefined) {
-    return res.status(400).json({ error: "Mission, date, libellé et heures sont requis" });
+  const { mission_id, date, category = 'expertise', label, hours, hourly_rate, notes, billable = true } = req.body;
+  if (!mission_id || !date || hours === undefined) {
+    return res.status(400).json({ error: "Mission, date et heures sont requis" });
   }
 
   const mission = db.prepare('SELECT code, custom_hourly_rate, custom_travel_rate FROM missions WHERE id = ?').get(mission_id) as any;
   if (!mission) return res.status(404).json({ error: "Mission introuvable" });
 
+  const resolvedLabel = (label && String(label).trim()) || DEFAULT_ACTIVITY_LABELS[category] || 'Expertise contradictoire';
   const rate = hourly_rate !== undefined ? Number(hourly_rate) : (category === 'deplacement' ? (mission.custom_travel_rate || 135) : (mission.custom_hourly_rate || 190));
   const total_ht = Math.round(Number(hours) * rate * 100) / 100;
   const id = `act-${uuidv4().slice(0, 8)}`;
@@ -300,9 +312,33 @@ apiRouter.post('/activities', (req, res) => {
   db.prepare(`
     INSERT INTO activities (id, mission_id, mission_code, date, category, label, hours, hourly_rate, total_ht, billable, status, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
-  `).run(id, mission_id, mission.code, date, category, label, Number(hours), rate, total_ht, billable ? 1 : 0, notes);
+  `).run(id, mission_id, mission.code, date, category, resolvedLabel, Number(hours), rate, total_ht, billable ? 1 : 0, notes || null);
 
-  res.json({ id, total_ht, message: "Pointage enregistré" });
+  res.json({ id, total_ht, label: resolvedLabel, message: "Pointage enregistré" });
+});
+
+apiRouter.put('/activities/:id', (req, res) => {
+  const act = db.prepare('SELECT * FROM activities WHERE id = ?').get(req.params.id) as any;
+  if (!act) return res.status(404).json({ error: "Activité introuvable" });
+  if (act.status === 'facture') return res.status(400).json({ error: "Impossible de modifier une activité déjà facturée" });
+
+  const newCategory = req.body.category ?? act.category;
+  const newDate = req.body.date ?? act.date;
+  const newHours = req.body.hours !== undefined ? Number(req.body.hours) : Number(act.hours);
+  const newRate = req.body.hourly_rate !== undefined ? Number(req.body.hourly_rate) : Number(act.hourly_rate);
+  const newLabel = req.body.label !== undefined
+    ? (String(req.body.label).trim() || DEFAULT_ACTIVITY_LABELS[newCategory] || act.label)
+    : (req.body.category ? (DEFAULT_ACTIVITY_LABELS[newCategory] || act.label) : act.label);
+  const newNotes = req.body.notes !== undefined ? req.body.notes : act.notes;
+  const newTotalHT = Math.round(newHours * newRate * 100) / 100;
+
+  db.prepare(`
+    UPDATE activities
+    SET date = ?, category = ?, label = ?, hours = ?, hourly_rate = ?, total_ht = ?, notes = ?
+    WHERE id = ?
+  `).run(newDate, newCategory, newLabel, newHours, newRate, newTotalHT, newNotes, req.params.id);
+
+  res.json({ id: req.params.id, hours: newHours, total_ht: newTotalHT, message: "Pointage mis à jour" });
 });
 
 apiRouter.delete('/activities/:id', (req, res) => {
@@ -316,19 +352,32 @@ apiRouter.delete('/activities/:id', (req, res) => {
 
 // ---------------- EXPENSES / FRAIS ----------------
 apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
-  const { mission_id, date, category, label, quantity = 1, unit_price, is_refacturable = true } = req.body;
-  if (!mission_id || !date || !label || unit_price === undefined) {
-    return res.status(400).json({ error: "Mission, date, libellé et prix unitaire requis" });
+  const { mission_id, date, category, label, quantity = 1, unit_price, vat_rate: customVatRate, is_refacturable = true } = req.body;
+  if (!mission_id || !date || unit_price === undefined) {
+    return res.status(400).json({ error: "Mission, date et prix unitaire requis" });
   }
 
   const mission = db.prepare('SELECT code FROM missions WHERE id = ?').get(mission_id) as any;
   if (!mission) return res.status(404).json({ error: "Mission introuvable" });
 
+  const defaultExpenseLabels: Record<string, string> = {
+    km: 'Frais kilométriques',
+    train: 'Frais de déplacement (train)',
+    location_voiture: 'Location de voiture',
+    peage_parking: 'Parking',
+    taxi: 'Taxi',
+    repas: 'Repas',
+    hotel: 'Hôtel',
+    autre: 'Frais de mission',
+  };
+  const resolvedLabel = (label && String(label).trim()) || defaultExpenseLabels[category] || 'Frais de déplacement';
+
   const qty = Number(quantity);
   const up = Number(unit_price);
   const total_ht = Math.round(qty * up * 100) / 100;
-  // Apply TVA standard 20% on reimbursable expenses (hotel, meal, transport) or 0% on mileage
-  const vat_rate = category === 'km' ? 0 : 0.20;
+  const vat_rate = customVatRate !== undefined
+    ? Number(customVatRate)
+    : (category === 'km' || category === 'train' ? 0 : (category === 'repas' || category === 'hotel' ? 0.10 : 0.20));
   const vat_amount = Math.round(total_ht * vat_rate * 100) / 100;
   const total_ttc = Math.round((total_ht + vat_amount) * 100) / 100;
 
@@ -336,11 +385,32 @@ apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
   const receipt_filename = req.file ? req.file.filename : null;
 
   db.prepare(`
-    INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_amount, total_ttc, receipt_filename, status, is_refacturable)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
-  `).run(id, mission_id, mission.code, date, category, label, qty, up, total_ht, vat_amount, total_ttc, receipt_filename, is_refacturable ? 1 : 0);
+    INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, status, is_refacturable)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
+  `).run(id, mission_id, mission.code, date, category, resolvedLabel, qty, up, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, is_refacturable ? 1 : 0);
 
-  res.json({ id, total_ht, total_ttc, message: "Frais enregistré" });
+  res.json({ id, total_ht, vat_amount, total_ttc, message: "Frais enregistré" });
+});
+
+apiRouter.put('/expenses/:id', (req, res) => {
+  const exp = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id) as any;
+  if (!exp) return res.status(404).json({ error: "Frais introuvable" });
+  if (exp.status === 'facture') return res.status(400).json({ error: "Impossible de modifier un frais déjà facturé" });
+
+  const qty = req.body.quantity !== undefined ? Number(req.body.quantity) : Number(exp.quantity);
+  const up = req.body.unit_price !== undefined ? Number(req.body.unit_price) : Number(exp.unit_price);
+  const label = req.body.label !== undefined ? String(req.body.label).trim() : exp.label;
+  const vat_rate = req.body.vat_rate !== undefined ? Number(req.body.vat_rate) : Number(exp.vat_rate ?? 0.20);
+  const total_ht = Math.round(qty * up * 100) / 100;
+  const vat_amount = Math.round(total_ht * vat_rate * 100) / 100;
+  const total_ttc = Math.round((total_ht + vat_amount) * 100) / 100;
+
+  db.prepare(`
+    UPDATE expenses SET label = ?, quantity = ?, unit_price = ?, total_ht = ?, vat_rate = ?, vat_amount = ?, total_ttc = ?
+    WHERE id = ?
+  `).run(label, qty, up, total_ht, vat_rate, vat_amount, total_ttc, req.params.id);
+
+  res.json({ id: req.params.id, total_ht, total_ttc, message: "Frais mis à jour" });
 });
 
 apiRouter.delete('/expenses/:id', (req, res) => {
@@ -378,9 +448,17 @@ apiRouter.get('/invoices/:id', (req, res) => {
   });
 });
 
-// Prepare a draft invoice from selected items with anti-double-billing reservation
+// Prepare a draft invoice from selected items with macro-category grouping (matching Valentine's Excel/Word format)
 apiRouter.post('/invoices/prepare', (req, res) => {
-  const { mission_id, activity_ids = [], expense_ids = [], subject, advance_amount = 0, date = new Date().toISOString().slice(0, 10) } = req.body;
+  const {
+    mission_id,
+    activity_ids = [],
+    expense_ids = [],
+    subject,
+    advance_amount = 0,
+    group_by_category = true,
+    date = new Date().toISOString().slice(0, 10),
+  } = req.body;
 
   if (!mission_id || (activity_ids.length === 0 && expense_ids.length === 0)) {
     return res.status(400).json({ error: "Veuillez sélectionner au moins une activité ou un frais non facturé" });
@@ -390,8 +468,7 @@ apiRouter.post('/invoices/prepare', (req, res) => {
   if (!mission) return res.status(404).json({ error: "Mission non trouvée" });
 
   const invoiceId = `inv-${uuidv4().slice(0, 8)}`;
-  
-  // Calculate next sequential invoice number for preview (e.g. 2026-100)
+
   const currentYear = new Date().getFullYear();
   const maxInv = db.prepare(`
     SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1
@@ -409,52 +486,158 @@ apiRouter.post('/invoices/prepare', (req, res) => {
     let totalHT = 0;
     let orderIndex = 1;
 
-    // 1. Process activities
+    const selectedActs: any[] = [];
     for (const actId of activity_ids) {
       const act = db.prepare("SELECT * FROM activities WHERE id = ? AND status = 'a_facturer'").get(actId) as any;
       if (!act) {
         throw new Error(`L'activité ${actId} n'est plus disponible pour facturation (déjà réservée ou facturée)`);
       }
-
-      lines.push({
-        id: `line-${uuidv4().slice(0, 8)}`,
-        invoice_id: invoiceId,
-        activity_id: act.id,
-        expense_id: null,
-        description: act.label,
-        quantity: 1,
-        time_spent: act.hours,
-        unit_price_ht: act.hourly_rate,
-        total_ht: act.total_ht,
-        order_index: orderIndex++,
-      });
-      totalHT += act.total_ht;
+      selectedActs.push(act);
     }
 
-    // 2. Process expenses
+    const selectedExps: any[] = [];
     for (const expId of expense_ids) {
       const exp = db.prepare("SELECT * FROM expenses WHERE id = ? AND status = 'a_facturer'").get(expId) as any;
       if (!exp) {
         throw new Error(`Le frais ${expId} n'est plus disponible pour facturation`);
       }
+      selectedExps.push(exp);
+    }
 
-      lines.push({
-        id: `line-${uuidv4().slice(0, 8)}`,
-        invoice_id: invoiceId,
-        activity_id: null,
-        expense_id: exp.id,
-        description: exp.label,
-        quantity: exp.quantity,
-        time_spent: exp.category === 'km' ? 1.0 : null,
-        unit_price_ht: exp.unit_price,
-        total_ht: exp.total_ht,
-        order_index: orderIndex++,
-      });
-      totalHT += exp.total_ht;
+    if (group_by_category) {
+      // Group into Valentine's exact invoice macro-lines (matching Expertise File Register_2026.xlsx):
+      // 1. Étude de documents, analyse, gestion du dossier
+      // 2. Expertise contradictoire / Visio-conférence
+      // 3. Déplacement Expert
+      // 4. Frais kilométriques & Frais de déplacement (Parking, Train, Location voiture, Repas, Hôtel)
+      // 5. Rédaction Expert
+      const etudeActs = selectedActs.filter(a => ['etude_documents', 'analyse', 'echanges_tel'].includes(a.category));
+      const expertiseActs = selectedActs.filter(a => ['expertise', 'reunion'].includes(a.category));
+      const visioActs = selectedActs.filter(a => a.category === 'visio');
+      const deplacementActs = selectedActs.filter(a => a.category === 'deplacement');
+      const redactionActs = selectedActs.filter(a => a.category === 'redaction');
+      const otherActs = selectedActs.filter(
+        a => !['etude_documents', 'analyse', 'echanges_tel', 'expertise', 'reunion', 'visio', 'deplacement', 'redaction'].includes(a.category)
+      );
+
+      const addGroupedActLine = (groupActs: any[], defaultDesc: string) => {
+        if (groupActs.length === 0) return;
+        const sumHours = Math.round(groupActs.reduce((s, a) => s + Number(a.hours), 0) * 100) / 100;
+        const unitRate = Number(groupActs[0].hourly_rate);
+        const lineHT = Math.round(sumHours * unitRate * 100) / 100;
+        lines.push({
+          id: `line-${uuidv4().slice(0, 8)}`,
+          invoice_id: invoiceId,
+          activity_id: groupActs.length === 1 ? groupActs[0].id : null,
+          expense_id: null,
+          description: defaultDesc,
+          quantity: 1,
+          time_spent: sumHours,
+          unit_price_ht: unitRate,
+          total_ht: lineHT,
+          order_index: orderIndex++,
+        });
+        totalHT += lineHT;
+      };
+
+      addGroupedActLine(etudeActs, 'Étude de documents, analyse, gestion du dossier');
+      if (expertiseActs.length > 0) {
+        const lastDate = expertiseActs[expertiseActs.length - 1].date.split('-').reverse().join('/');
+        addGroupedActLine(expertiseActs, `Expertise contradictoire du ${lastDate}`);
+      }
+      addGroupedActLine(visioActs, 'Visio-conférence');
+      addGroupedActLine(deplacementActs, 'Déplacement Expert');
+      addGroupedActLine(otherActs, 'Prestations d\'expertise');
+
+      // Group expenses by category in Valentine's register order
+      const kmExps = selectedExps.filter(e => e.category === 'km');
+      if (kmExps.length > 0) {
+        const totalKm = Math.round(kmExps.reduce((s, e) => s + Number(e.quantity), 0) * 100) / 100;
+        const kmRate = Number(kmExps[0].unit_price);
+        const kmHT = Math.round(totalKm * kmRate * 100) / 100;
+        lines.push({
+          id: `line-${uuidv4().slice(0, 8)}`,
+          invoice_id: invoiceId,
+          activity_id: null,
+          expense_id: kmExps.length === 1 ? kmExps[0].id : null,
+          description: 'Frais kilométriques',
+          quantity: totalKm,
+          time_spent: 1,
+          unit_price_ht: kmRate,
+          total_ht: kmHT,
+          order_index: orderIndex++,
+        });
+        totalHT += kmHT;
+      }
+
+      const expenseGroups: Array<{ cats: string[]; label: string }> = [
+        { cats: ['peage_parking', 'taxi'], label: 'Parking / Péages / Taxi' },
+        { cats: ['train'], label: 'Frais de déplacement (train)' },
+        { cats: ['location_voiture'], label: 'Location de voiture' },
+        { cats: ['repas'], label: 'Repas' },
+        { cats: ['hotel'], label: 'Hôtel' },
+        { cats: ['autre'], label: 'Autres frais de déplacement' },
+      ];
+
+      for (const grp of expenseGroups) {
+        const matching = selectedExps.filter(e => grp.cats.includes(e.category));
+        if (matching.length > 0) {
+          const sumHT = Math.round(matching.reduce((s, e) => s + Number(e.total_ht), 0) * 100) / 100;
+          const desc = matching.length === 1 && matching[0].label ? matching[0].label : grp.label;
+          lines.push({
+            id: `line-${uuidv4().slice(0, 8)}`,
+            invoice_id: invoiceId,
+            activity_id: null,
+            expense_id: matching.length === 1 ? matching[0].id : null,
+            description: desc,
+            quantity: 1,
+            time_spent: 1,
+            unit_price_ht: sumHT,
+            total_ht: sumHT,
+            order_index: orderIndex++,
+          });
+          totalHT += sumHT;
+        }
+      }
+
+      // Rédaction Expert goes at the end of the lines, just like in her Excel register (R78)
+      addGroupedActLine(redactionActs, 'Rédaction Expert');
+    } else {
+      // Un-grouped (detailed item-by-item)
+      for (const act of selectedActs) {
+        lines.push({
+          id: `line-${uuidv4().slice(0, 8)}`,
+          invoice_id: invoiceId,
+          activity_id: act.id,
+          expense_id: null,
+          description: act.label,
+          quantity: 1,
+          time_spent: act.hours,
+          unit_price_ht: act.hourly_rate,
+          total_ht: act.total_ht,
+          order_index: orderIndex++,
+        });
+        totalHT += act.total_ht;
+      }
+      for (const exp of selectedExps) {
+        lines.push({
+          id: `line-${uuidv4().slice(0, 8)}`,
+          invoice_id: invoiceId,
+          activity_id: null,
+          expense_id: exp.id,
+          description: exp.label,
+          quantity: exp.quantity,
+          time_spent: 1,
+          unit_price_ht: exp.unit_price,
+          total_ht: exp.total_ht,
+          order_index: orderIndex++,
+        });
+        totalHT += exp.total_ht;
+      }
     }
 
     totalHT = Math.round(totalHT * 100) / 100;
-    const vatRate = 0.20;
+    const vatRate = mission.custom_vat_rate !== undefined ? Number(mission.custom_vat_rate) : 0.20;
     const vatAmount = Math.round(totalHT * vatRate * 100) / 100;
     const totalTTC = Math.round((totalHT + vatAmount) * 100) / 100;
     const advance = Number(advance_amount) || 0;
@@ -462,7 +645,6 @@ apiRouter.post('/invoices/prepare', (req, res) => {
 
     const invoiceSubject = subject || `Mission d’expertise depuis le ${mission.reception_date.split('-').reverse().join('/')}`;
 
-    // Insert invoice FIRST so foreign key references to invoices(id) are valid
     db.prepare(`
       INSERT INTO invoices (
         id, invoice_number, mission_id, mission_code, client_name, client_address,
@@ -480,7 +662,6 @@ apiRouter.post('/invoices/prepare', (req, res) => {
       date, totalHT, vatRate, vatAmount, totalTTC, advance, netPayable
     );
 
-    // Insert invoice lines
     const insertLine = db.prepare(`
       INSERT INTO invoice_lines (id, invoice_id, activity_id, expense_id, description, quantity, time_spent, unit_price_ht, total_ht, order_index)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -489,7 +670,6 @@ apiRouter.post('/invoices/prepare', (req, res) => {
       insertLine.run(l.id, l.invoice_id, l.activity_id, l.expense_id, l.description, l.quantity, l.time_spent, l.unit_price_ht, l.total_ht, l.order_index);
     }
 
-    // Now update activity and expense statuses to reserved with invoice_id
     for (const actId of activity_ids) {
       db.prepare("UPDATE activities SET status = 'reserve', invoice_id = ? WHERE id = ?").run(invoiceId, actId);
     }
@@ -508,6 +688,77 @@ apiRouter.post('/invoices/prepare', (req, res) => {
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Update draft invoice lines, hours, subject or advance amount
+apiRouter.put('/invoices/:id', (req, res) => {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id) as any;
+  if (!inv) return res.status(404).json({ error: "Facture non trouvée" });
+
+  const { subject, advance_amount, date, lines } = req.body;
+
+  const updateTx = db.transaction(() => {
+    let totalHT = 0;
+
+    if (Array.isArray(lines)) {
+      db.prepare('DELETE FROM invoice_lines WHERE invoice_id = ?').run(inv.id);
+      const insertLine = db.prepare(`
+        INSERT INTO invoice_lines (id, invoice_id, activity_id, expense_id, description, quantity, time_spent, unit_price_ht, total_ht, order_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      lines.forEach((l: any, idx: number) => {
+        const qty = Number(l.quantity) || 1;
+        const tps = l.time_spent !== null && l.time_spent !== undefined && l.time_spent !== '' ? Number(l.time_spent) : null;
+        const up = Number(l.unit_price_ht) || 0;
+        const multiplier = tps !== null ? qty * tps : qty;
+        const lineHT = Math.round(multiplier * up * 100) / 100;
+        totalHT += lineHT;
+        insertLine.run(
+          l.id || `line-${uuidv4().slice(0, 8)}`,
+          inv.id,
+          l.activity_id || null,
+          l.expense_id || null,
+          l.description || 'Prestation d\'expertise',
+          qty,
+          tps,
+          up,
+          lineHT,
+          idx + 1
+        );
+      });
+    } else {
+      totalHT = Number(inv.total_ht);
+    }
+
+    totalHT = Math.round(totalHT * 100) / 100;
+    const vatRate = Number(inv.vat_rate) || 0.20;
+    const vatAmount = Math.round(totalHT * vatRate * 100) / 100;
+    const totalTTC = Math.round((totalHT + vatAmount) * 100) / 100;
+    const advance = advance_amount !== undefined ? Number(advance_amount) : Number(inv.advance_amount || 0);
+    const netPayable = Math.round((totalTTC - advance) * 100) / 100;
+
+    db.prepare(`
+      UPDATE invoices SET
+        subject = COALESCE(?, subject),
+        date = COALESCE(?, date),
+        advance_amount = ?,
+        total_ht = ?,
+        vat_amount = ?,
+        total_ttc = ?,
+        net_payable = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(subject ?? null, date ?? null, advance, totalHT, vatAmount, totalTTC, netPayable, inv.id);
+
+    return { totalHT, vatAmount, totalTTC, netPayable };
+  });
+
+  try {
+    const updated = updateTx();
+    res.json({ message: "Facture mise à jour avec recalcul automatique", ...updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -962,20 +1213,124 @@ apiRouter.put('/lrar/:id', (req, res) => {
   res.json({ message: "Courrier LRAR mis à jour" });
 });
 
-// ---------------- COMPTA & TVA MENSUELLE ----------------
+// ---------------- COMPTA, FRAIS RÉCURRENTS & TVA MENSUELLE ----------------
+function ensureRecurringEntriesForMonth(month: string) {
+  const [yearStr, monthNumStr] = month.split('-');
+  const monthNum = parseInt(monthNumStr, 10);
+  if (!yearStr || isNaN(monthNum)) return;
+
+  const activeRecurrings = db.prepare('SELECT * FROM recurring_expenses WHERE active = 1').all() as any[];
+  const existingEntries = db.prepare("SELECT * FROM accounting_entries WHERE month = ? AND type = 'depense'").all(month) as any[];
+
+  const insertEntry = db.prepare(`
+    INSERT INTO accounting_entries (
+      id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+      amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id, comment
+    ) VALUES (?, ?, 'depense', ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    for (const rec of activeRecurrings) {
+      // Check if frequency applies to this month
+      if (rec.frequency === 'trimestriel' && ![1, 4, 7, 10].includes(monthNum)) continue;
+      if (rec.frequency === 'annuel' && monthNum !== 1) continue;
+
+      const alreadyExists = existingEntries.some(
+        e =>
+          e.recurring_expense_id === rec.id ||
+          (e.object.toLowerCase().trim() === rec.object.toLowerCase().trim() &&
+            e.party.toLowerCase().trim() === rec.party.toLowerCase().trim())
+      );
+
+      if (!alreadyExists) {
+        // link existing matching entry if present, otherwise insert
+        const dayStr = String(Math.min(28, Math.max(1, Number(rec.day_of_month) || 5))).padStart(2, '0');
+        const entryDate = `${month}-${dayStr}`;
+        const entryId = `acc-rec-${month}-${rec.id}`;
+        insertEntry.run(
+          entryId,
+          month,
+          null,
+          entryDate,
+          rec.object,
+          rec.party,
+          rec.amount_ht,
+          rec.vat_rate,
+          rec.vat_amount,
+          rec.amount_ttc,
+          rec.frequency,
+          rec.id,
+          rec.comment || `Abonnement / charge récurrente (${rec.frequency})`
+        );
+      } else {
+        // Ensure existing matching entry has recurring_expense_id & frequency populated for UI badges
+        const match = existingEntries.find(
+          e =>
+            !e.recurring_expense_id &&
+            e.object.toLowerCase().trim() === rec.object.toLowerCase().trim() &&
+            e.party.toLowerCase().trim() === rec.party.toLowerCase().trim()
+        );
+        if (match) {
+          db.prepare('UPDATE accounting_entries SET recurring_expense_id = ?, frequency = ?, vat_rate = ? WHERE id = ?').run(
+            rec.id,
+            rec.frequency,
+            rec.vat_rate,
+            match.id
+          );
+        }
+      }
+    }
+  });
+  tx();
+}
+
 apiRouter.get('/compta/entries', (req, res) => {
   const month = (req.query.month as string) || '2026-10';
-  const entries = db.prepare('SELECT * FROM accounting_entries WHERE month = ? ORDER BY date ASC').all(month);
-  
-  // Calculate totals
+  ensureRecurringEntriesForMonth(month);
+
+  const entries = db.prepare('SELECT * FROM accounting_entries WHERE month = ? ORDER BY date ASC').all(month) as any[];
+  const recurringTemplates = db.prepare('SELECT * FROM recurring_expenses ORDER BY day_of_month ASC, object ASC').all() as any[];
+
+  // Calculate totals & detailed TVA breakdown
   let totDepenseHT = 0, totDepenseTVA = 0, totDepenseTTC = 0;
   let totRecetteHT = 0, totRecetteTVA = 0, totRecetteTTC = 0;
 
-  for (const e of entries as any[]) {
+  const vatBuckets: Record<string, { label: string; rate_label: string; base_ht: number; vat_amount: number; total_ttc: number; count: number }> = {
+    taux_20: { label: 'TVA déductible 20% (Taux normal — Télécom, honoraires, hôtels, péages)', rate_label: '20%', base_ht: 0, vat_amount: 0, total_ttc: 0, count: 0 },
+    taux_10: { label: 'TVA déductible 10% (Taux intermédiaire — Restauration, transports)', rate_label: '10%', base_ht: 0, vat_amount: 0, total_ttc: 0, count: 0 },
+    taux_5_5: { label: 'TVA déductible 5,5% / Mixte (Affranchissement, alimentation, taux réduit)', rate_label: '5,5% / Mixte', base_ht: 0, vat_amount: 0, total_ttc: 0, count: 0 },
+    exonere_0: { label: 'Charges sans TVA / Exonérées 0% (URSSAF, Loyer, Assurances, Retraite, SNCF)', rate_label: '0%', base_ht: 0, vat_amount: 0, total_ttc: 0, count: 0 },
+  };
+
+  for (const e of entries) {
     if (e.type === 'depense') {
       totDepenseHT += e.amount_ht;
       totDepenseTVA += e.vat_amount;
       totDepenseTTC += e.amount_ttc;
+
+      if (!e.vat_amount || Math.abs(e.vat_amount) < 0.005) {
+        vatBuckets.exonere_0.base_ht += e.amount_ht;
+        vatBuckets.exonere_0.total_ttc += e.amount_ttc;
+        vatBuckets.exonere_0.count++;
+      } else {
+        const effRate = e.amount_ht > 0 ? e.vat_amount / e.amount_ht : 0.20;
+        if (Math.abs(effRate - 0.20) <= 0.025) {
+          vatBuckets.taux_20.base_ht += e.amount_ht;
+          vatBuckets.taux_20.vat_amount += e.vat_amount;
+          vatBuckets.taux_20.total_ttc += e.amount_ttc;
+          vatBuckets.taux_20.count++;
+        } else if (Math.abs(effRate - 0.10) <= 0.025) {
+          vatBuckets.taux_10.base_ht += e.amount_ht;
+          vatBuckets.taux_10.vat_amount += e.vat_amount;
+          vatBuckets.taux_10.total_ttc += e.amount_ttc;
+          vatBuckets.taux_10.count++;
+        } else {
+          vatBuckets.taux_5_5.base_ht += e.amount_ht;
+          vatBuckets.taux_5_5.vat_amount += e.vat_amount;
+          vatBuckets.taux_5_5.total_ttc += e.amount_ttc;
+          vatBuckets.taux_5_5.count++;
+        }
+      }
     } else {
       totRecetteHT += e.amount_ht;
       totRecetteTVA += e.vat_amount;
@@ -983,9 +1338,18 @@ apiRouter.get('/compta/entries', (req, res) => {
     }
   }
 
+  const vatBreakdown = Object.values(vatBuckets).map(b => ({
+    ...b,
+    base_ht: Math.round(b.base_ht * 100) / 100,
+    vat_amount: Math.round(b.vat_amount * 100) / 100,
+    total_ttc: Math.round(b.total_ttc * 100) / 100,
+  }));
+
   res.json({
     month,
     entries,
+    recurring_expenses: recurringTemplates.map(r => ({ ...r, active: Boolean(r.active) })),
+    vat_breakdown: vatBreakdown,
     summary: {
       depenses_ht: Math.round(totDepenseHT * 100) / 100,
       depenses_tva: Math.round(totDepenseTVA * 100) / 100,
@@ -999,22 +1363,161 @@ apiRouter.get('/compta/entries', (req, res) => {
 });
 
 apiRouter.post('/compta/entries', (req, res) => {
-  const { month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_amount = 0, amount_ttc, comment } = req.body;
+  const {
+    month,
+    type,
+    piece_number,
+    date,
+    invoice_number,
+    mission_code,
+    object,
+    party,
+    amount_ht,
+    vat_rate = 0,
+    vat_amount = 0,
+    amount_ttc,
+    frequency = 'ponctuel',
+    category = 'autre',
+    comment,
+  } = req.body;
   if (!month || !type || !date || !object || !party || amount_ht === undefined) {
     return res.status(400).json({ error: "Mois, type, date, objet, tiers et montant HT requis" });
   }
 
-  const ht = Number(amount_ht);
-  const vat = Number(vat_amount);
-  const ttc = amount_ttc !== undefined ? Number(amount_ttc) : Math.round((ht + vat) * 100) / 100;
+  const ht = Math.round(Number(amount_ht) * 100) / 100;
+  const vat = Math.round(Number(vat_amount) * 100) / 100;
+  const ttc = amount_ttc !== undefined ? Math.round(Number(amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
   const id = `acc-${uuidv4().slice(0, 8)}`;
 
-  db.prepare(`
-    INSERT INTO accounting_entries (id, month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_amount, amount_ttc, comment)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, month, type, piece_number || null, date, invoice_number || null, mission_code || null, object, party, ht, vat, ttc, comment || null);
+  let recurringId: string | null = null;
+  if (type === 'depense' && frequency && frequency !== 'ponctuel') {
+    recurringId = `rec-${uuidv4().slice(0, 8)}`;
+    const dayOfMonth = parseInt(date.split('-')[2] || '5', 10) || 5;
+    db.prepare(`
+      INSERT INTO recurring_expenses (id, object, party, category, frequency, day_of_month, amount_ht, vat_rate, vat_amount, amount_ttc, active, comment)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `).run(recurringId, object, party, category, frequency, dayOfMonth, ht, Number(vat_rate) || 0, vat, ttc, comment || null);
+  }
 
-  res.json({ id, message: "Écriture comptable ajoutée" });
+  db.prepare(`
+    INSERT INTO accounting_entries (id, month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id, comment)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    month,
+    type,
+    piece_number || null,
+    date,
+    invoice_number || null,
+    mission_code || null,
+    object,
+    party,
+    ht,
+    Number(vat_rate) || 0,
+    vat,
+    ttc,
+    frequency || 'ponctuel',
+    recurringId,
+    comment || null
+  );
+
+  res.json({
+    id,
+    recurring_expense_id: recurringId,
+    message: recurringId
+      ? `Écriture enregistrée et abonnement récurrent (${frequency}) créé pour les mois suivants`
+      : "Écriture comptable ajoutée",
+  });
+});
+
+apiRouter.put('/compta/entries/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Écriture introuvable" });
+
+  const date = req.body.date ?? existing.date;
+  const object = req.body.object ?? existing.object;
+  const party = req.body.party ?? existing.party;
+  const ht = req.body.amount_ht !== undefined ? Math.round(Number(req.body.amount_ht) * 100) / 100 : existing.amount_ht;
+  const vatRate = req.body.vat_rate !== undefined ? Number(req.body.vat_rate) : (existing.vat_rate || 0);
+  const vat = req.body.vat_amount !== undefined ? Math.round(Number(req.body.vat_amount) * 100) / 100 : existing.vat_amount;
+  const ttc = req.body.amount_ttc !== undefined ? Math.round(Number(req.body.amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
+  const comment = req.body.comment !== undefined ? req.body.comment : existing.comment;
+
+  db.prepare(`
+    UPDATE accounting_entries
+    SET date = ?, object = ?, party = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, comment = ?
+    WHERE id = ?
+  `).run(date, object, party, ht, vatRate, vat, ttc, comment, req.params.id);
+
+  // If update_recurring_template is true and this entry is linked to a recurring expense, update the template too
+  if (req.body.update_recurring_template && existing.recurring_expense_id) {
+    db.prepare(`
+      UPDATE recurring_expenses
+      SET object = ?, party = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, comment = ?
+      WHERE id = ?
+    `).run(object, party, ht, vatRate, vat, ttc, comment, existing.recurring_expense_id);
+  }
+
+  res.json({ message: "Écriture comptable mise à jour" });
+});
+
+apiRouter.delete('/compta/entries/:id', (req, res) => {
+  db.prepare('DELETE FROM accounting_entries WHERE id = ?').run(req.params.id);
+  res.json({ message: "Écriture supprimée de ce mois" });
+});
+
+// Recurring Expenses CRUD
+apiRouter.get('/compta/recurring', (_req, res) => {
+  const list = db.prepare('SELECT * FROM recurring_expenses ORDER BY day_of_month ASC, object ASC').all() as any[];
+  res.json(list.map(r => ({ ...r, active: Boolean(r.active) })));
+});
+
+apiRouter.post('/compta/recurring', (req, res) => {
+  const { object, party, category = 'autre', frequency = 'mensuel', day_of_month = 5, amount_ht, vat_rate = 0, vat_amount = 0, amount_ttc, comment } = req.body;
+  if (!object || !party || amount_ht === undefined) {
+    return res.status(400).json({ error: "Objet, fournisseur et montant HT requis" });
+  }
+  const ht = Math.round(Number(amount_ht) * 100) / 100;
+  const vat = Math.round(Number(vat_amount) * 100) / 100;
+  const ttc = amount_ttc !== undefined ? Math.round(Number(amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
+  const id = `rec-${uuidv4().slice(0, 8)}`;
+
+  db.prepare(`
+    INSERT INTO recurring_expenses (id, object, party, category, frequency, day_of_month, amount_ht, vat_rate, vat_amount, amount_ttc, active, comment)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(id, object, party, category, frequency, Number(day_of_month) || 5, ht, Number(vat_rate) || 0, vat, ttc, comment || null);
+
+  res.json({ id, message: "Frais récurrent / abonnement enregistré" });
+});
+
+apiRouter.put('/compta/recurring/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM recurring_expenses WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Abonnement introuvable" });
+
+  const object = req.body.object ?? existing.object;
+  const party = req.body.party ?? existing.party;
+  const category = req.body.category ?? existing.category;
+  const frequency = req.body.frequency ?? existing.frequency;
+  const day_of_month = req.body.day_of_month !== undefined ? Number(req.body.day_of_month) : existing.day_of_month;
+  const ht = req.body.amount_ht !== undefined ? Math.round(Number(req.body.amount_ht) * 100) / 100 : existing.amount_ht;
+  const vat_rate = req.body.vat_rate !== undefined ? Number(req.body.vat_rate) : existing.vat_rate;
+  const vat = req.body.vat_amount !== undefined ? Math.round(Number(req.body.vat_amount) * 100) / 100 : existing.vat_amount;
+  const ttc = req.body.amount_ttc !== undefined ? Math.round(Number(req.body.amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
+  const active = req.body.active !== undefined ? (req.body.active ? 1 : 0) : existing.active;
+  const comment = req.body.comment !== undefined ? req.body.comment : existing.comment;
+
+  db.prepare(`
+    UPDATE recurring_expenses
+    SET object = ?, party = ?, category = ?, frequency = ?, day_of_month = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, active = ?, comment = ?
+    WHERE id = ?
+  `).run(object, party, category, frequency, day_of_month, ht, vat_rate, vat, ttc, active, comment, req.params.id);
+
+  res.json({ message: "Modèle de frais récurrent mis à jour" });
+});
+
+apiRouter.delete('/compta/recurring/:id', (req, res) => {
+  db.prepare('DELETE FROM recurring_expenses WHERE id = ?').run(req.params.id);
+  res.json({ message: "Abonnement récurrent supprimé" });
 });
 
 // Export monthly Excel workbook matching Compta_2026 format

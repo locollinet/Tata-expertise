@@ -64,7 +64,19 @@ export type ActivityCategory =
   | 'visio'
   | 'reunion'
   | 'redaction'
-  | 'deplacement';
+  | 'deplacement'
+  | 'echanges_tel';
+
+export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
+  etude_documents: 'Étude de documents, analyse, gestion du dossier',
+  analyse: 'Analyse de pièces & documents techniques',
+  expertise: 'Expertise contradictoire',
+  visio: 'Visio-conférence',
+  reunion: 'Réunion contradictoire',
+  deplacement: 'Déplacement Expert',
+  redaction: 'Rédaction Expert',
+  echanges_tel: 'Échanges téléphoniques & suivi dossier',
+};
 
 export type ActivityStatus = 
   | 'a_facturer'
@@ -92,6 +104,7 @@ export interface Activity {
 export type ExpenseCategory = 
   | 'km'
   | 'train'
+  | 'location_voiture'
   | 'hotel'
   | 'repas'
   | 'peage_parking'
@@ -114,6 +127,7 @@ export interface Expense {
   quantity: number;
   unit_price: number;
   total_ht: number;
+  vat_rate?: number;
   vat_amount: number;
   total_ttc: number;
   receipt_filename?: string | null;
@@ -312,6 +326,23 @@ export interface RegisteredMail {
   created_at: string;
 }
 
+export type RecurringFrequency = 'ponctuel' | 'mensuel' | 'trimestriel' | 'annuel';
+
+export interface RecurringExpense {
+  id: string;
+  object: string; // Ex: Abonnement mobile, Loyer mensuel, URSSAF, Expert comptable
+  party: string; // Ex: SFR, Pecheux, URSSAF IDF, CORGECO
+  category: string; // Ex: telecom, loyer, charges_sociales, assurance, comptabilite, logiciel, transport, autre
+  frequency: RecurringFrequency;
+  day_of_month: number; // 1..28
+  amount_ht: number;
+  vat_rate: number; // 0, 0.055, 0.10, 0.20
+  vat_amount: number;
+  amount_ttc: number;
+  active: boolean;
+  comment?: string;
+}
+
 export interface AccountingEntry {
   id: string;
   month: string; // YYYY-MM
@@ -323,8 +354,11 @@ export interface AccountingEntry {
   object: string;
   party: string;
   amount_ht: number;
+  vat_rate?: number;
   vat_amount: number;
   amount_ttc: number;
+  frequency?: RecurringFrequency;
+  recurring_expense_id?: string | null;
   comment?: string;
 }
 

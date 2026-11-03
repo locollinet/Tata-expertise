@@ -24,6 +24,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase.js';
 import { EvidenceItem } from '@shared/types.js';
+import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
 
 interface FirebaseEvidenceManagerProps {
   missionId: string;
@@ -167,6 +168,14 @@ export const FirebaseEvidenceManager: React.FC<FirebaseEvidenceManagerProps> = (
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `${collectionPath}/${evidenceId}`);
       }
+
+      // Mirror into local Mac / iCloud Drive folder if connected
+      await syncFileToLocalMacFolder({
+        missionCode,
+        subFolder: evidenceType === 'photo' ? 'Photos_Terrain' : 'Documents_Pieces',
+        fileName: selectedFile.name,
+        data: selectedFile,
+      });
 
       // Reset form
       setShowUploadModal(false);

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles } from 'lucide-react';
+import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles, FolderSync } from 'lucide-react';
 import { auth, signInWithGoogle, logOut } from '../firebase.js';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { getLocalSyncStatus, connectLocalMacFolder, disconnectLocalMacFolder } from '../utils/localFolderSync.js';
 
 interface HeaderProps {
   activeTab: 'today' | 'missions' | 'billing' | 'compta';
@@ -22,13 +23,35 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [syncFolderName, setSyncFolderName] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
-    return () => unsubscribe();
+    const status = getLocalSyncStatus();
+    setSyncFolderName(status.connected ? status.folderName : null);
+    const onSyncChange = () => {
+      const s = getLocalSyncStatus();
+      setSyncFolderName(s.connected ? s.folderName : null);
+    };
+    window.addEventListener('vp-local-sync-changed', onSyncChange);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('vp-local-sync-changed', onSyncChange);
+    };
   }, []);
+
+  const handleToggleMacSync = async () => {
+    try {
+      const res = await connectLocalMacFolder();
+      if (res.connected) {
+        setSyncFolderName(res.folderName);
+      }
+    } catch {
+      // Cancelled by user
+    }
+  };
 
   const handleLogin = async () => {
     try {
@@ -109,15 +132,27 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Right Actions: Cloud Sync Status + Auth + Quick Add */}
           <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-            {/* Cloud sync status indicator */}
-            <div
-              className="flex items-center space-x-1.5 px-2 py-1.5 sm:px-2.5 sm:py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-lg text-xs font-semibold whitespace-nowrap"
-              title="Toutes vos données et photos sont sauvegardées et synchronisées en temps réel"
+            {/* Cloud & Local Mac / iCloud Drive sync status indicator */}
+            <button
+              type="button"
+              onClick={handleToggleMacSync}
+              className={`flex items-center space-x-1.5 px-2 py-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                syncFolderName
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100'
+              }`}
+              title={
+                syncFolderName
+                  ? `Synchronisé avec votre dossier Mac / iCloud Drive « ${syncFolderName} » (cliquez pour changer de dossier)`
+                  : "Cliquez pour relier un dossier de votre Mac (ex: iCloud Drive / VP Expertise) afin d'y enregistrer automatiquement toutes vos pièces et factures"
+              }
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-              <Cloud className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="hidden 2xl:inline">Données sauvegardées</span>
-            </div>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${syncFolderName ? 'bg-emerald-500 animate-pulse' : 'bg-sky-500'}`}></span>
+              <FolderSync className={`w-3.5 h-3.5 shrink-0 ${syncFolderName ? 'text-emerald-600' : 'text-sky-600'}`} />
+              <span className="hidden xl:inline">
+                {syncFolderName ? `iCloud : ${syncFolderName}` : 'Lier dossier Mac / iCloud'}
+              </span>
+            </button>
 
             {/* User authentication */}
             {user ? (

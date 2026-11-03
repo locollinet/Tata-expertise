@@ -47,6 +47,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(data),
   }),
+  updateActivity: (id: string, data: Partial<Activity>) => fetchJSON<{ id: string; hours: number; total_ht: number; message: string }>(`/activities/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
   deleteActivity: (id: string) => fetchJSON<{ message: string }>(`/activities/${id}`, {
     method: 'DELETE',
   }),
@@ -56,6 +60,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(data),
   }),
+  updateExpense: (id: string, data: Partial<Expense>) => fetchJSON<{ id: string; total_ht: number; total_ttc: number; message: string }>(`/expenses/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
   deleteExpense: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}`, {
     method: 'DELETE',
   }),
@@ -63,9 +71,14 @@ export const api = {
   // Invoices
   getInvoices: () => fetchJSON<Invoice[]>('/invoices'),
   getInvoice: (id: string) => fetchJSON<Invoice>(`/invoices/${id}`),
-  prepareInvoice: (data: { mission_id: string; activity_ids: string[]; expense_ids: string[]; subject?: string; advance_amount?: number; date?: string }) =>
+  prepareInvoice: (data: { mission_id: string; activity_ids: string[]; expense_ids: string[]; subject?: string; advance_amount?: number; group_by_category?: boolean; date?: string }) =>
     fetchJSON<{ invoiceId: string; nextNum: string; totalHT: number; vatAmount: number; totalTTC: number; netPayable: number; message: string }>('/invoices/prepare', {
       method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateInvoice: (id: string, data: { subject?: string; advance_amount?: number; date?: string; lines?: any[] }) =>
+    fetchJSON<{ message: string; totalHT: number; vatAmount: number; totalTTC: number; netPayable: number }>(`/invoices/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(data),
     }),
   emitInvoice: (id: string) => fetchJSON<{ message: string }>(`/invoices/${id}/emit`, { method: 'POST' }),
@@ -152,10 +165,19 @@ export const api = {
     body: JSON.stringify(data),
   }),
 
-  // Accounting
+  // Accounting & Recurring Expenses
   getAccountingEntries: (month: string) => fetchJSON<{
     month: string;
     entries: AccountingEntry[];
+    recurring_expenses: any[];
+    vat_breakdown: Array<{
+      label: string;
+      rate_label: string;
+      base_ht: number;
+      vat_amount: number;
+      total_ttc: number;
+      count: number;
+    }>;
     summary: {
       depenses_ht: number;
       depenses_tva: number;
@@ -166,9 +188,30 @@ export const api = {
       tva_nette_a_payer: number;
     };
   }>(`/compta/entries?month=${month}`),
-  addAccountingEntry: (data: Partial<AccountingEntry>) => fetchJSON<{ id: string; message: string }>('/compta/entries', {
+  addAccountingEntry: (data: Partial<AccountingEntry> & { category?: string }) => fetchJSON<{ id: string; message: string }>('/compta/entries', {
     method: 'POST',
     body: JSON.stringify(data),
+  }),
+  updateAccountingEntry: (id: string, data: Partial<AccountingEntry> & { update_recurring_template?: boolean }) =>
+    fetchJSON<{ message: string }>(`/compta/entries/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteAccountingEntry: (id: string) =>
+    fetchJSON<{ message: string }>(`/compta/entries/${id}`, {
+      method: 'DELETE',
+    }),
+  getRecurringExpenses: () => fetchJSON<any[]>('/compta/recurring'),
+  addRecurringExpense: (data: any) => fetchJSON<{ id: string; message: string }>('/compta/recurring', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  updateRecurringExpense: (id: string, data: any) => fetchJSON<{ message: string }>(`/compta/recurring/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  deleteRecurringExpense: (id: string) => fetchJSON<{ message: string }>(`/compta/recurring/${id}`, {
+    method: 'DELETE',
   }),
 
   // AI Assistant (Gemini Flash & Ingestion Terrain)

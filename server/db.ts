@@ -244,27 +244,85 @@ export function initDatabase() {
       object TEXT NOT NULL,
       party TEXT NOT NULL,
       amount_ht REAL NOT NULL,
+      vat_rate REAL DEFAULT 0,
       vat_amount REAL NOT NULL DEFAULT 0,
       amount_ttc REAL NOT NULL,
+      frequency TEXT DEFAULT 'ponctuel',
+      recurring_expense_id TEXT,
+      comment TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS recurring_expenses (
+      id TEXT PRIMARY KEY,
+      object TEXT NOT NULL,
+      party TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'autre',
+      frequency TEXT NOT NULL DEFAULT 'mensuel',
+      day_of_month INTEGER NOT NULL DEFAULT 5,
+      amount_ht REAL NOT NULL,
+      vat_rate REAL NOT NULL DEFAULT 0,
+      vat_amount REAL NOT NULL DEFAULT 0,
+      amount_ttc REAL NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
       comment TEXT
     );
   `);
 
   try {
     db.exec("ALTER TABLE report_drafts ADD COLUMN raw_field_notes TEXT DEFAULT ''");
-  } catch (_) {
-    // Column already exists
-  }
+  } catch (_) {}
 
   try {
     db.exec("ALTER TABLE missions ADD COLUMN custom_billing_threshold REAL DEFAULT 3500");
-  } catch (_) {
-    // Column already exists
-  }
+  } catch (_) {}
 
   try {
     db.exec("ALTER TABLE missions ADD COLUMN custom_vat_rate REAL DEFAULT 0.20");
-  } catch (_) {
-    // Column already exists
+  } catch (_) {}
+
+  try {
+    db.exec("ALTER TABLE expenses ADD COLUMN vat_rate REAL DEFAULT 0.20");
+  } catch (_) {}
+
+  try {
+    db.exec("ALTER TABLE accounting_entries ADD COLUMN vat_rate REAL DEFAULT 0");
+  } catch (_) {}
+
+  try {
+    db.exec("ALTER TABLE accounting_entries ADD COLUMN frequency TEXT DEFAULT 'ponctuel'");
+  } catch (_) {}
+
+  try {
+    db.exec("ALTER TABLE accounting_entries ADD COLUMN recurring_expense_id TEXT");
+  } catch (_) {}
+
+  // Seed default recurring expenses from Valentine's Compta_2026.xlsx if empty
+  const recCount = db.prepare('SELECT COUNT(*) as c FROM recurring_expenses').get() as { c: number };
+  if (recCount.c === 0) {
+    const insertRec = db.prepare(`
+      INSERT INTO recurring_expenses (id, object, party, category, frequency, day_of_month, amount_ht, vat_rate, vat_amount, amount_ttc, active, comment)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `);
+    const defaultRecurring = [
+      ['rec-loyer', 'Loyer mensuel', 'Pecheux', 'loyer', 'mensuel', 1, 1050.00, 0, 0, 1050.00, 'Prélèvement mensuel cabinet'],
+      ['rec-april', 'Assurance scooter', 'April', 'assurance', 'mensuel', 5, 50.63, 0, 0, 50.63, 'Exonéré de TVA'],
+      ['rec-generali', 'Prélèvement mutuelle', 'GENERALI Vie', 'assurance', 'mensuel', 5, 390.85, 0, 0, 390.85, 'Selon courrier du 01/02/2026'],
+      ['rec-urssaf', 'URSSAF', 'URSSAF IDF', 'charges_sociales', 'mensuel', 5, 11881.00, 0, 0, 11881.00, 'Sauf régularisation nov (12 001 €) et déc (11 884 €)'],
+      ['rec-paybyphone', 'Abonnement stationnement', 'PayByPhone', 'transport', 'mensuel', 9, 38.00, 0, 0, 38.00, 'Forfait mensuel stationnement'],
+      ['rec-adis-prev', 'Prélèvement prévoyance', 'ADIS', 'assurance', 'mensuel', 10, 532.20, 0, 0, 532.20, 'Contrat prévoyance Madelin'],
+      ['rec-sfr-mob', 'Abonnement mobile', 'SFR', 'telecom', 'mensuel', 12, 9.16, 0.20, 1.83, 10.99, 'Forfait mobile pro (modifiable si hors-forfait étranger)'],
+      ['rec-sfr-fixe', 'Abonnement fixe-internet', 'SFR', 'telecom', 'mensuel', 13, 16.66, 0.20, 3.33, 19.99, 'Fibre / Box cabinet'],
+      ['rec-corgeco', 'Expert comptable', 'CORGECO', 'comptabilite', 'mensuel', 15, 169.01, 0.20, 33.80, 202.81, 'Honoraires cabinet comptable'],
+      ['rec-urssaf-sal', 'Charges salarié', 'URSSAF IDF', 'charges_sociales', 'mensuel', 15, 113.00, 0, 0, 113.00, 'Cotisations sociales salarié'],
+      ['rec-adis-ret', 'Prélèvement retraite complémentaire', 'ADIS', 'charges_sociales', 'mensuel', 20, 518.26, 0, 0, 518.26, 'Retraite complémentaire'],
+      ['rec-icloud', 'Abonnement APPLE Cloud', 'APPLE', 'logiciel', 'mensuel', 24, 8.33, 0.20, 1.66, 9.99, 'Stockage iCloud Drive 2 To'],
+      ['rec-paie', 'Prestation paye', 'fiche-paie.net', 'comptabilite', 'mensuel', 25, 9.90, 0.20, 1.98, 11.88, 'Édition bulletin de paie'],
+    ];
+    const tx = db.transaction(() => {
+      for (const r of defaultRecurring) {
+        insertRec.run(...r);
+      }
+    });
+    tx();
   }
 }

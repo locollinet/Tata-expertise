@@ -36,6 +36,8 @@ VP_EXPERTISE_BRIEF_V3.zip
 # Exception pour les modèles ou documents de démo publics si créés
 !public/
 !public/**/*
+!server/assets/
+!server/assets/*.docx
 
 # Fichiers système et IDE
 .DS_Store

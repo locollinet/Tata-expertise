@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Receipt, Check, Download, AlertCircle, FileText, Plus, X, ArrowRight, CornerDownRight, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Receipt, Check, Download, AlertCircle, Plus, X, CornerDownRight, ShieldCheck, Search, Edit3, Layers } from 'lucide-react';
 import { Invoice, Mission } from '@shared/types.js';
 import { api } from '../api.js';
+import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
 
 interface BillingViewProps {
   missions: Mission[];
@@ -18,16 +19,44 @@ export const BillingView: React.FC<BillingViewProps> = ({
 }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [missionSearch, setMissionSearch] = useState('');
+  const [includeClosed, setIncludeClosed] = useState(false);
+
+  const filteredMissions = useMemo(() => {
+    const q = missionSearch.trim().toLowerCase();
+    return missions.filter(m => {
+      if (!includeClosed && m.status === 'cloture' && m.code !== initialMissionCode) return false;
+      if (!q) return true;
+      return (
+        m.code.toLowerCase().includes(q) ||
+        m.title.toLowerCase().includes(q) ||
+        (m.insurance_client || '').toLowerCase().includes(q) ||
+        (m.insured_party || '').toLowerCase().includes(q)
+      );
+    });
+  }, [missions, missionSearch, includeClosed, initialMissionCode]);
+
   const [selectedMissionId, setSelectedMissionId] = useState<string>(
     missions.find(m => m.code === initialMissionCode)?.id || missions[0]?.id || ''
   );
   const [missionDetail, setMissionDetail] = useState<any>(null);
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
   const [selectedExpenses, setSelectedExpenses] = useState<string[]>([]);
+  const [groupByCategory, setGroupByCategory] = useState(true);
   const [subject, setSubject] = useState('');
   const [advanceAmount, setAdvanceAmount] = useState('0');
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
+
+  // Inline activity hours editing state
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  const [editingHoursVal, setEditingHoursVal] = useState<string>('');
+
+  // Draft Invoice Edit Modal state
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [editInvSubject, setEditInvSubject] = useState('');
+  const [editInvAdvance, setEditInvAdvance] = useState('0');
+  const [editInvLines, setEditInvLines] = useState<any[]>([]);
 
   // Payment modal state
   const [paymentModalInvoice, setPaymentModalInvoice] = useState<Invoice | null>(null);
@@ -56,7 +85,6 @@ export const BillingView: React.FC<BillingViewProps> = ({
     try {
       const detail = await api.getMission(selectedMissionId);
       setMissionDetail(detail);
-      // Auto-select all unbilled activities & expenses
       const unbilledActIds = detail.activities?.filter((a: any) => a.status === 'a_facturer').map((a: any) => a.id) || [];
       const unbilledExpIds = detail.expenses?.filter((e: any) => e.status === 'a_facturer').map((e: any) => e.id) || [];
       setSelectedActivities(unbilledActIds);
@@ -100,12 +128,84 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const parsedAdvance = parseFloat(advanceAmount.replace(',', '.')) || 0;
   const calculatedNetPayable = Math.round((calculatedTTC - parsedAdvance) * 100) / 100;
 
+  // Live preview of grouped invoice lines (matching Valentine's Excel/Word table)
+  const groupedPreviewLines = useMemo(() => {
+    if (!groupByCategory) {
+      return [
+        ...selectedActItems.map((a: any) => ({
+          desc: a.label,
+          qty: 1,
+          tps: a.hours,
+          unit: a.hourly_rate,
+          total: a.total_ht,
+        })),
+        ...selectedExpItems.map((e: any) => ({
+          desc: e.label,
+          qty: e.quantity,
+          tps: 1,
+          unit: e.unit_price,
+          total: e.total_ht,
+        })),
+      ];
+    }
+
+    const preview: Array<{ desc: string; qty: number; tps: number | null; unit: number; total: number }> = [];
+    const pushActGroup = (acts: any[], label: string) => {
+      if (acts.length === 0) return;
+      const sumH = Math.round(acts.reduce((s, a) => s + Number(a.hours), 0) * 100) / 100;
+      const rate = Number(acts[0].hourly_rate);
+      preview.push({ desc: label, qty: 1, tps: sumH, unit: rate, total: Math.round(sumH * rate * 100) / 100 });
+    };
+
+    const etudeActs = selectedActItems.filter((a: any) => ['etude_documents', 'analyse', 'echanges_tel'].includes(a.category));
+    const expActs = selectedActItems.filter((a: any) => ['expertise', 'reunion'].includes(a.category));
+    const visioActs = selectedActItems.filter((a: any) => a.category === 'visio');
+    const depActs = selectedActItems.filter((a: any) => a.category === 'deplacement');
+    const redActs = selectedActItems.filter((a: any) => a.category === 'redaction');
+
+    pushActGroup(etudeActs, 'Étude de documents, analyse, gestion du dossier');
+    if (expActs.length > 0) {
+      const lastDate = expActs[expActs.length - 1].date.split('-').reverse().join('/');
+      pushActGroup(expActs, `Expertise contradictoire du ${lastDate}`);
+    }
+    pushActGroup(visioActs, 'Visio-conférence');
+    pushActGroup(depActs, 'Déplacement Expert');
+
+    const kmExps = selectedExpItems.filter((e: any) => e.category === 'km');
+    if (kmExps.length > 0) {
+      const sumKm = Math.round(kmExps.reduce((s: number, e: any) => s + Number(e.quantity), 0) * 100) / 100;
+      const rate = Number(kmExps[0].unit_price);
+      preview.push({ desc: 'Frais kilométriques', qty: sumKm, tps: 1, unit: rate, total: Math.round(sumKm * rate * 100) / 100 });
+    }
+
+    const otherExps = selectedExpItems.filter((e: any) => e.category !== 'km');
+    for (const exp of otherExps) {
+      preview.push({ desc: exp.label, qty: 1, tps: 1, unit: exp.total_ht, total: exp.total_ht });
+    }
+
+    pushActGroup(redActs, 'Rédaction Expert');
+    return preview;
+  }, [selectedActItems, selectedExpItems, groupByCategory]);
+
   const handleToggleActivity = (id: string) => {
-    setSelectedActivities(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedActivities(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   };
 
   const handleToggleExpense = (id: string) => {
-    setSelectedExpenses(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedExpenses(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const handleSaveInlineHours = async (actId: string) => {
+    const newHours = parseFloat(editingHoursVal.replace(',', '.'));
+    if (isNaN(newHours) || newHours <= 0) return;
+    try {
+      await api.updateActivity(actId, { hours: newHours });
+      setEditingActivityId(null);
+      loadSelectedMission();
+      onRefreshMissions();
+    } catch (err: any) {
+      setPrepError(err.message);
+    }
   };
 
   const handlePrepareInvoice = async () => {
@@ -123,13 +223,86 @@ export const BillingView: React.FC<BillingViewProps> = ({
         expense_ids: selectedExpenses,
         subject,
         advance_amount: parsedAdvance,
+        group_by_category: groupByCategory,
       });
-      setPrepSuccess(`${res.message} (Réf : ${res.nextNum} pour ${res.netPayable.toFixed(2).replace('.', ',')} € TTC).`);
+      setPrepSuccess(
+        `${res.message} (N° ${res.nextNum} — ${res.netPayable.toFixed(2).replace('.', ',')} € TTC). Vous pouvez télécharger le Word (.docx) ou ajuster les lignes dans le registre ci-dessous.`
+      );
       loadInvoices();
       loadSelectedMission();
       onRefreshMissions();
     } catch (err: any) {
       setPrepError(err.message);
+    }
+  };
+
+  const handleDownloadInvoiceDocx = async (inv: Invoice) => {
+    try {
+      const res = await fetch(`/api/invoices/${inv.id}/docx`);
+      if (!res.ok) throw new Error('Erreur lors de la génération Word');
+      const blob = await res.blob();
+      const fileName = `Facture_${inv.invoice_number}.docx`;
+
+      // Trigger browser download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+      // Also sync to local Mac / iCloud Drive folder if connected
+      await syncFileToLocalMacFolder({
+        missionCode: inv.mission_code,
+        subFolder: 'Factures',
+        fileName,
+        data: blob,
+      });
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err.message });
+    }
+  };
+
+  const openEditInvoiceModal = (inv: Invoice) => {
+    setEditingInvoice(inv);
+    setEditInvSubject(inv.subject);
+    setEditInvAdvance(String(inv.advance_amount || 0));
+    setEditInvLines(
+      (inv.lines || []).map(l => ({
+        ...l,
+        quantity: String(l.quantity),
+        time_spent: l.time_spent !== null && l.time_spent !== undefined ? String(l.time_spent) : '',
+        unit_price_ht: String(l.unit_price_ht),
+      }))
+    );
+  };
+
+  const handleSaveEditedInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingInvoice) return;
+    try {
+      const cleanedLines = editInvLines.map(l => ({
+        id: l.id,
+        activity_id: l.activity_id,
+        expense_id: l.expense_id,
+        description: l.description,
+        quantity: parseFloat(String(l.quantity).replace(',', '.')) || 1,
+        time_spent: l.time_spent !== '' ? parseFloat(String(l.time_spent).replace(',', '.')) : null,
+        unit_price_ht: parseFloat(String(l.unit_price_ht).replace(',', '.')) || 0,
+      }));
+      const res = await api.updateInvoice(editingInvoice.id, {
+        subject: editInvSubject,
+        advance_amount: parseFloat(editInvAdvance.replace(',', '.')) || 0,
+        lines: cleanedLines,
+      });
+      setActionFeedback({ type: 'success', message: `${res.message} (Nouveau Net à payer : ${res.netPayable.toFixed(2).replace('.', ',')} € TTC)` });
+      setEditingInvoice(null);
+      loadInvoices();
+      setTimeout(() => setActionFeedback(null), 4000);
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err.message });
     }
   };
 
@@ -204,29 +377,52 @@ export const BillingView: React.FC<BillingViewProps> = ({
           <span>Gestion des Honoraires & Facturation</span>
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Préparation déterministe au centime, verrouillage anti-double facturation, émission Word (.docx) et continuité comptable.
+          Modèle officiel Word Century Gothic (facture.dotx), regroupement par catégorie métier, multi-factures par dossier et ajustement des heures.
         </p>
       </div>
 
       {/* 1. SECTION PREPARATION DE NOTE D'HONORAIRES */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-slate-100">
           <div>
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Étape 1</span>
-            <h2 className="text-base font-bold text-slate-900">Préparer une note d'honoraires</h2>
+            <h2 className="text-base font-bold text-slate-900">Préparer une note d'honoraires (remise à zéro du compteur pointage après facturation)</h2>
           </div>
 
-          {/* Mission selection dropdown */}
-          <div className="flex items-center space-x-2">
-            <label className="text-xs font-semibold text-slate-600">Dossier :</label>
+          {/* Mission selection with Search Loupe */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={missionSearch}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setMissionSearch(val);
+                  const q = val.trim().toLowerCase();
+                  if (q) {
+                    const match = missions.find(
+                      m =>
+                        m.code.toLowerCase().includes(q) ||
+                        m.title.toLowerCase().includes(q) ||
+                        (m.insurance_client || '').toLowerCase().includes(q)
+                    );
+                    if (match) setSelectedMissionId(match.id);
+                  }
+                }}
+                placeholder="Loupe : n° dossier (ex: 728), client..."
+                className="text-xs rounded-lg border-slate-300 pl-8 pr-3 py-1.5 bg-white border focus:border-[#0f3854] w-56"
+              />
+            </div>
+
             <select
               value={selectedMissionId}
               onChange={(e) => setSelectedMissionId(e.target.value)}
               className="text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-1.5 px-3 bg-slate-50 border font-medium text-slate-800"
             >
-              {missions.map(m => (
+              {filteredMissions.map(m => (
                 <option key={m.id} value={m.id}>
-                  {m.code} — {m.title.slice(0, 45)}... ({(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT)
+                  {m.code} — {m.title.slice(0, 42)}... ({(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT à facturer)
                 </option>
               ))}
             </select>
@@ -249,29 +445,31 @@ export const BillingView: React.FC<BillingViewProps> = ({
         {/* Unbilled selection grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
-            {/* Unbilled activities */}
+            {/* Unbilled activities with inline hours adjustment */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Temps à facturer ({unbilledActivities.length})
                 </span>
-                <span className="text-[11px] text-slate-400">Cochez les éléments à intégrer à la facture</span>
+                <span className="text-[11px] text-slate-500">
+                  Astuce : cliquez sur le nombre d'heures pour arrondir ou ajuster avant facturation
+                </span>
               </div>
 
               {unbilledActivities.length === 0 ? (
                 <p className="text-xs text-slate-400 py-3 bg-slate-50 rounded-lg text-center">
-                  Aucun temps en attente de facturation pour ce dossier.
+                  Aucun temps en attente de facturation pour ce dossier (compteur à zéro).
                 </p>
               ) : (
                 <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
                   {unbilledActivities.map((act: any) => (
-                    <label
+                    <div
                       key={act.id}
-                      className={`p-3 flex items-center justify-between cursor-pointer transition-colors ${
+                      className={`p-3 flex items-center justify-between transition-colors ${
                         selectedActivities.includes(act.id) ? 'bg-sky-50/50' : 'hover:bg-slate-50'
                       }`}
                     >
-                      <div className="flex items-center space-x-3">
+                      <label className="flex items-center space-x-3 cursor-pointer flex-1">
                         <input
                           type="checkbox"
                           checked={selectedActivities.includes(act.id)}
@@ -281,15 +479,59 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         <div>
                           <p className="font-semibold text-slate-900">{act.label}</p>
                           <p className="text-slate-500 text-[11px]">
-                            {act.date.split('-').reverse().join('/')} — {act.category.replace('_', ' ')}
+                            {act.date.split('-').reverse().join('/')}
+                            {act.notes ? ` — Mémo interne : ${act.notes}` : ''}
                           </p>
                         </div>
+                      </label>
+
+                      <div className="text-right flex items-center space-x-3">
+                        {editingActivityId === act.id ? (
+                          <div className="flex items-center space-x-1">
+                            <input
+                              type="text"
+                              value={editingHoursVal}
+                              onChange={(e) => setEditingHoursVal(e.target.value)}
+                              className="w-16 text-xs border border-[#0f3854] rounded px-1.5 py-0.5 text-right font-bold"
+                              autoFocus
+                            />
+                            <span className="text-[11px] text-slate-500">h</span>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveInlineHours(act.id)}
+                              className="px-2 py-0.5 bg-[#0f3854] text-white rounded text-[10px] font-semibold"
+                            >
+                              OK
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingActivityId(null)}
+                              className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="font-bold text-slate-900 block">
+                              {act.total_ht.toFixed(2).replace('.', ',')} € HT
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingActivityId(act.id);
+                                setEditingHoursVal(String(act.hours));
+                              }}
+                              title="Cliquer pour ajuster ou arrondir les heures"
+                              className="text-[11px] text-[#0f3854] hover:underline font-medium inline-flex items-center space-x-1"
+                            >
+                              <span>{act.hours.toString().replace('.', ',')} h @ {act.hourly_rate} €</span>
+                              <Edit3 className="w-3 h-3 text-slate-400" />
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold text-slate-900 block">{act.total_ht.toFixed(2).replace('.', ',')} € HT</span>
-                        <span className="text-[11px] text-slate-500">{act.hours.toString().replace('.', ',')} h @ {act.hourly_rate} €</span>
-                      </div>
-                    </label>
+                    </div>
                   ))}
                 </div>
               )}
@@ -336,17 +578,60 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Aperçu des lignes synthétiques qui seront imprimées dans le Word */}
+            {groupedPreviewLines.length > 0 && (
+              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/90 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#006A8E] flex items-center space-x-1.5">
+                    <Layers className="w-4 h-4" />
+                    <span>Aperçu du tableau Word (Century Gothic — Format synthétique VP Expertise)</span>
+                  </span>
+                  <label className="inline-flex items-center space-x-1.5 text-[11px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={groupByCategory}
+                      onChange={(e) => setGroupByCategory(e.target.checked)}
+                      className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854]"
+                    />
+                    <span>Regrouper par grande catégorie</span>
+                  </label>
+                </div>
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-300 text-slate-600">
+                      <th className="py-1 text-left font-bold">Objet</th>
+                      <th className="py-1 text-center font-bold">Qté</th>
+                      <th className="py-1 text-center font-bold">Tps</th>
+                      <th className="py-1 text-right font-bold">Prix Unit. HT</th>
+                      <th className="py-1 text-right font-bold">Mt HT</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200/60">
+                    {groupedPreviewLines.map((gl, i) => (
+                      <tr key={i} className="text-slate-700">
+                        <td className="py-1.5 pr-2">{gl.desc}</td>
+                        <td className="py-1.5 text-center">{String(gl.qty).replace('.', ',')}</td>
+                        <td className="py-1.5 text-center">{gl.tps !== null ? String(gl.tps).replace('.', ',') : ''}</td>
+                        <td className="py-1.5 text-right">{gl.unit.toFixed(2).replace('.', ',')} €</td>
+                        <td className="py-1.5 text-right font-semibold">{gl.total.toFixed(2).replace('.', ',')} €</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Billing Preview & Confirmation Box */}
           <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4 flex flex-col justify-between">
             <div className="space-y-3">
               <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
-                Calcul déterministe
+                Synthèse de la Note d'Honoraires
               </span>
 
               <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">Objet de la facture</label>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">OBJET (affiché sur la facture Word)</label>
                 <input
                   type="text"
                   value={subject}
@@ -381,7 +666,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   <span>{calculatedHT.toFixed(2).replace('.', ',')} €</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>TVA (20%) :</span>
+                  <span>Total TVA (20%) :</span>
                   <span>{calculatedTVA.toFixed(2).replace('.', ',')} €</span>
                 </div>
                 <div className="flex justify-between text-slate-900 font-bold">
@@ -390,7 +675,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 </div>
                 {parsedAdvance > 0 && (
                   <div className="flex justify-between text-rose-600">
-                    <span>Acompte déduit :</span>
+                    <span>Acompte :</span>
                     <span>- {parsedAdvance.toFixed(2).replace('.', ',')} €</span>
                   </div>
                 )}
@@ -422,7 +707,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
               <span>Registre officiel des Notes d'honoraires & Règlements ({invoices.length})</span>
             </h2>
             <p className="text-xs text-slate-500">
-              Historique inaltérable — Export DOCX conforme et suivi des encaissements.
+              Téléchargez le Word (.docx) dès le brouillon, ajustez les heures/lignes à tout moment avant émission, et suivez vos règlements.
             </p>
           </div>
         </div>
@@ -513,6 +798,29 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-right space-x-1 whitespace-nowrap">
+                        {/* Word DOCX button always available (even on Drafts!) */}
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadInvoiceDocx(inv)}
+                          title="Télécharger la Note d'honoraires Word (.docx) au format officiel"
+                          className="inline-flex items-center space-x-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-semibold transition-colors"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>DOCX</span>
+                        </button>
+
+                        {!isCancelled && (
+                          <button
+                            type="button"
+                            onClick={() => openEditInvoiceModal(inv)}
+                            title="Ajuster les heures, lignes ou montants de cette facture"
+                            className="inline-flex items-center space-x-1 px-2 py-1 bg-sky-50 hover:bg-sky-100 text-[#0f3854] rounded text-[11px] font-medium transition-colors"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>Modifier</span>
+                          </button>
+                        )}
+
                         {isDraft ? (
                           <>
                             <button
@@ -530,16 +838,6 @@ export const BillingView: React.FC<BillingViewProps> = ({
                           </>
                         ) : (
                           <>
-                            <a
-                              href={`/api/invoices/${inv.id}/docx`}
-                              download
-                              title="Télécharger le document Word (.docx)"
-                              className="inline-flex items-center space-x-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium transition-colors"
-                            >
-                              <Download className="w-3 h-3" />
-                              <span>DOCX</span>
-                            </a>
-
                             {!isPaid && !isCancelled && (
                               <button
                                 onClick={() => {
@@ -572,6 +870,174 @@ export const BillingView: React.FC<BillingViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modal d'édition directe des lignes et heures d'une facture */}
+      {editingInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 border border-slate-200 space-y-4 text-xs max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">
+                  Modifier la Note d'honoraires N° {editingInvoice.invoice_number} ({editingInvoice.mission_code})
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Ajustez ou arrondissez librement les heures (Tps), quantités ou libellés : le montant HT et la TVA se recalculent automatiquement.
+                </p>
+              </div>
+              <button onClick={() => setEditingInvoice(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedInvoice} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block font-medium text-slate-700 mb-1">Objet de la facture</label>
+                  <input
+                    type="text"
+                    value={editInvSubject}
+                    onChange={(e) => setEditInvSubject(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Acompte déduit (€)</label>
+                  <input
+                    type="text"
+                    value={editInvAdvance}
+                    onChange={(e) => setEditInvAdvance(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800">Lignes du tableau de facturation</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditInvLines([
+                        ...editInvLines,
+                        { id: `line-new-${Date.now()}`, description: 'Expertise contradictoire', quantity: '1', time_spent: '1', unit_price_ht: '190' },
+                      ])
+                    }
+                    className="text-[#0f3854] hover:underline font-semibold inline-flex items-center space-x-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Ajouter une ligne</span>
+                  </button>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                        <th className="py-2 px-2.5 text-left">Objet</th>
+                        <th className="py-2 px-2 text-center w-20">Qté</th>
+                        <th className="py-2 px-2 text-center w-20">Tps (h)</th>
+                        <th className="py-2 px-2 text-right w-28">Prix Unit. HT</th>
+                        <th className="py-2 px-2.5 text-right w-28">Mt HT calculé</th>
+                        <th className="py-2 px-2 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {editInvLines.map((line, idx) => {
+                        const q = parseFloat(String(line.quantity).replace(',', '.')) || 1;
+                        const t = line.time_spent !== '' ? parseFloat(String(line.time_spent).replace(',', '.')) : null;
+                        const u = parseFloat(String(line.unit_price_ht).replace(',', '.')) || 0;
+                        const rowHT = Math.round((t !== null && !isNaN(t) ? q * t : q) * u * 100) / 100;
+
+                        return (
+                          <tr key={idx}>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={line.description}
+                                onChange={(e) => {
+                                  const copy = [...editInvLines];
+                                  copy[idx].description = e.target.value;
+                                  setEditInvLines(copy);
+                                }}
+                                className="w-full border border-slate-200 rounded px-2 py-1"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={line.quantity}
+                                onChange={(e) => {
+                                  const copy = [...editInvLines];
+                                  copy[idx].quantity = e.target.value;
+                                  setEditInvLines(copy);
+                                }}
+                                className="w-full border border-slate-200 rounded px-1.5 py-1 text-center"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={line.time_spent}
+                                onChange={(e) => {
+                                  const copy = [...editInvLines];
+                                  copy[idx].time_spent = e.target.value;
+                                  setEditInvLines(copy);
+                                }}
+                                placeholder="-"
+                                className="w-full border border-slate-200 rounded px-1.5 py-1 text-center font-bold text-[#0f3854]"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={line.unit_price_ht}
+                                onChange={(e) => {
+                                  const copy = [...editInvLines];
+                                  copy[idx].unit_price_ht = e.target.value;
+                                  setEditInvLines(copy);
+                                }}
+                                className="w-full border border-slate-200 rounded px-1.5 py-1 text-right"
+                              />
+                            </td>
+                            <td className="p-1.5 text-right font-bold text-slate-800 whitespace-nowrap">
+                              {rowHT.toFixed(2).replace('.', ',')} €
+                            </td>
+                            <td className="p-1.5 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setEditInvLines(editInvLines.filter((_, i) => i !== idx))}
+                                className="text-slate-400 hover:text-rose-600"
+                              >
+                                ×
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingInvoice(null)}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white font-semibold rounded-lg"
+                >
+                  Enregistrer et recalculer la facture
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Payment Recording Modal */}
       {paymentModalInvoice && (

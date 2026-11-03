@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, Clock, Receipt, Check, AlertCircle, Camera, Users, Sparkles } from 'lucide-react';
-import { Mission } from '@shared/types.js';
+import React, { useState, useMemo, useEffect } from 'react';
+import { X, Clock, Receipt, Check, AlertCircle, Camera, Users, Search, Archive } from 'lucide-react';
+import { Mission, ACTIVITY_CATEGORY_LABELS, ActivityCategory } from '@shared/types.js';
 import { api } from '../api.js';
+import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -23,19 +24,40 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null);
 
-  // Activity fields
+  // Mission search & archive filter (demandé par Valentine : loupe pour chercher p.ex. "728" ou "2020" sans dérouler 250 dossiers)
+  const [missionSearch, setMissionSearch] = useState('');
+  const [includeClosedMissions, setIncludeClosedMissions] = useState(false);
+
+  const filteredMissions = useMemo(() => {
+    const q = missionSearch.trim().toLowerCase();
+    return missions.filter(m => {
+      if (!includeClosedMissions && m.status === 'cloture' && m.id !== defaultMissionId) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        m.code.toLowerCase().includes(q) ||
+        m.title.toLowerCase().includes(q) ||
+        (m.insurance_client || '').toLowerCase().includes(q) ||
+        (m.insured_party || '').toLowerCase().includes(q) ||
+        (m.case_reference || '').toLowerCase().includes(q)
+      );
+    });
+  }, [missions, missionSearch, includeClosedMissions, defaultMissionId]);
+
+  // Activity fields (Sans le champ redondant "Libellé / Objet" : la Catégorie génère la ligne de facture, et Observations internes sert de mémo perso)
   const [missionId, setMissionId] = useState(defaultMissionId || (missions[0]?.id || ''));
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [category, setCategory] = useState<'etude_documents' | 'analyse' | 'expertise' | 'visio' | 'reunion' | 'redaction' | 'deplacement'>('expertise');
-  const [hours, setHours] = useState('1.5');
-  const [label, setLabel] = useState('');
+  const [category, setCategory] = useState<ActivityCategory>('etude_documents');
+  const [hours, setHours] = useState('1');
   const [notes, setNotes] = useState('');
 
   // Expense fields
-  const [expCategory, setExpCategory] = useState<'km' | 'train' | 'hotel' | 'repas' | 'peage_parking' | 'taxi' | 'autre'>('train');
-  const [expLabel, setExpLabel] = useState('');
+  const [expCategory, setExpCategory] = useState<'km' | 'train' | 'location_voiture' | 'hotel' | 'repas' | 'peage_parking' | 'taxi' | 'autre'>('km');
+  const [expLabel, setExpLabel] = useState('Frais kilométriques');
   const [expQty, setExpQty] = useState('1');
-  const [expUnitPrice, setExpUnitPrice] = useState('0');
+  const [expUnitPrice, setExpUnitPrice] = useState('0.95');
+  const [expVatRate, setExpVatRate] = useState<number>(0);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
   // Photo / Terrain fields
@@ -45,30 +67,60 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoForReport, setPhotoForReport] = useState(true);
 
+  useEffect(() => {
+    if (defaultMissionId) {
+      setMissionId(defaultMissionId);
+    } else if (filteredMissions.length > 0 && !filteredMissions.some(m => m.id === missionId)) {
+      setMissionId(filteredMissions[0].id);
+    }
+  }, [defaultMissionId, filteredMissions]);
+
   if (!isOpen) return null;
 
   const selectedMission = missions.find(m => m.id === missionId);
-  const hourlyRate = category === 'deplacement' ? (selectedMission?.custom_travel_rate || 135) : (selectedMission?.custom_hourly_rate || 190);
+  const hourlyRate =
+    category === 'deplacement'
+      ? (selectedMission?.custom_travel_rate || 135)
+      : (selectedMission?.custom_hourly_rate || 190);
   const parsedHours = parseFloat(hours.replace(',', '.')) || 0;
   const calculatedActivityHT = Math.round(parsedHours * hourlyRate * 100) / 100;
 
-  // Expense calculation
+  // Expense calculation with TVA detail
   const parsedQty = parseFloat(expQty.replace(',', '.')) || 0;
   const parsedUnitPrice = parseFloat(expUnitPrice.replace(',', '.')) || 0;
   const calculatedExpenseHT = Math.round(parsedQty * parsedUnitPrice * 100) / 100;
-  const expVatRate = expCategory === 'km' ? 0 : 0.20;
-  const calculatedExpenseTTC = Math.round(calculatedExpenseHT * (1 + expVatRate) * 100) / 100;
+  const calculatedExpenseTVA = Math.round(calculatedExpenseHT * expVatRate * 100) / 100;
+  const calculatedExpenseTTC = Math.round((calculatedExpenseHT + calculatedExpenseTVA) * 100) / 100;
 
   const handleExpenseCategoryChange = (newCat: any) => {
     setExpCategory(newCat);
+    const defaultLabels: Record<string, string> = {
+      km: 'Frais kilométriques',
+      train: 'Frais de déplacement (train)',
+      location_voiture: 'Location de voiture',
+      peage_parking: 'Parking',
+      taxi: 'Taxi',
+      repas: 'Repas',
+      hotel: 'Hôtel',
+      autre: 'Autre frais de mission',
+    };
+    setExpLabel(defaultLabels[newCat] || 'Frais de déplacement');
+
     if (newCat === 'km') {
       setExpUnitPrice(String(selectedMission?.custom_km_rate || 0.95));
-      if (!expLabel) setExpLabel('Frais kilométriques');
-    } else if (newCat === 'repas') {
-      setExpUnitPrice('25.00');
-      if (!expLabel) setExpLabel('Repas de travail mission');
+      setExpVatRate(0);
+    } else if (newCat === 'train') {
+      setExpUnitPrice('');
+      setExpQty('1');
+      setExpVatRate(0);
+    } else if (newCat === 'repas' || newCat === 'hotel') {
+      setExpUnitPrice(newCat === 'repas' ? '25.00' : '');
+      setExpQty('1');
+      setExpVatRate(0.10);
     } else {
       setExpUnitPrice('');
+      setExpQty('1');
+      setExpVatRate(0.20);
     }
   };
 
@@ -78,15 +130,18 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
     setLoading(true);
 
     try {
+      if (!missionId) throw new Error("Veuillez sélectionner un dossier");
+
       if (tab === 'activity') {
-        if (!label.trim()) throw new Error("Veuillez saisir un libellé descriptif");
         if (parsedHours <= 0) throw new Error("Le nombre d'heures doit être supérieur à zéro");
+
+        const autoInvoiceLabel = ACTIVITY_CATEGORY_LABELS[category] || 'Expertise contradictoire';
 
         await api.addActivity({
           mission_id: missionId,
           date,
           category,
-          label: label.trim(),
+          label: autoInvoiceLabel,
           hours: parsedHours,
           hourly_rate: hourlyRate,
           notes: notes.trim() || undefined,
@@ -94,12 +149,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         });
 
         if (keepOpen) {
-          setLabel('');
           setNotes('');
-          setSuccessFeedback(`Pointage de ${parsedHours}h enregistré sur ${selectedMission?.code || 'le dossier'} ! Prêt pour le suivant.`);
+          setSuccessFeedback(`Pointage de ${parsedHours}h (${autoInvoiceLabel}) enregistré sur ${selectedMission?.code || 'le dossier'} ! Vous pouvez enchaîner sur un autre dossier.`);
         }
       } else if (tab === 'expense') {
-        if (!expLabel.trim()) throw new Error("Veuillez saisir un libellé de frais");
         if (parsedUnitPrice <= 0) throw new Error("Le montant unitaire doit être supérieur à zéro");
 
         if (receiptFile) {
@@ -107,9 +160,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           formData.append('mission_id', missionId);
           formData.append('date', date);
           formData.append('category', expCategory);
-          formData.append('label', expLabel.trim());
+          formData.append('label', expLabel.trim() || 'Frais de déplacement');
           formData.append('quantity', String(parsedQty));
           formData.append('unit_price', String(parsedUnitPrice));
+          formData.append('vat_rate', String(expVatRate));
           formData.append('receipt', receiptFile);
 
           const res = await fetch('/api/expenses', {
@@ -120,30 +174,38 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             const err = await res.json();
             throw new Error(err.error || "Erreur lors de l'enregistrement du frais");
           }
+
+          await syncFileToLocalMacFolder({
+            missionCode: selectedMission?.code || 'VP_Dossier',
+            subFolder: 'Justificatifs_Frais',
+            fileName: receiptFile.name,
+            data: receiptFile,
+          });
         } else {
           await api.addExpense({
             mission_id: missionId,
             date,
             category: expCategory,
-            label: expLabel.trim(),
+            label: expLabel.trim() || 'Frais de déplacement',
             quantity: parsedQty,
             unit_price: parsedUnitPrice,
+            vat_rate: expVatRate,
           });
         }
 
         if (keepOpen) {
-          setExpLabel('');
-          setExpUnitPrice('0');
+          setExpUnitPrice(expCategory === 'km' ? String(selectedMission?.custom_km_rate || 0.95) : '');
           setReceiptFile(null);
           setSuccessFeedback(`Frais enregistré sur ${selectedMission?.code || 'le dossier'} ! Prêt pour le suivant.`);
         }
       } else if (tab === 'photo') {
         if (!photoFile) throw new Error("Veuillez prendre une photo ou sélectionner un fichier");
-        const defaultCaption = photoType === 'emargement'
-          ? "Feuille d'émargement présence"
-          : photoType === 'justificatif'
-          ? "Justificatif de note de frais"
-          : "Photo de constatation terrain";
+        const defaultCaption =
+          photoType === 'emargement'
+            ? "Feuille d'émargement présence"
+            : photoType === 'justificatif'
+            ? "Justificatif de note de frais"
+            : "Photo de constatation terrain";
 
         const formData = new FormData();
         formData.append('mission_id', missionId);
@@ -159,6 +221,13 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           const err = await res.json();
           throw new Error(err.error || "Erreur lors de l'enregistrement de la photo");
         }
+
+        await syncFileToLocalMacFolder({
+          missionCode: selectedMission?.code || 'VP_Dossier',
+          subFolder: 'Photos_Terrain',
+          fileName: photoFile.name,
+          data: photoFile,
+        });
 
         if (keepOpen) {
           setPhotoCaption('');
@@ -197,7 +266,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
           <div className="flex items-center space-x-2">
-            <span className="font-semibold text-slate-800 text-base">Saisie rapide d'activité & frais</span>
+            <span className="font-semibold text-slate-800 text-base">Pointage rapide & Frais de mission</span>
           </div>
           <button
             onClick={onClose}
@@ -251,7 +320,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
         {/* Success feedback toast */}
         {successFeedback && (
-          <div className="mx-4 mb-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center space-x-2 text-xs text-emerald-800 animate-in fade-in">
+          <div className="mx-5 mb-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center space-x-2 text-xs text-emerald-800 animate-in fade-in">
             <Check className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="font-medium">{successFeedback}</span>
           </div>
@@ -265,26 +334,81 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="px-5 sm:px-6 pb-6 space-y-4 overflow-y-auto flex-1">
-          {/* Mission selection */}
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Dossier / Mission *</label>
+          {/* Mission selection with instant Search (Loupe) & Archive filter */}
+          <div className="space-y-1.5 bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold text-slate-800">
+                Dossier / Mission * ({filteredMissions.length} affiché{filteredMissions.length > 1 ? 's' : ''})
+              </label>
+              <label className="inline-flex items-center space-x-1.5 text-[11px] text-slate-500 cursor-pointer hover:text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={includeClosedMissions}
+                  onChange={(e) => setIncludeClosedMissions(e.target.checked)}
+                  className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
+                />
+                <Archive className="w-3 h-3" />
+                <span>Inclure les dossiers clos / archivés</span>
+              </label>
+            </div>
+
+            {/* Loupe de recherche rapide de dossier */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={missionSearch}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setMissionSearch(val);
+                  const q = val.trim().toLowerCase();
+                  if (q) {
+                    const firstMatch = missions.find(
+                      m =>
+                        (includeClosedMissions || m.status !== 'cloture') &&
+                        (m.code.toLowerCase().includes(q) ||
+                          m.title.toLowerCase().includes(q) ||
+                          (m.insurance_client || '').toLowerCase().includes(q))
+                    );
+                    if (firstMatch) setMissionId(firstMatch.id);
+                  }
+                }}
+                placeholder="Rechercher par n° (ex: 728, 2020), client (Helvetia, AXA) ou affaire..."
+                className="w-full text-xs rounded-lg border-slate-300 pl-8 pr-7 py-1.5 bg-white border focus:border-[#0f3854] focus:ring-[#0f3854]"
+              />
+              {missionSearch && (
+                <button
+                  type="button"
+                  onClick={() => setMissionSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
             <select
               value={missionId}
               onChange={(e) => setMissionId(e.target.value)}
               required
-              className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
+              className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-900"
             >
-              {missions.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.code} — {m.title.length > 45 ? `${m.title.slice(0, 45)}...` : m.title}
-                </option>
-              ))}
+              {filteredMissions.length === 0 ? (
+                <option value="">Aucun dossier trouvé pour « {missionSearch} »</option>
+              ) : (
+                filteredMissions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.code} — {m.title.length > 48 ? `${m.title.slice(0, 48)}...` : m.title} ({m.insurance_client})
+                    {m.status === 'cloture' ? ' [CLOS]' : ''}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
           {/* Date */}
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Date d'intervention *</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Date du travail / d'intervention *</label>
             <input
               type="date"
               value={date}
@@ -296,22 +420,24 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
           {tab === 'activity' ? (
             <>
-              {/* Activity Category */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Catégorie</label>
+              {/* Activity Category & Hours */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Catégorie (Ligne de facturation) *
+                  </label>
                   <select
                     value={category}
                     onChange={(e: any) => setCategory(e.target.value)}
-                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-800"
                   >
-                    <option value="expertise">Expertise technique</option>
-                    <option value="analyse">Analyse de pièces</option>
-                    <option value="etude_documents">Étude de documents</option>
+                    <option value="etude_documents">Étude de documents, analyse, gestion du dossier</option>
+                    <option value="expertise">Expertise contradictoire (sur site)</option>
                     <option value="visio">Visio-conférence</option>
-                    <option value="reunion">Réunion contradictoire</option>
-                    <option value="redaction">Rédaction rapport / dires</option>
-                    <option value="deplacement">Temps de déplacement</option>
+                    <option value="deplacement">Déplacement Expert (taux trajet)</option>
+                    <option value="redaction">Rédaction Expert (rapport / note)</option>
+                    <option value="echanges_tel">Échanges téléphoniques & suivi</option>
+                    <option value="analyse">Analyse de pièces techniques</option>
                   </select>
                 </div>
 
@@ -321,20 +447,21 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                     type="text"
                     value={hours}
                     onChange={(e) => setHours(e.target.value)}
-                    placeholder="ex: 1,5 ou 0,5"
+                    placeholder="ex: 1,5 ou 0,25"
                     required
-                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-bold text-slate-900"
                   />
                 </div>
               </div>
 
               {/* Quick Hours Presets */}
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                <span className="text-[11px] font-medium shrink-0">Préréglages :</span>
+                <span className="text-[11px] font-medium shrink-0">Durée rapide :</span>
                 {[
-                  { l: '15m', val: '0.25' },
-                  { l: '30m', val: '0.5' },
+                  { l: '15m (0,25)', val: '0.25' },
+                  { l: '30m (0,5)', val: '0.5' },
                   { l: '1h', val: '1' },
+                  { l: '1,5h', val: '1.5' },
                   { l: '2h', val: '2' },
                   { l: '3,5h', val: '3.5', title: '1/2 journée' },
                   { l: '7h', val: '7', title: '1 journée' },
@@ -355,45 +482,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 ))}
               </div>
 
-              {/* Activity Label with quick chips */}
+              {/* Observations internes (seul champ texte libre pour mémoire personnelle, non affiché en détail sur la facture) */}
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Libellé / Objet *</label>
-                <input
-                  type="text"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="ex: Réunion contradictoire sur site, examen du bogie..."
-                  required
-                  className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
-                />
-                <div className="flex flex-wrap gap-1 mt-1.5">
-                  {[
-                    'Visio Alstom',
-                    'Réunion contradictoire',
-                    'Analyse technique de dire',
-                    'Visite site & Constatations',
-                    'Rédaction note d\'étape',
-                  ].map((chip) => (
-                    <button
-                      key={chip}
-                      type="button"
-                      onClick={() => setLabel(chip)}
-                      className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 px-1.5 py-0.5 rounded transition-colors"
-                    >
-                      + {chip}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Observations internes (facultatif)</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Observations internes / Mémo personnel (facultatif — non détaillé sur la facture)
+                </label>
                 <input
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Détails techniques, participants..."
+                  placeholder="ex: Visio avec Alstom de 10h à 12h, relecture dire Me Garnier..."
                   className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
                 />
               </div>
@@ -401,32 +499,35 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               {/* Rate & HT Preview Box */}
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 text-xs">
                 <div className="flex items-center justify-between sm:justify-start sm:gap-1.5">
-                  <span className="text-slate-500">Taux appliqué :</span>
+                  <span className="text-slate-500">Taux dossier appliqué :</span>
                   <span className="font-semibold text-slate-700 whitespace-nowrap">{hourlyRate} €/h HT</span>
                 </div>
                 <div className="flex items-center justify-between sm:justify-end sm:gap-1.5 border-t sm:border-t-0 pt-1.5 sm:pt-0 border-slate-200/60">
-                  <span className="text-slate-500">Montant à facturer :</span>
-                  <span className="font-bold text-[#0f3854] text-sm whitespace-nowrap">{calculatedActivityHT.toFixed(2).replace('.', ',')} € HT</span>
+                  <span className="text-slate-500">Montant pointé :</span>
+                  <span className="font-bold text-[#0f3854] text-sm whitespace-nowrap">
+                    {calculatedActivityHT.toFixed(2).replace('.', ',')} € HT
+                  </span>
                 </div>
               </div>
             </>
           ) : tab === 'expense' ? (
             <>
-              {/* Expense Category */}
+              {/* Expense Category & Quantity */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Nature du frais</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Catégorie de frais</label>
                   <select
                     value={expCategory}
                     onChange={(e: any) => handleExpenseCategoryChange(e.target.value)}
-                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium"
                   >
-                    <option value="km">Frais kilométriques (0,95 €/km)</option>
-                    <option value="train">Train / SNCF</option>
-                    <option value="hotel">Hôtel / Hébergement</option>
-                    <option value="repas">Repas</option>
-                    <option value="peage_parking">Péages & Parking</option>
+                    <option value="km">Frais kilométriques ({selectedMission?.custom_km_rate || 0.95} €/km)</option>
+                    <option value="train">Frais de déplacement (train)</option>
+                    <option value="location_voiture">Location de voiture</option>
+                    <option value="peage_parking">Parking / Péages</option>
                     <option value="taxi">Taxi / VTC</option>
+                    <option value="repas">Repas</option>
+                    <option value="hotel">Hôtel / Hébergement</option>
                     <option value="autre">Autre frais</option>
                   </select>
                 </div>
@@ -445,34 +546,47 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 </div>
               </div>
 
-              {/* Expense Label & Unit Price */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Expense Label, Unit Price & TVA Rate */}
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Libellé du frais *</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Libellé facture</label>
                   <input
                     type="text"
                     value={expLabel}
                     onChange={(e) => setExpLabel(e.target.value)}
-                    placeholder="ex: Billet TGV Paris-Lyon A/R"
-                    required
+                    placeholder="ex: Parking"
                     className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Prix Unitaire HT (€) *</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Prix Unit. HT (€) *</label>
                   <input
                     type="text"
                     value={expUnitPrice}
                     onChange={(e) => setExpUnitPrice(e.target.value)}
                     placeholder="0.00"
                     required
-                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border"
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-bold"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Taux TVA</label>
+                  <select
+                    value={String(expVatRate)}
+                    onChange={(e) => setExpVatRate(parseFloat(e.target.value))}
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2 bg-white border"
+                  >
+                    <option value="0">0% (Km / SNCF)</option>
+                    <option value="0.055">5,5%</option>
+                    <option value="0.1">10% (Repas/Hôtel)</option>
+                    <option value="0.2">20% (Standard)</option>
+                  </select>
                 </div>
               </div>
 
-              {/* Justificatif upload with mobile camera support */}
+              {/* Justificatif upload */}
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Justificatif / Reçu (facultatif)</label>
                 <input
@@ -484,27 +598,31 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 />
               </div>
 
-              {/* Expense Preview */}
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-4 text-xs">
-                <div className="flex items-center justify-between sm:justify-start sm:gap-1.5">
-                  <span className="text-slate-500">Montant HT :</span>
-                  <span className="font-semibold text-slate-700 whitespace-nowrap">{calculatedExpenseHT.toFixed(2).replace('.', ',')} €</span>
+              {/* Expense Preview with TVA Detail */}
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-500">HT : </span>
+                  <span className="font-semibold text-slate-800">{calculatedExpenseHT.toFixed(2).replace('.', ',')} €</span>
                 </div>
-                <div className="flex items-center justify-between sm:justify-end sm:gap-1.5 border-t sm:border-t-0 pt-1.5 sm:pt-0 border-slate-200/60">
-                  <span className="text-slate-500">Montant TTC :</span>
-                  <span className="font-bold text-emerald-700 text-sm whitespace-nowrap">{calculatedExpenseTTC.toFixed(2).replace('.', ',')} €</span>
+                <div>
+                  <span className="text-slate-500">TVA ({Math.round(expVatRate * 1000) / 10}%) : </span>
+                  <span className="font-semibold text-slate-700">{calculatedExpenseTVA.toFixed(2).replace('.', ',')} €</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">TTC : </span>
+                  <span className="font-bold text-emerald-700 text-sm">{calculatedExpenseTTC.toFixed(2).replace('.', ',')} €</span>
                 </div>
               </div>
             </>
           ) : (
-            /* Tab: PHOTO TERRAIN (Mobile camera native) */
+            /* Tab: PHOTO TERRAIN */
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Type de document terrain *</label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
                     { id: 'constat', label: 'Constat technique', icon: Camera },
-                    { id: 'emargement', label: 'Feuille d\'émargement', icon: Users },
+                    { id: 'emargement', label: "Feuille d'émargement", icon: Users },
                     { id: 'justificatif', label: 'Reçu / Facturette', icon: Receipt },
                   ].map((pt) => (
                     <button
@@ -532,7 +650,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   onChange={(e) => setPhotoCaption(e.target.value)}
                   placeholder={
                     photoType === 'emargement'
-                      ? 'Feuille d\'émargement réunion contradictoire du jour'
+                      ? "Feuille d'émargement réunion contradictoire du jour"
                       : photoType === 'justificatif'
                       ? 'Ticket péage / parking'
                       : 'Constat fissure tablier / essieu / traverse'
@@ -541,7 +659,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 />
               </div>
 
-              {/* Native Smartphone Camera input */}
               <div className="p-4 border-2 border-dashed border-slate-300 rounded-xl text-center bg-slate-50/70 hover:bg-slate-100 transition-colors">
                 <input
                   type="file"
@@ -570,8 +687,8 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                       <Camera className="w-6 h-6" />
                     </div>
                     <div>
-                      <span className="text-xs font-bold text-slate-800 block">Prendre une photo sur site</span>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">Ouvre l'appareil photo du smartphone en 1 clic</span>
+                      <span className="text-xs font-bold text-slate-800 block">Prendre ou glisser une photo</span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">Sera rattachée au dossier (et copiée dans iCloud Drive si connecté)</span>
                     </div>
                   </label>
                 )}
