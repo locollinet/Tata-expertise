@@ -155,7 +155,7 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
         line => `
       <w:p>
         <w:pPr>
-          <w:spacing w:after="0" w:line="276" w:lineRule="auto"/>
+          <w:spacing w:line="276" w:lineRule="auto"/>
           <w:ind w:left="3686"/>
           <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>
         </w:pPr>
@@ -167,77 +167,131 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
       )
       .join('');
 
+    // Ensure consistent vertical position of AFFAIRE : (aligned with Valentine Pécheux on the left sidebar)
+    // In Facture_2026-103.docx, 3 client lines + 6 empty lines = 9 lines total before AFFAIRE :
+    const emptyLinesAfterClientCount = Math.max(2, 9 - clientLines.length);
+    const emptyLinesAfterClientXml = Array.from({ length: emptyLinesAfterClientCount })
+      .map(
+        (_, idx) => `
+      <w:p>
+        <w:pPr>
+          <w:ind w:left="${idx === 0 ? '3686' : idx === 1 ? '3828' : '4394'}"/>
+          <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="${idx === emptyLinesAfterClientCount - 1 ? '18' : '20'}"/></w:rPr>
+        </w:pPr>
+      </w:p>`
+      )
+      .join('');
+
+    // Largeur utile exacte entre marge gauche (3828 dxa) et marge droite (1274 dxa) sur A4 (11906 dxa) = 6804 dxa (12,0 cm = 4320540 EMU)
+    // Proportions exactes des 5 colonnes R, S, T, U, V de son Excel : 3444 + 580 + 580 + 1100 + 1100 = 6804 dxa
+    const COL_OBJET = 3444;
+    const COL_QTE = 580;
+    const COL_TPS = 580;
+    const COL_PU = 1100;
+    const COL_MT = 1100;
+    const COL_LEFT_3 = COL_OBJET + COL_QTE + COL_TPS; // 4604 dxa
+    const TABLE_WIDTH = COL_LEFT_3 + COL_PU + COL_MT; // 6804 dxa
+
     const lines = invoice.lines || [];
+    // Adapter légèrement la hauteur de ligne selon le nombre de lignes pour toujours tenir sur 1 page comme dans Facture_2026-103
+    const rowSpacing = lines.length > 7 ? 35 : 55;
+    const rowHeight = lines.length > 7 ? 240 : 280;
+
     const itemRowsXml = lines
       .map(line => {
+        const isKmSwapped =
+          line.description.toLowerCase().includes('kilom') &&
+          Number(line.quantity) > 1 &&
+          (line.time_spent === 1 || line.time_spent === null || line.time_spent === undefined);
+        const qtyVal = isKmSwapped ? 1 : line.quantity;
+        const tpsVal = isKmSwapped ? line.quantity : line.time_spent;
         const tpsText =
-          line.time_spent !== null && line.time_spent !== undefined
-            ? formatFrNumber(line.time_spent)
+          tpsVal !== null && tpsVal !== undefined
+            ? formatFrNumber(tpsVal)
             : '';
         return `
         <w:tr>
-          <w:trPr><w:trHeight w:val="340"/></w:trPr>
+          <w:trPr><w:trHeight w:val="${rowHeight}"/></w:trPr>
           <w:tc>
             <w:tcPr>
-              <w:tcW w:w="4053" w:type="dxa"/>
+              <w:tcW w:w="${COL_OBJET}" w:type="dxa"/>
               <w:vAlign w:val="center"/>
             </w:tcPr>
             <w:p>
-              <w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr>
+              <w:pPr>
+                <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+              </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
                 <w:t>${escapeXml(line.description)}</w:t>
               </w:r>
             </w:p>
           </w:tc>
           <w:tc>
             <w:tcPr>
-              <w:tcW w:w="750" w:type="dxa"/>
+              <w:tcW w:w="${COL_QTE}" w:type="dxa"/>
               <w:vAlign w:val="center"/>
             </w:tcPr>
             <w:p>
-              <w:pPr><w:jc w:val="center"/><w:spacing w:before="40" w:after="40"/></w:pPr>
+              <w:pPr>
+                <w:jc w:val="center"/>
+                <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+              </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
-                <w:t>${escapeXml(formatFrNumber(line.quantity))}</w:t>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:t>${escapeXml(formatFrNumber(qtyVal))}</w:t>
               </w:r>
             </w:p>
           </w:tc>
           <w:tc>
             <w:tcPr>
-              <w:tcW w:w="750" w:type="dxa"/>
+              <w:tcW w:w="${COL_TPS}" w:type="dxa"/>
               <w:vAlign w:val="center"/>
             </w:tcPr>
             <w:p>
-              <w:pPr><w:jc w:val="center"/><w:spacing w:before="40" w:after="40"/></w:pPr>
+              <w:pPr>
+                <w:jc w:val="center"/>
+                <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+              </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
                 <w:t>${escapeXml(tpsText)}</w:t>
               </w:r>
             </w:p>
           </w:tc>
           <w:tc>
             <w:tcPr>
-              <w:tcW w:w="1350" w:type="dxa"/>
+              <w:tcW w:w="${COL_PU}" w:type="dxa"/>
               <w:vAlign w:val="center"/>
             </w:tcPr>
             <w:p>
-              <w:pPr><w:jc w:val="right"/><w:spacing w:before="40" w:after="40"/></w:pPr>
+              <w:pPr>
+                <w:jc w:val="right"/>
+                <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+              </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
                 <w:t>${escapeXml(formatFrCurrency(line.unit_price_ht))}</w:t>
               </w:r>
             </w:p>
           </w:tc>
           <w:tc>
             <w:tcPr>
-              <w:tcW w:w="1350" w:type="dxa"/>
+              <w:tcW w:w="${COL_MT}" w:type="dxa"/>
               <w:vAlign w:val="center"/>
             </w:tcPr>
             <w:p>
-              <w:pPr><w:jc w:val="right"/><w:spacing w:before="40" w:after="40"/></w:pPr>
+              <w:pPr>
+                <w:jc w:val="right"/>
+                <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+              </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
                 <w:t>${escapeXml(formatFrCurrency(line.total_ht))}</w:t>
               </w:r>
             </w:p>
@@ -249,7 +303,7 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
     const advanceDisplay =
       invoice.advance_amount && invoice.advance_amount > 0
         ? formatFrCurrency(invoice.advance_amount)
-        : '-   €';
+        : '';
 
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
@@ -270,7 +324,7 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
   xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
   mc:Ignorable="w14 w15 wp14">
   <w:body>
-    <!-- En-tête Date & Numéro de Note d'Honoraires -->
+    <!-- En-tête Date & Numéro de Note d'Honoraires (identique à Facture_2026-103.docx) -->
     <w:tbl>
       <w:tblPr>
         <w:tblStyle w:val="Grilledutableau"/>
@@ -283,6 +337,7 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
           <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>
           <w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
         </w:tblBorders>
+        <w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>
       </w:tblPr>
       <w:tblGrid>
         <w:gridCol w:w="3402"/>
@@ -293,7 +348,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
         <w:tc>
           <w:tcPr><w:tcW w:w="3402" w:type="dxa"/></w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="both"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="both"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/></w:rPr>
+            </w:pPr>
             <w:r>
               <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/></w:rPr>
               <w:t xml:space="preserve">DATE : </w:t>
@@ -307,7 +365,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
         <w:tc>
           <w:tcPr><w:tcW w:w="4851" w:type="dxa"/></w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="175"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="175"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/></w:rPr>
+            </w:pPr>
             <w:r>
               <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/></w:rPr>
               <w:t xml:space="preserve">NOTE D'HONORAIRES N° </w:t>
@@ -321,26 +382,29 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
       </w:tr>
     </w:tbl>
 
-    <w:p><w:pPr><w:ind w:left="3828"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
+    <!-- 2 paragraphes vides avant le destinataire (exactement comme Facture_2026-103.docx) -->
+    <w:p><w:pPr><w:ind w:left="3828"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
+    <w:p><w:pPr><w:ind w:left="3828"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
 
     <!-- Bloc Destinataire / Client -->
     ${clientParagraphsXml}
 
-    <w:p><w:pPr><w:ind w:left="3828"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
-    <w:p><w:pPr><w:ind w:left="3828"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/></w:rPr></w:pPr></w:p>
+    <!-- Paragraphes vides d'alignement avec Valentine Pécheux dans la colonne de gauche -->
+    ${emptyLinesAfterClientXml}
 
-    <!-- Références Dossier (AFFAIRE, OBJET, V/RÉF., N/RÉF.) -->
+    <!-- Références Dossier (AFFAIRE, OBJET, V/RÉF., N/RÉF.) alignées pile à 1050 dxa -->
     <w:p>
       <w:pPr>
-        <w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs>
+        <w:tabs><w:tab w:val="left" w:pos="1050"/></w:tabs>
         <w:spacing w:after="60" w:line="276" w:lineRule="auto"/>
-        <w:ind w:left="993" w:right="-567" w:hanging="993"/>
+        <w:ind w:left="1050" w:right="-567" w:hanging="1050"/>
+        <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
       </w:pPr>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
-        <w:t xml:space="preserve">AFFAIRE : </w:t>
+        <w:t>AFFAIRE&#160;:</w:t>
       </w:r>
-      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/></w:rPr><w:tab/></w:r>
+      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:tab/></w:r>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>${escapeXml(invoice.case_title)}</w:t>
@@ -349,15 +413,16 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
     <w:p>
       <w:pPr>
-        <w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs>
+        <w:tabs><w:tab w:val="left" w:pos="1050"/></w:tabs>
         <w:spacing w:after="60" w:line="276" w:lineRule="auto"/>
-        <w:ind w:left="993" w:right="-567" w:hanging="993"/>
+        <w:ind w:left="1050" w:right="-567" w:hanging="1050"/>
+        <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
       </w:pPr>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
-        <w:t xml:space="preserve">OBJET : </w:t>
+        <w:t>OBJET&#160;:</w:t>
       </w:r>
-      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/></w:rPr><w:tab/></w:r>
+      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:tab/></w:r>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>${escapeXml(invoice.subject)}</w:t>
@@ -366,15 +431,16 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
     <w:p>
       <w:pPr>
-        <w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs>
+        <w:tabs><w:tab w:val="left" w:pos="1050"/></w:tabs>
         <w:spacing w:after="60" w:line="276" w:lineRule="auto"/>
-        <w:ind w:left="992" w:hanging="992"/>
+        <w:ind w:left="1050" w:hanging="1050"/>
+        <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
       </w:pPr>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>V/RÉF.&#160;:</w:t>
       </w:r>
-      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/></w:rPr><w:tab/></w:r>
+      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:tab/></w:r>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>${escapeXml(invoice.client_ref)}</w:t>
@@ -383,26 +449,38 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
     <w:p>
       <w:pPr>
-        <w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs>
+        <w:tabs><w:tab w:val="left" w:pos="1050"/></w:tabs>
         <w:spacing w:after="60" w:line="276" w:lineRule="auto"/>
+        <w:ind w:left="1050" w:hanging="1050"/>
+        <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
       </w:pPr>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>N/RÉF.&#160;:</w:t>
       </w:r>
-      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/></w:rPr><w:tab/></w:r>
+      <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:tab/></w:r>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
         <w:t>${escapeXml(invoice.our_ref)}</w:t>
       </w:r>
     </w:p>
 
-    <w:p><w:pPr><w:spacing w:after="120"/></w:pPr></w:p>
+    <!-- 2 paragraphes vides avant le tableau (exactement comme Facture_2026-103.docx) -->
+    <w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs><w:spacing w:after="60" w:line="276" w:lineRule="auto"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr></w:p>
+    <w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs><w:spacing w:after="60" w:line="276" w:lineRule="auto"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr></w:p>
 
-    <!-- Tableau des honoraires & frais (Format Century Gothic identique au registre Excel) -->
+    <!-- Tableau des honoraires & frais : largeur exacte 6804 dxa (12,0 cm = cx 4320540 EMU) -->
     <w:tbl>
       <w:tblPr>
-        <w:tblW w:w="8253" w:type="dxa"/>
+        <w:tblW w:w="${TABLE_WIDTH}" w:type="dxa"/>
+        <w:tblInd w:w="0" w:type="dxa"/>
+        <w:tblLayout w:type="fixed"/>
+        <w:tblCellMar>
+          <w:top w:w="0" w:type="dxa"/>
+          <w:left w:w="20" w:type="dxa"/>
+          <w:bottom w:w="0" w:type="dxa"/>
+          <w:right w:w="20" w:type="dxa"/>
+        </w:tblCellMar>
         <w:tblBorders>
           <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>
           <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
@@ -413,77 +491,101 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
         </w:tblBorders>
       </w:tblPr>
       <w:tblGrid>
-        <w:gridCol w:w="4053"/>
-        <w:gridCol w:w="750"/>
-        <w:gridCol w:w="750"/>
-        <w:gridCol w:w="1350"/>
-        <w:gridCol w:w="1350"/>
+        <w:gridCol w:w="${COL_OBJET}"/>
+        <w:gridCol w:w="${COL_QTE}"/>
+        <w:gridCol w:w="${COL_TPS}"/>
+        <w:gridCol w:w="${COL_PU}"/>
+        <w:gridCol w:w="${COL_MT}"/>
       </w:tblGrid>
 
       <!-- Ligne d'en-tête avec filet bas fin -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="320"/></w:trPr>
+        <w:trPr><w:trHeight w:val="260"/></w:trPr>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="4053" w:type="dxa"/>
+            <w:tcW w:w="${COL_OBJET}" w:type="dxa"/>
             <w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
+            <w:vAlign w:val="bottom"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:spacing w:after="40"/></w:pPr>
+            <w:pPr>
+              <w:spacing w:before="0" w:after="40" w:line="220" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
               <w:t>Objet</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="750" w:type="dxa"/>
+            <w:tcW w:w="${COL_QTE}" w:type="dxa"/>
             <w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
+            <w:vAlign w:val="bottom"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="center"/><w:spacing w:after="40"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="center"/>
+              <w:spacing w:before="0" w:after="40" w:line="220" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
               <w:t>Qté</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="750" w:type="dxa"/>
+            <w:tcW w:w="${COL_TPS}" w:type="dxa"/>
             <w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
+            <w:vAlign w:val="bottom"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="center"/><w:spacing w:after="40"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="center"/>
+              <w:spacing w:before="0" w:after="40" w:line="220" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
               <w:t>Tps</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
+            <w:vAlign w:val="bottom"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:spacing w:after="40"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:spacing w:before="0" w:after="40" w:line="220" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
               <w:t>Prix Unit. HT</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
+            <w:vAlign w:val="bottom"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:spacing w:after="40"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:spacing w:before="0" w:after="40" w:line="220" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
               <w:t>Mt HT</w:t>
             </w:r>
           </w:p>
@@ -495,22 +597,22 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
       <!-- Ligne d'espacement avant totaux -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="260"/></w:trPr>
-        <w:tc><w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr><w:p/></w:tc>
-        <w:tc><w:tcPr><w:tcW w:w="1350" w:type="dxa"/></w:tcPr><w:p/></w:tc>
-        <w:tc><w:tcPr><w:tcW w:w="1350" w:type="dxa"/></w:tcPr><w:p/></w:tc>
+        <w:trPr><w:trHeight w:val="200"/></w:trPr>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_PU}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_MT}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
       </w:tr>
 
       <!-- Total HT -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="280"/></w:trPr>
+        <w:trPr><w:trHeight w:val="220"/></w:trPr>
         <w:tc>
-          <w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
-          <w:p/>
+          <w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
+          <w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders>
               <w:top w:val="single" w:sz="6" w:space="0" w:color="595959"/>
               <w:left w:val="single" w:sz="6" w:space="0" w:color="595959"/>
@@ -518,16 +620,20 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>Total HT</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders>
               <w:top w:val="single" w:sz="6" w:space="0" w:color="595959"/>
               <w:right w:val="single" w:sz="6" w:space="0" w:color="595959"/>
@@ -535,9 +641,14 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:ind w:right="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:ind w:right="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>${escapeXml(formatFrCurrency(invoice.total_ht))}</w:t>
             </w:r>
           </w:p>
@@ -546,41 +657,53 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
       <!-- IBAN + Total TVA -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="280"/></w:trPr>
+        <w:trPr><w:trHeight w:val="220"/></w:trPr>
         <w:tc>
-          <w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr>
+          <w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr>
           <w:p>
-            <w:pPr><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>IBAN : FR76 4061 8804 8500 0403 9019 162</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders><w:left w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>Total TVA</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders><w:right w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:ind w:right="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:ind w:right="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>${escapeXml(formatFrCurrency(invoice.vat_amount))}</w:t>
             </w:r>
           </w:p>
@@ -589,41 +712,53 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
       <!-- Code BIC + Total TTC -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="280"/></w:trPr>
+        <w:trPr><w:trHeight w:val="220"/></w:trPr>
         <w:tc>
-          <w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr>
+          <w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr>
           <w:p>
-            <w:pPr><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>Code BIC : BOUS FRPP XXX</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders><w:left w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>Total TTC</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders><w:right w:val="single" w:sz="6" w:space="0" w:color="595959"/></w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:ind w:right="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:ind w:right="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>${escapeXml(formatFrCurrency(invoice.total_ttc))}</w:t>
             </w:r>
           </w:p>
@@ -632,14 +767,14 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
       <!-- Acompte -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="280"/></w:trPr>
+        <w:trPr><w:trHeight w:val="220"/></w:trPr>
         <w:tc>
-          <w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
-          <w:p/>
+          <w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
+          <w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders>
               <w:left w:val="single" w:sz="6" w:space="0" w:color="595959"/>
               <w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/>
@@ -647,16 +782,20 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
-              <w:t>Acompte </w:t>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+              <w:t>Acompte</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders>
               <w:right w:val="single" w:sz="6" w:space="0" w:color="595959"/>
               <w:bottom w:val="single" w:sz="6" w:space="0" w:color="595959"/>
@@ -664,9 +803,14 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:ind w:right="80"/><w:spacing w:before="20" w:after="20"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:ind w:right="40"/>
+              <w:spacing w:before="15" w:after="15" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/></w:rPr>
               <w:t>${escapeXml(advanceDisplay)}</w:t>
             </w:r>
           </w:p>
@@ -675,51 +819,60 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
 
       <!-- Espacement avant Net à payer -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="180"/></w:trPr>
-        <w:tc><w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr><w:p/></w:tc>
-        <w:tc><w:tcPr><w:tcW w:w="1350" w:type="dxa"/></w:tcPr><w:p/></w:tc>
-        <w:tc><w:tcPr><w:tcW w:w="1350" w:type="dxa"/></w:tcPr><w:p/></w:tc>
+        <w:trPr><w:trHeight w:val="140"/></w:trPr>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_PU}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="${COL_MT}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p></w:tc>
       </w:tr>
 
       <!-- Net à payer (encadré gras) -->
       <w:tr>
-        <w:trPr><w:trHeight w:val="320"/></w:trPr>
+        <w:trPr><w:trHeight w:val="260"/></w:trPr>
         <w:tc>
-          <w:tcPr><w:tcW w:w="5553" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
-          <w:p/>
+          <w:tcPr><w:tcW w:w="${COL_LEFT_3}" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr>
+          <w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_PU}" w:type="dxa"/>
             <w:tcBorders>
-              <w:top w:val="single" w:sz="12" w:space="0" w:color="595959"/>
-              <w:left w:val="single" w:sz="12" w:space="0" w:color="595959"/>
-              <w:bottom w:val="single" w:sz="12" w:space="0" w:color="595959"/>
+              <w:top w:val="single" w:sz="12" w:space="0" w:color="262626"/>
+              <w:left w:val="single" w:sz="12" w:space="0" w:color="262626"/>
+              <w:bottom w:val="single" w:sz="12" w:space="0" w:color="262626"/>
             </w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:ind w:left="80"/><w:spacing w:before="30" w:after="30"/></w:pPr>
+            <w:pPr>
+              <w:ind w:left="40"/>
+              <w:spacing w:before="20" w:after="20" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="262626"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
-              <w:t>Net à payer </w:t>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="262626"/><w:sz w:val="16"/></w:rPr>
+              <w:t>Net à payer</w:t>
             </w:r>
           </w:p>
         </w:tc>
         <w:tc>
           <w:tcPr>
-            <w:tcW w:w="1350" w:type="dxa"/>
+            <w:tcW w:w="${COL_MT}" w:type="dxa"/>
             <w:tcBorders>
-              <w:top w:val="single" w:sz="12" w:space="0" w:color="595959"/>
-              <w:right w:val="single" w:sz="12" w:space="0" w:color="595959"/>
-              <w:bottom w:val="single" w:sz="12" w:space="0" w:color="595959"/>
+              <w:top w:val="single" w:sz="12" w:space="0" w:color="262626"/>
+              <w:right w:val="single" w:sz="12" w:space="0" w:color="262626"/>
+              <w:bottom w:val="single" w:sz="12" w:space="0" w:color="262626"/>
             </w:tcBorders>
             <w:vAlign w:val="center"/>
           </w:tcPr>
           <w:p>
-            <w:pPr><w:jc w:val="right"/><w:ind w:right="80"/><w:spacing w:before="30" w:after="30"/></w:pPr>
+            <w:pPr>
+              <w:jc w:val="right"/>
+              <w:ind w:right="40"/>
+              <w:spacing w:before="20" w:after="20" w:line="200" w:lineRule="auto"/>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="262626"/><w:sz w:val="16"/></w:rPr>
+            </w:pPr>
             <w:r>
-              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="595959"/><w:sz w:val="18"/></w:rPr>
+              <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="262626"/><w:sz w:val="16"/></w:rPr>
               <w:t>${escapeXml(formatFrCurrency(invoice.net_payable))}</w:t>
             </w:r>
           </w:p>
@@ -727,11 +880,14 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
       </w:tr>
     </w:tbl>
 
-    <w:p><w:pPr><w:spacing w:after="160"/></w:pPr></w:p>
-    <w:p><w:pPr><w:spacing w:after="160"/></w:pPr></w:p>
+    <w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs><w:spacing w:after="60" w:line="276" w:lineRule="auto"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr></w:p>
+    <w:p><w:pPr><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:i/><w:color w:val="006A8E"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
 
     <w:p>
-      <w:pPr><w:jc w:val="both"/></w:pPr>
+      <w:pPr>
+        <w:jc w:val="both"/>
+        <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:i/><w:color w:val="006A8E"/><w:sz w:val="20"/></w:rPr>
+      </w:pPr>
       <w:r>
         <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:i/><w:color w:val="006A8E"/><w:sz w:val="20"/></w:rPr>
         <w:t>Merci de votre confiance !</w:t>
