@@ -11,7 +11,19 @@ import { seedData } from './server/seed.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+function resolvePort(): number {
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    return parseInt(process.argv[portArgIdx + 1], 10);
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return parseInt(process.env.PORT || '3000', 10);
+  }
+  return 3000;
+}
+
+const PORT = resolvePort();
 
 // Initialize SQLite database
 initDatabase();
@@ -62,19 +74,26 @@ async function startServer() {
       });
     }
   } else {
-    const isHmrEnabled = process.env.DISABLE_HMR === 'false';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: isHmrEnabled ? undefined : false,
+        hmr: false,
       },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
+  const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[VP Expertise] App running at http://0.0.0.0:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[VP Expertise] Port ${PORT} is already in use.`);
+    } else {
+      console.error('[VP Expertise] Server error:', err);
+    }
   });
 }
 
