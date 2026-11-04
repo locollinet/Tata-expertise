@@ -13,13 +13,21 @@ import {
   Trash2,
   Percent,
   X,
+  ShieldCheck,
+  CheckCircle2,
+  UploadCloud,
+  FileText,
+  Sparkles,
+  RefreshCw,
+  Search,
+  ExternalLink,
 } from 'lucide-react';
-import { AccountingEntry, RecurringExpense, RecurringFrequency } from '@shared/types.js';
+import { AccountingEntry, RecurringExpense, RecurringFrequency, BankReconciliationReport, BankStatementItem } from '@shared/types.js';
 import { api } from '../api.js';
 
 export const ComptaView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('2026-10');
-  const [activeSubTab, setActiveSubTab] = useState<'livre' | 'recurrents' | 'tva'>('livre');
+  const [activeSubTab, setActiveSubTab] = useState<'livre' | 'recurrents' | 'tva' | 'rapprochement'>('livre');
   const [data, setData] = useState<{
     month: string;
     entries: AccountingEntry[];
@@ -44,6 +52,13 @@ export const ComptaView: React.FC = () => {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Bank Reconciliation IA ("Tout est carré") state
+  const [statementFile, setStatementFile] = useState<File | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciliationReport, setReconciliationReport] = useState<BankReconciliationReport | null>(null);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
+  const [addingEntryId, setAddingEntryId] = useState<string | null>(null);
 
   // Add Entry / Recurring Modal state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -99,6 +114,103 @@ export const ComptaView: React.FC = () => {
     setEntryDate(`${selectedMonth}-15`);
     loadMonthData();
   }, [selectedMonth]);
+
+  // Bank Reconciliation IA Handlers
+  const handleReconcileStatement = async (fileToUse?: File) => {
+    const targetFile = fileToUse || statementFile;
+    if (!targetFile) {
+      setReconcileError("Veuillez sélectionner votre relevé de compte bancaire (PDF ou image).");
+      return;
+    }
+    setReconciling(true);
+    setReconcileError(null);
+    try {
+      const rep = await api.reconcileBankStatement(selectedMonth, targetFile);
+      setReconciliationReport(rep);
+      setFeedback(rep.is_balanced ? "🎉 Tout est carré ! Votre relevé bancaire concorde avec votre compta." : "Rapprochement effectué : vérifiez les dépenses suggérées ci-dessous.");
+    } catch (err: any) {
+      setReconcileError(err.message || "Erreur lors de l'analyse du relevé bancaire");
+    } finally {
+      setReconciling(false);
+    }
+  };
+
+  const handleSimulateStatement = async () => {
+    const fakeContent = `RELEVE DE COMPTE BANCAIRE PROFESSIONNEL - ${selectedMonth}\nSOCIETE GENERALE / AGENCE ASNIERES\nCompte N° 00020194829\nEI VALENTINE PECHEUX\nDate Valeur | Libellé | Débit | Crédit\n`;
+    const blob = new Blob([fakeContent], { type: 'text/plain' });
+    const file = new File([blob], `Releve_Bancaire_${selectedMonth}.pdf`, { type: 'application/pdf' });
+    setStatementFile(file);
+    await handleReconcileStatement(file);
+  };
+
+  const handleAddFromBank = async (item: BankStatementItem) => {
+    setAddingEntryId(item.id);
+    try {
+      let cleanObject = item.raw_label;
+      let cleanParty = 'Fournisseur / CB';
+      const upper = item.raw_label.toUpperCase();
+      if (upper.includes('PEAGE') || upper.includes('APRR') || upper.includes('SANEF') || upper.includes('VINCI')) {
+        cleanObject = 'Péage autoroute';
+        cleanParty = upper.includes('APRR') ? 'APRR' : upper.includes('SANEF') ? 'SANEF' : 'Autoroutes';
+      } else if (upper.includes('PARKING') || upper.includes('INDIGO') || upper.includes('EFFIA')) {
+        cleanObject = 'Parking / Stationnement';
+        cleanParty = upper.includes('INDIGO') ? 'INDIGO' : upper.includes('EFFIA') ? 'EFFIA' : 'Parking';
+      } else if (upper.includes('SNCF')) {
+        cleanObject = 'Billet de train (SNCF)';
+        cleanParty = 'SNCF Voyageurs';
+      } else if (upper.includes('REST') || upper.includes('BRASSERIE')) {
+        cleanObject = 'Repas de déplacement';
+        cleanParty = 'Restaurant';
+      } else if (upper.includes('HOTEL') || upper.includes('IBIS') || upper.includes('ACCOR')) {
+        cleanObject = 'Hôtel / Nuitée déplacement';
+        cleanParty = 'Hôtel';
+      } else if (upper.includes('TAXI') || upper.includes('G7') || upper.includes('UBER')) {
+        cleanObject = 'Course Taxi / VTC';
+        cleanParty = upper.includes('G7') ? 'Taxis G7' : 'Taxi';
+      }
+
+      await api.addAccountingEntryFromBank({
+        month: selectedMonth,
+        date: item.date,
+        object: cleanObject,
+        party: cleanParty,
+        amount_ttc: item.amount,
+        category: item.suggested_category,
+        comment: `Rapproché automatiquement depuis le relevé bancaire : "${item.raw_label}"`,
+      });
+
+      if (reconciliationReport) {
+        setReconciliationReport({
+          ...reconciliationReport,
+          unmatched_bank_count: Math.max(0, reconciliationReport.unmatched_bank_count - 1),
+          matched_count: reconciliationReport.matched_count + 1,
+          is_balanced: reconciliationReport.unmatched_bank_count <= 1,
+          items: reconciliationReport.items.map(it =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  status: 'matched',
+                  matched_entity_type: 'accounting_entry',
+                  matched_entity_label: `${cleanObject} (${cleanParty}) — Ajouté à la compta`,
+                }
+              : it
+          ),
+          summary_message:
+            reconciliationReport.unmatched_bank_count <= 1
+              ? `🎉 Tout est carré ! Les ${reconciliationReport.matched_count + 1} opérations de votre relevé bancaire concordent parfaitement avec votre comptabilité de ${selectedMonth}.`
+              : reconciliationReport.summary_message,
+        });
+      }
+
+      setFeedback(`Écriture « ${cleanObject} » (${item.amount.toFixed(2).replace('.', ',')} €) ajoutée à votre tableau de compta !`);
+      setTimeout(() => setFeedback(null), 4000);
+      loadMonthData();
+    } catch (err: any) {
+      setReconcileError(err.message);
+    } finally {
+      setAddingEntryId(null);
+    }
+  };
 
   // Automatic HT <-> TVA <-> TTC calculation in Add Modal
   const handleHTChange = (val: string, rateMode = entryVatRateMode) => {
@@ -330,6 +442,19 @@ export const ComptaView: React.FC = () => {
           </a>
 
           <button
+            type="button"
+            onClick={() => setActiveSubTab('rapprochement')}
+            className={`inline-flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs font-semibold shadow-2xs transition-colors border ${
+              activeSubTab === 'rapprochement'
+                ? 'bg-emerald-700 text-white border-emerald-800'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            <span>Rapprocher Relevé Bancaire</span>
+          </button>
+
+          <button
             onClick={() => {
               setEntryFrequency('ponctuel');
               setShowAddModal(true);
@@ -442,6 +567,21 @@ export const ComptaView: React.FC = () => {
             >
               <Percent className="w-4 h-4 text-amber-600" />
               <span>Détail & Ventilation de la TVA</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('rapprochement')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center space-x-2 transition-all ${
+                activeSubTab === 'rapprochement'
+                  ? 'bg-[#0f3854] text-white shadow-xs'
+                  : 'text-slate-700 hover:text-[#0f3854] hover:bg-white/60'
+              }`}
+            >
+              <ShieldCheck className={`w-4 h-4 ${activeSubTab === 'rapprochement' ? 'text-emerald-300' : 'text-emerald-600'}`} />
+              <span>Rapprochement Bancaire IA ("Tout est carré")</span>
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-700 border border-emerald-500/30">
+                IA
+              </span>
             </button>
           </div>
 
@@ -770,7 +910,364 @@ export const ComptaView: React.FC = () => {
               </div>
             </div>
           )}
-        </>
+
+          {activeSubTab === 'rapprochement' && (
+            <div className="space-y-6">
+              {/* Entête Rapprochement */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200">
+                        <ShieldCheck className="w-5 h-5" />
+                      </span>
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">
+                          Rapprochement Bancaire IA — « Tout est carré »
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Déposez votre relevé bancaire professionnel ({monthLabels[selectedMonth] || selectedMonth}). L'IA Gemini Flash pointe chaque ligne avec vos factures et votre tableau Excel de compta.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSimulateStatement}
+                      disabled={reconciling}
+                      className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors flex items-center space-x-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Simuler relevé {monthLabels[selectedMonth] || selectedMonth}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Zone de Drag & Drop Relevé */}
+                <div className="mt-5 border-2 border-dashed border-slate-300 hover:border-[#0f3854] bg-slate-50/60 rounded-xl p-6 text-center transition-colors">
+                  <input
+                    type="file"
+                    id="bank-statement-upload"
+                    accept=".pdf,.png,.jpg,.jpeg,.csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setStatementFile(f);
+                        handleReconcileStatement(f);
+                      }
+                    }}
+                  />
+                  <label htmlFor="bank-statement-upload" className="cursor-pointer block">
+                    <div className="w-12 h-12 rounded-full bg-white shadow-2xs border border-slate-200 text-[#0f3854] mx-auto flex items-center justify-center mb-3">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <span className="text-sm font-bold text-slate-800 block">
+                      {statementFile ? statementFile.name : 'Glissez votre relevé de compte bancaire (PDF ou scan)'}
+                    </span>
+                    <span className="text-xs text-slate-500 mt-1 block">
+                      Société Générale, BNP Paribas, BoursoBank, LCL, Crédit Agricole...
+                    </span>
+                    <span className="inline-block mt-3 px-3 py-1 bg-[#0f3854] text-white text-xs font-semibold rounded-lg hover:bg-[#16496d] shadow-2xs">
+                      Parcourir mes fichiers
+                    </span>
+                  </label>
+                </div>
+
+                {reconcileError && (
+                  <div className="mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{reconcileError}</span>
+                  </div>
+                )}
+
+                {reconciling && (
+                  <div className="mt-5 p-6 bg-sky-50 border border-sky-200 rounded-xl text-center space-y-2">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#0f3854] mx-auto"></div>
+                    <p className="text-sm font-bold text-[#0f3854]">
+                      Analyse multimodale Gemini Flash en cours...
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      Extraction des débits/crédits bancaires et lettrage avec vos factures et dépenses de {monthLabels[selectedMonth] || selectedMonth}...
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Rapport de Rapprochement IA */}
+              {reconciliationReport && !reconciling && (
+                <div className="space-y-5">
+                  {/* Bannière de verdict "Tout est carré" */}
+                  <div
+                    className={`p-5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                      reconciliationReport.is_balanced
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-xs'
+                        : 'bg-amber-50 border-amber-300 text-amber-950 shadow-xs'
+                    }`}
+                  >
+                    <div className="flex items-start md:items-center space-x-3.5">
+                      <div
+                        className={`p-2.5 rounded-full ${
+                          reconciliationReport.is_balanced
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-amber-600 text-white shadow-sm'
+                        }`}
+                      >
+                        {reconciliationReport.is_balanced ? (
+                          <CheckCircle2 className="w-6 h-6" />
+                        ) : (
+                          <AlertCircle className="w-6 h-6" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h3 className="text-base font-extrabold tracking-tight">
+                            {reconciliationReport.is_balanced
+                              ? '🎉 TOUT EST CARRÉ !'
+                              : '⚠️ Rapprochement à finaliser'}
+                          </h3>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              reconciliationReport.is_balanced
+                                ? 'bg-emerald-200 text-emerald-900'
+                                : 'bg-amber-200 text-amber-900'
+                            }`}
+                          >
+                            {reconciliationReport.matched_count} / {reconciliationReport.items.length} opérations lettrées
+                          </span>
+                        </div>
+                        <p className="text-xs mt-1 text-slate-700">
+                          {reconciliationReport.summary_message}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="text-[11px] text-slate-500 uppercase font-semibold block">Relevé analysé</span>
+                      <span className="text-xs font-bold text-slate-800">{reconciliationReport.filename}</span>
+                    </div>
+                  </div>
+
+                  {/* 4 KPIs de Rapprochement */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-white p-4 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase">Crédits Relevé (Reçus)</span>
+                      <div className="text-lg font-bold text-emerald-700 mt-1">
+                        + {reconciliationReport.total_bank_credits.toFixed(2).replace('.', ',')} €
+                      </div>
+                      <span className="text-[10px] text-slate-400">Compta : {reconciliationReport.total_book_credits.toFixed(2).replace('.', ',')} €</span>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase">Débits Relevé (Dépenses)</span>
+                      <div className="text-lg font-bold text-rose-700 mt-1">
+                        − {reconciliationReport.total_bank_debits.toFixed(2).replace('.', ',')} €
+                      </div>
+                      <span className="text-[10px] text-slate-400">Compta : {reconciliationReport.total_book_debits.toFixed(2).replace('.', ',')} €</span>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase">Écart de Solde</span>
+                      <div className="text-lg font-bold text-[#0f3854] mt-1">
+                        {reconciliationReport.discrepancy === 0 ? '0,00 € (Nul)' : `${reconciliationReport.discrepancy.toFixed(2).replace('.', ',')} €`}
+                      </div>
+                      <span className="text-[10px] text-slate-400">{reconciliationReport.is_balanced ? 'Balance parfaite' : 'À régulariser'}</span>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase">Statut Fiscal & TVA</span>
+                      <div className="text-lg font-bold text-slate-800 mt-1">
+                        {reconciliationReport.unmatched_bank_count === 0 ? '100% Déductible' : `${reconciliationReport.unmatched_bank_count} en attente`}
+                      </div>
+                      <span className="text-[10px] text-slate-400">Prêt pour l'expert-comptable</span>
+                    </div>
+                  </div>
+
+                  {/* Tableau des opérations bancaires non encore dans la compta (Actions 1-clic) */}
+                  {reconciliationReport.unmatched_bank_count > 0 && (
+                    <div className="bg-white p-5 rounded-2xl border border-amber-200 shadow-2xs space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        <h3 className="text-sm font-bold text-slate-900">
+                          Opérations bancaires détectées mais non saisies dans la compta ({reconciliationReport.unmatched_bank_count})
+                        </h3>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Ces débits apparaissent sur votre compte bancaire mais manquent dans votre tableau Excel. Cliquez sur « Ajouter à la compta » pour que l'IA calcule immédiatement la TVA déductible.
+                      </p>
+
+                      <div className="border border-amber-100 rounded-xl overflow-hidden">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-amber-50/70 border-b border-amber-200 text-slate-700">
+                              <th className="py-2.5 px-3 font-semibold">Date</th>
+                              <th className="py-2.5 px-3 font-semibold">Libellé du relevé de compte</th>
+                              <th className="py-2.5 px-3 font-semibold">Catégorie suggérée</th>
+                              <th className="py-2.5 px-3 font-semibold text-right">Montant TTC</th>
+                              <th className="py-2.5 px-3 font-semibold text-center">Action IA</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-amber-100 bg-white">
+                            {reconciliationReport.items
+                              .filter((it) => it.status === 'unmatched_bank')
+                              .map((it) => (
+                                <tr key={it.id} className="hover:bg-amber-50/40">
+                                  <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                                    {it.date.split('-').reverse().join('/')}
+                                  </td>
+                                  <td className="py-2.5 px-3 font-bold text-slate-900">
+                                    {it.raw_label}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 capitalize">
+                                      {it.suggested_category || 'Dépense'}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-extrabold text-rose-700 whitespace-nowrap">
+                                    − {it.amount.toFixed(2).replace('.', ',')} €
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddFromBank(it)}
+                                      disabled={addingEntryId === it.id}
+                                      className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0f3854] hover:bg-[#16496d] text-white shadow-2xs transition-colors"
+                                    >
+                                      {addingEntryId === it.id ? (
+                                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                      ) : (
+                                        <>
+                                          <Plus className="w-3.5 h-3.5" />
+                                          <span>Ajouter à la compta</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tableau des opérations lettrées (Concordance 100%) */}
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <h3 className="text-sm font-bold text-slate-900">
+                          Opérations lettrées et validées ({reconciliationReport.matched_count})
+                        </h3>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                        100% conforme
+                      </span>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                            <th className="py-2.5 px-3 font-semibold">Date</th>
+                            <th className="py-2.5 px-3 font-semibold">Opération bancaire (Relevé)</th>
+                            <th className="py-2.5 px-3 font-semibold">Écriture compta / Facture correspondante</th>
+                            <th className="py-2.5 px-3 font-semibold text-right">Montant</th>
+                            <th className="py-2.5 px-3 font-semibold text-center">Statut</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {reconciliationReport.items
+                            .filter((it) => it.status === 'matched')
+                            .map((it) => (
+                              <tr key={it.id} className="hover:bg-slate-50/50">
+                                <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                                  {it.date.split('-').reverse().join('/')}
+                                </td>
+                                <td className="py-2.5 px-3 font-medium text-slate-900">
+                                  {it.raw_label}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-700 font-semibold">
+                                  <span className="text-[#0f3854]">{it.matched_entity_label}</span>
+                                </td>
+                                <td
+                                  className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${
+                                    it.type === 'credit' ? 'text-emerald-700' : 'text-slate-800'
+                                  }`}
+                                >
+                                  {it.type === 'credit' ? '+ ' : '− '}
+                                  {it.amount.toFixed(2).replace('.', ',')} €
+                                </td>
+                                <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                  <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                    <span>Lettré</span>
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Tableau des factures en attente d'encaissement */}
+                  {reconciliationReport.unmatched_book_items.length > 0 && (
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <FileText className="w-4 h-4 text-sky-600" />
+                        <h3 className="text-sm font-bold text-slate-900">
+                          Factures ou écritures comptables non encore créditées / débitées ({reconciliationReport.unmatched_book_items.length})
+                        </h3>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Factures d'honoraires en attente de règlement par les assureurs ou dépenses comptables prévues.
+                      </p>
+
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                              <th className="py-2.5 px-3 font-semibold">Date compta</th>
+                              <th className="py-2.5 px-3 font-semibold">Désignation</th>
+                              <th className="py-2.5 px-3 font-semibold">Nature</th>
+                              <th className="py-2.5 px-3 font-semibold text-right">Montant attendu</th>
+                              <th className="py-2.5 px-3 font-semibold text-center">Observation</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {reconciliationReport.unmatched_book_items.map((it) => (
+                              <tr key={it.id} className="hover:bg-slate-50/50">
+                                <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                                  {it.date.split('-').reverse().join('/')}
+                                </td>
+                                <td className="py-2.5 px-3 font-medium text-slate-900">
+                                  {it.label}
+                                </td>
+                                <td className="py-2.5 px-3 capitalize text-slate-600">
+                                  {it.type === 'recette' ? 'Honoraires à encaisser' : 'Charge à débiter'}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-bold text-slate-800 whitespace-nowrap">
+                                  {it.amount.toFixed(2).replace('.', ',')} €
+                                </td>
+                                <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                                    En cours de traitement
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
       )}
 
       {/* Modal : Ajouter une ligne comptable ou un nouvel abonnement récurrent */}

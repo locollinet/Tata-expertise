@@ -6,6 +6,7 @@ import {
   ChevronDown, Smartphone, Mic, Edit3, Archive, RotateCcw
 } from 'lucide-react';
 import { api } from '../api.js';
+import { ACTIVITY_CATEGORY_LABELS, EXPENSE_CATEGORY_LABELS } from '@shared/types.js';
 import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 import { syncFileToLocalMacFolder, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
@@ -819,8 +820,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
                           {act.date.split('-').reverse().join('/')}
                         </td>
-                        <td className="py-2 px-3 text-slate-600 font-medium capitalize">
-                          {act.category.replace('_', ' ')}
+                        <td className="py-2 px-3 text-slate-600 font-medium">
+                          {ACTIVITY_CATEGORY_LABELS[act.category as keyof typeof ACTIVITY_CATEGORY_LABELS] || act.category.replace('_', ' ')}
                         </td>
                         <td className="py-2 px-3 text-slate-900 font-medium">
                           {act.label}
@@ -933,8 +934,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
                           {exp.date.split('-').reverse().join('/')}
                         </td>
-                        <td className="py-2 px-3 text-slate-600 font-medium capitalize">
-                          {exp.category === 'km' ? 'Kilomètres' : exp.category}
+                        <td className="py-2 px-3 text-slate-600 font-medium">
+                          {EXPENSE_CATEGORY_LABELS[exp.category as keyof typeof EXPENSE_CATEGORY_LABELS] || (exp.category === 'km' ? 'Kilomètres' : exp.category)}
                         </td>
                         <td className="py-2 px-3 text-slate-900 font-medium">
                           {exp.label}

@@ -59,23 +59,29 @@ export interface EvidenceItem {
 
 export type ActivityCategory = 
   | 'etude_documents'
-  | 'analyse'
   | 'expertise'
-  | 'visio'
-  | 'reunion'
+  | 'reunion_assureurs'
+  | 'reunion_assure'
   | 'redaction'
   | 'deplacement'
+  // Compatibilité rétroactive
+  | 'analyse'
+  | 'visio'
+  | 'reunion'
   | 'echanges_tel';
 
 export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
-  etude_documents: 'Étude de documents, analyse, gestion du dossier',
-  analyse: 'Analyse de pièces & documents techniques',
-  expertise: 'Expertise contradictoire',
-  visio: 'Visio-conférence',
-  reunion: 'Réunion contradictoire',
-  deplacement: 'Déplacement Expert',
+  etude_documents: 'Étude de documents, gestion du dossier',
+  expertise: 'Expertise',
+  reunion_assureurs: 'Réunion avec les assureurs',
+  reunion_assure: 'Réunion avec l’assuré',
   redaction: 'Rédaction Expert',
-  echanges_tel: 'Échanges téléphoniques & suivi dossier',
+  deplacement: 'Déplacement expert',
+  // Alias de rétrocompatibilité
+  analyse: 'Étude de documents, gestion du dossier',
+  visio: 'Réunion avec les assureurs',
+  reunion: 'Expertise',
+  echanges_tel: 'Étude de documents, gestion du dossier',
 };
 
 export type ActivityStatus = 
@@ -102,14 +108,30 @@ export interface Activity {
 }
 
 export type ExpenseCategory = 
-  | 'km'
   | 'train'
+  | 'km'
+  | 'peage'
   | 'location_voiture'
-  | 'hotel'
   | 'repas'
-  | 'peage_parking'
+  | 'hotel'
+  | 'parking'
   | 'taxi'
-  | 'autre';
+  | 'autre'
+  // Compatibilité rétroactive
+  | 'peage_parking';
+
+export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
+  train: 'Frais de déplacement (train)',
+  km: 'Frais kilométriques',
+  peage: 'Péage',
+  location_voiture: 'Voiture de location',
+  repas: 'Repas',
+  hotel: 'Hôtel',
+  parking: 'Parking',
+  taxi: 'Taxi',
+  autre: 'Autre frais',
+  peage_parking: 'Parking / Péage',
+};
 
 export type ExpenseStatus = 
   | 'a_facturer'
@@ -360,6 +382,47 @@ export interface AccountingEntry {
   frequency?: RecurringFrequency;
   recurring_expense_id?: string | null;
   comment?: string;
+}
+
+export interface BankStatementItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  raw_label: string;
+  amount: number; // Positif (crédit) ou négatif (débit)
+  type: 'credit' | 'debit';
+  status: 'matched' | 'unmatched_bank' | 'unmatched_book';
+  matched_entity_type?: 'invoice' | 'accounting_entry' | 'expense';
+  matched_entity_id?: string;
+  matched_entity_label?: string;
+  suggested_category?: ExpenseCategory | string;
+  confidence?: number;
+}
+
+export interface BankReconciliationReport {
+  id: string;
+  month: string; // YYYY-MM
+  filename: string;
+  generated_at: string;
+  total_bank_credits: number;
+  total_bank_debits: number;
+  total_book_credits: number;
+  total_book_debits: number;
+  discrepancy: number;
+  is_balanced: boolean;
+  matched_count: number;
+  unmatched_bank_count: number;
+  unmatched_book_count: number;
+  items: BankStatementItem[];
+  unmatched_book_items: Array<{
+    id: string;
+    type: 'recette' | 'depense';
+    label: string;
+    amount: number;
+    date: string;
+    invoice_number?: string;
+    mission_code?: string;
+  }>;
+  summary_message: string;
 }
 
 export interface DashboardSummary {

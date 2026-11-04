@@ -1,4 +1,4 @@
-import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary } from '@shared/types.js';
+import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport } from '@shared/types.js';
 
 const BASE_URL = '/api';
 
@@ -212,6 +212,35 @@ export const api = {
   }),
   deleteRecurringExpense: (id: string) => fetchJSON<{ message: string }>(`/compta/recurring/${id}`, {
     method: 'DELETE',
+  }),
+
+  // Rapprochement Bancaire IA ("Tout est carré")
+  reconcileBankStatement: async (month: string, file: File): Promise<BankReconciliationReport> => {
+    const formData = new FormData();
+    formData.append('month', month);
+    formData.append('statement', file);
+    const res = await fetch('/api/compta/bank-reconciliation', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur de rapprochement bancaire (${res.status})`);
+    }
+    return res.json();
+  },
+  addAccountingEntryFromBank: (data: {
+    month: string;
+    date: string;
+    object: string;
+    party: string;
+    amount_ttc: number;
+    vat_rate?: number;
+    category?: string;
+    comment?: string;
+  }) => fetchJSON<{ id: string; message: string }>('/compta/entries-from-bank', {
+    method: 'POST',
+    body: JSON.stringify(data),
   }),
 
   // AI Assistant (Gemini Flash & Ingestion Terrain)

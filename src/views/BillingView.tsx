@@ -159,18 +159,37 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
     const etudeActs = selectedActItems.filter((a: any) => ['etude_documents', 'analyse', 'echanges_tel'].includes(a.category));
     const expActs = selectedActItems.filter((a: any) => ['expertise', 'reunion'].includes(a.category));
-    const visioActs = selectedActItems.filter((a: any) => a.category === 'visio');
+    const reunionAssureursActs = selectedActItems.filter((a: any) => ['reunion_assureurs', 'visio'].includes(a.category));
+    const reunionAssureActs = selectedActItems.filter((a: any) => a.category === 'reunion_assure');
     const depActs = selectedActItems.filter((a: any) => a.category === 'deplacement');
     const redActs = selectedActItems.filter((a: any) => a.category === 'redaction');
 
-    pushActGroup(etudeActs, 'Étude de documents, analyse, gestion du dossier');
-    if (expActs.length > 0) {
-      const lastDate = expActs[expActs.length - 1].date.split('-').reverse().join('/');
-      pushActGroup(expActs, `Expertise contradictoire du ${lastDate}`);
-    }
-    pushActGroup(visioActs, 'Visio-conférence');
-    pushActGroup(depActs, 'Déplacement Expert');
+    // 1. Étude de documents, gestion du dossier
+    pushActGroup(etudeActs, 'Étude de documents, gestion du dossier');
 
+    // 2. Expertise
+    if (expActs.length > 0) {
+      const lastDate = expActs[expActs.length - 1].date ? expActs[expActs.length - 1].date.split('-').reverse().join('/') : '';
+      pushActGroup(expActs, lastDate ? `Expertise du ${lastDate}` : 'Expertise');
+    }
+
+    // 3. Réunion avec les assureurs
+    pushActGroup(reunionAssureursActs, 'Réunion avec les assureurs');
+
+    // 4. Réunion avec l’assuré
+    pushActGroup(reunionAssureActs, 'Réunion avec l’assuré');
+
+    // 5. Déplacement expert
+    pushActGroup(depActs, 'Déplacement expert');
+
+    // 6. Frais de déplacement (train)
+    const trainExps = selectedExpItems.filter((e: any) => e.category === 'train');
+    if (trainExps.length > 0) {
+      const sumTrain = Math.round(trainExps.reduce((s: number, e: any) => s + Number(e.total_ht), 0) * 100) / 100;
+      preview.push({ desc: 'Frais de déplacement (train)', qty: 1, tps: 1, unit: sumTrain, total: sumTrain });
+    }
+
+    // 7. Frais kilométriques
     const kmExps = selectedExpItems.filter((e: any) => e.category === 'km');
     if (kmExps.length > 0) {
       const sumKm = Math.round(kmExps.reduce((s: number, e: any) => s + Number(e.quantity), 0) * 100) / 100;
@@ -178,11 +197,24 @@ export const BillingView: React.FC<BillingViewProps> = ({
       preview.push({ desc: 'Frais kilométriques', qty: sumKm, tps: 1, unit: rate, total: Math.round(sumKm * rate * 100) / 100 });
     }
 
-    const otherExps = selectedExpItems.filter((e: any) => e.category !== 'km');
-    for (const exp of otherExps) {
-      preview.push({ desc: exp.label, qty: 1, tps: 1, unit: exp.total_ht, total: exp.total_ht });
-    }
+    // 8 à 13. Autres frais spécifiques
+    const pushExpGroup = (cats: string[], defaultLabel: string) => {
+      const matching = selectedExpItems.filter((e: any) => cats.includes(e.category));
+      if (matching.length === 0) return;
+      const sum = Math.round(matching.reduce((s: number, e: any) => s + Number(e.total_ht), 0) * 100) / 100;
+      preview.push({ desc: defaultLabel, qty: 1, tps: 1, unit: sum, total: sum });
+    };
 
+    pushExpGroup(['peage'], 'Péage');
+    pushExpGroup(['location_voiture'], 'Voiture de location');
+    pushExpGroup(['repas'], 'Repas');
+    pushExpGroup(['hotel'], 'Hôtel');
+    pushExpGroup(['parking'], 'Parking');
+    pushExpGroup(['taxi'], 'Taxi');
+    pushExpGroup(['peage_parking'], 'Parking / Péage');
+    pushExpGroup(['autre'], 'Autre frais de déplacement');
+
+    // 14. Rédaction Expert
     pushActGroup(redActs, 'Rédaction Expert');
     return preview;
   }, [selectedActItems, selectedExpItems, groupByCategory]);

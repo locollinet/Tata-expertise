@@ -53,7 +53,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [notes, setNotes] = useState('');
 
   // Expense fields
-  const [expCategory, setExpCategory] = useState<'km' | 'train' | 'location_voiture' | 'hotel' | 'repas' | 'peage_parking' | 'taxi' | 'autre'>('km');
+  const [expCategory, setExpCategory] = useState<'train' | 'km' | 'peage' | 'location_voiture' | 'repas' | 'hotel' | 'parking' | 'taxi' | 'autre' | 'peage_parking'>('km');
   const [expLabel, setExpLabel] = useState('Frais kilométriques');
   const [expQty, setExpQty] = useState('1');
   const [expUnitPrice, setExpUnitPrice] = useState('0.95');
@@ -95,14 +95,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const handleExpenseCategoryChange = (newCat: any) => {
     setExpCategory(newCat);
     const defaultLabels: Record<string, string> = {
-      km: 'Frais kilométriques',
       train: 'Frais de déplacement (train)',
-      location_voiture: 'Location de voiture',
-      peage_parking: 'Parking',
-      taxi: 'Taxi',
+      km: 'Frais kilométriques',
+      peage: 'Péage',
+      location_voiture: 'Voiture de location',
       repas: 'Repas',
       hotel: 'Hôtel',
+      parking: 'Parking',
+      taxi: 'Taxi',
       autre: 'Autre frais de mission',
+      peage_parking: 'Parking / Péage',
     };
     setExpLabel(defaultLabels[newCat] || 'Frais de déplacement');
 
@@ -113,8 +115,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       setExpUnitPrice('');
       setExpQty('1');
       setExpVatRate(0);
-    } else if (newCat === 'repas' || newCat === 'hotel') {
-      setExpUnitPrice(newCat === 'repas' ? '25.00' : '');
+    } else if (newCat === 'peage' || newCat === 'parking' || newCat === 'location_voiture' || newCat === 'peage_parking') {
+      setExpUnitPrice('');
+      setExpQty('1');
+      setExpVatRate(0.20);
+    } else if (newCat === 'repas') {
+      setExpUnitPrice('25.00');
+      setExpQty('1');
+      setExpVatRate(0.10);
+    } else if (newCat === 'hotel' || newCat === 'taxi') {
+      setExpUnitPrice('');
       setExpQty('1');
       setExpVatRate(0.10);
     } else {
@@ -443,13 +453,12 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                     onChange={(e: any) => setCategory(e.target.value)}
                     className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-800"
                   >
-                    <option value="etude_documents">Étude de documents, analyse, gestion du dossier</option>
-                    <option value="expertise">Expertise contradictoire (sur site)</option>
-                    <option value="visio">Visio-conférence</option>
-                    <option value="deplacement">Déplacement Expert (taux trajet)</option>
-                    <option value="redaction">Rédaction Expert (rapport / note)</option>
-                    <option value="echanges_tel">Échanges téléphoniques & suivi</option>
-                    <option value="analyse">Analyse de pièces techniques</option>
+                    <option value="etude_documents">Étude de documents, gestion du dossier</option>
+                    <option value="expertise">Expertise</option>
+                    <option value="reunion_assureurs">Réunion avec les assureurs</option>
+                    <option value="reunion_assure">Réunion avec l’assuré</option>
+                    <option value="redaction">Rédaction Expert</option>
+                    <option value="deplacement">Déplacement expert (taux trajet)</option>
                   </select>
                 </div>
 
@@ -531,15 +540,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   <select
                     value={expCategory}
                     onChange={(e: any) => handleExpenseCategoryChange(e.target.value)}
-                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium"
+                    className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-800"
                   >
-                    <option value="km">Frais kilométriques ({selectedMission?.custom_km_rate || 0.95} €/km)</option>
                     <option value="train">Frais de déplacement (train)</option>
-                    <option value="location_voiture">Location de voiture</option>
-                    <option value="peage_parking">Parking / Péages</option>
-                    <option value="taxi">Taxi / VTC</option>
+                    <option value="km">Frais kilométriques ({selectedMission?.custom_km_rate || 0.95} €/km)</option>
+                    <option value="peage">Péage</option>
+                    <option value="location_voiture">Voiture de location</option>
                     <option value="repas">Repas</option>
-                    <option value="hotel">Hôtel / Hébergement</option>
+                    <option value="hotel">Hôtel</option>
+                    <option value="parking">Parking</option>
+                    <option value="taxi">Taxi</option>
                     <option value="autre">Autre frais</option>
                   </select>
                 </div>
