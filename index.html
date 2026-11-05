@@ -1,6 +1,57 @@
 <!doctype html>
 <html lang="fr">
   <head>
+    <script>
+      (function() {
+        // HMR: Disabled. Ignore WebSocket errors per environment constraints.
+        window.addEventListener('unhandledrejection', function(event) {
+          var r = event.reason;
+          var msg = (r && (r.message || r.stack || String(r))) || '';
+          if (msg.includes('WebSocket') || msg.includes('ws') || (r && r.stack && r.stack.includes('@vite/client'))) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('error', function(event) {
+          var msg = event.message || '';
+          var fn = event.filename || '';
+          if (msg.includes('WebSocket') || fn.includes('@vite/client')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          var OrigWS = window.WebSocket;
+          window.WebSocket = function(url, protocols) {
+            var isHmr = (typeof protocols === 'string' && protocols.includes('vite-hmr')) ||
+                        (Array.isArray(protocols) && protocols.includes('vite-hmr')) ||
+                        (typeof url === 'string' && (url.includes('token=') || url.includes('vite')));
+            if (isHmr) {
+              var target = new EventTarget();
+              target.readyState = 1;
+              target.url = url;
+              target.protocol = 'vite-hmr';
+              target.bufferedAmount = 0;
+              target.send = function() {};
+              target.close = function() {
+                target.readyState = 3;
+                target.dispatchEvent(new Event('close'));
+              };
+              setTimeout(function() {
+                target.dispatchEvent(new Event('open'));
+              }, 0);
+              return target;
+            }
+            return new OrigWS(url, protocols);
+          };
+          window.WebSocket.prototype = OrigWS.prototype;
+          window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+          window.WebSocket.OPEN = OrigWS.OPEN;
+          window.WebSocket.CLOSING = OrigWS.CLOSING;
+          window.WebSocket.CLOSED = OrigWS.CLOSED;
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />

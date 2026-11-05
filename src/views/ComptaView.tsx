@@ -1268,6 +1268,7 @@ export const ComptaView: React.FC = () => {
               )}
             </div>
           )}
+        </>
       )}
 
       {/* Modal : Ajouter une ligne comptable ou un nouvel abonnement récurrent */}

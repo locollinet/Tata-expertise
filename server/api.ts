@@ -2718,7 +2718,8 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
 // Commit action validated by user in ActionPreviewCard
 apiRouter.post('/assistant/commit-action', (req, res) => {
   try {
-    const { action_type, mission_id, payload, filename, original_name } = req.body;
+    const { action_type, payload, filename, original_name } = req.body;
+    const mission_id = req.body.mission_id || req.body.matched_mission_id;
     if (!action_type) {
       return res.status(400).json({ error: "Type d'action requis." });
     }

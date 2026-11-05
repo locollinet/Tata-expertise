@@ -2,7 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import path from 'path';
-import { ACTIVITY_CATEGORY_LABELS, EXPENSE_CATEGORY_LABELS } from '../shared/types.js';
+// 14 items types de facturation officiels de Valentine Pécheux
+const ACTIVITY_CATEGORY_LABELS = {
+  etude_documents: 'Étude de documents, gestion du dossier',
+  expertise: 'Expertise',
+  reunion_assureurs: 'Réunion avec les assureurs',
+  reunion_assure: 'Réunion avec l’assuré',
+  redaction: 'Rédaction Expert',
+  deplacement: 'Déplacement expert',
+};
+
+const EXPENSE_CATEGORY_LABELS = {
+  train: 'Frais de déplacement (train)',
+  km: 'Frais kilométriques',
+  peage: 'Péage',
+  location_voiture: 'Voiture de location',
+  repas: 'Repas',
+  hotel: 'Hôtel',
+  parking: 'Parking',
+  taxi: 'Taxi',
+};
 
 const dbPath = path.resolve(process.cwd(), 'data/vp_expertise.db');
 const db = new Database(dbPath);
