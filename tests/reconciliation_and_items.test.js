@@ -103,3 +103,49 @@ test('Personnalité et identité de l’assistant IA : nommé Rocco et bienveill
   assert.ok(roccoGreeting.includes("Rocco"), "L'assistant doit se présenter comme Rocco");
   assert.ok(roccoGreeting.includes("Valentine"), "L'assistant doit s'adresser respectueusement à Valentine");
 });
+
+test('Parsing déterministe d’un relevé bancaire textuel/CSV et lettrage avec factures', () => {
+  const statementText = `
+Date | Libelle des Operations | Debit | Credit
+2026-10-05 | PRLV SEPA SANEF PEAGE A1 TELEPEAGE | 42.80 |
+2026-10-08 | CB SNCF INTERCITES VOYAGE PARIS AMIENS | 58.40 |
+2026-10-18 | VIR SEPA AXA ASSURANCES INDEMNITE REF 2026-097 | | 2825.16
+  `.trim();
+
+  const lines = statementText.split('\n');
+  const parsed = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || (trimmed.toLowerCase().includes('date') && trimmed.toLowerCase().includes('libell'))) continue;
+    if (trimmed.includes('|')) {
+      const parts = trimmed.split('|').map(p => p.trim());
+      if (parts.length >= 3) {
+        const date = parts[0];
+        const label = parts[1];
+        const debit = parts[2] ? parseFloat(parts[2].replace(',', '.')) : 0;
+        const credit = parts[3] ? parseFloat(parts[3].replace(',', '.')) : 0;
+        if (label && (debit > 0 || credit > 0)) {
+          parsed.push({
+            date,
+            raw_label: label,
+            amount: credit > 0 ? credit : debit,
+            type: credit > 0 ? 'credit' : 'debit',
+          });
+        }
+      }
+    }
+  }
+
+  assert.equal(parsed.length, 3, 'Les 3 lignes de relevé bancaire doivent être extraites');
+  assert.equal(parsed[0].type, 'debit');
+  assert.equal(parsed[0].amount, 42.80);
+  assert.equal(parsed[2].type, 'credit');
+  assert.equal(parsed[2].amount, 2825.16);
+
+  // Lettrage de la ligne de crédit avec la facture 2026-097
+  const invoice = db.prepare('SELECT * FROM invoices WHERE invoice_number = ?').get('2026-097');
+  assert.ok(invoice, 'La facture 2026-097 existe');
+  assert.equal(parsed[2].amount, invoice.total_ttc);
+  assert.ok(parsed[2].raw_label.includes(invoice.invoice_number));
+});
+

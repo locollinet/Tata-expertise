@@ -324,6 +324,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         title: missionTitleEdit.trim(),
         insurance_client: clientName.trim(),
         case_reference: clientRef.trim(),
+        client_contact: clientContact.trim(),
         insurer_contact: clientContact.trim(),
         billing_address: billingAddress.trim(),
         insured_party: insuredParty.trim(),

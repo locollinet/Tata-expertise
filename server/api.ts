@@ -2087,17 +2087,15 @@ apiRouter.post('/compta/bank-reconciliation', upload.single('statement'), async 
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-3.1-flash-lite',
-        'gemini-3.5-flash',
         'gemini-3.8-flash',
+        'gemini-3.1-flash-lite',
         'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
       const fileBuffer = fs.readFileSync(file.path);
-      let mimeType = file.mimetype;
-      if (file.originalname.endsWith('.pdf')) mimeType = 'application/pdf';
-      else if (/\.(jpg|jpeg|png|webp|heic)$/i.test(file.originalname)) mimeType = file.mimetype || 'image/jpeg';
-      else if (file.originalname.endsWith('.csv')) mimeType = 'text/plain';
+      const isRealPdf = fileBuffer.length >= 4 && fileBuffer.subarray(0, 4).toString() === '%PDF';
+      const isImage = file.mimetype.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic)$/i.test(file.originalname);
+      const isBinaryMedia = isRealPdf || isImage;
 
       const prompt = `Tu es un expert-comptable spécialisé dans le pointage et le rapprochement de relevés bancaires professionnels français (Société Générale, BNP Paribas, BoursoBank, Crédit Agricole, LCL, etc.) pour le cabinet VP EXPERTISE de Valentine Pécheux.
 Mois concerné : ${month}.
@@ -2123,33 +2121,60 @@ Renvoie UNIQUEMENT un JSON valide au format :
 
       const ai = new GoogleGenAI({
         apiKey,
-        httpOptions: { apiVersion: 'v1alpha' },
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
       });
+
+      // Construction des parties selon la nature réelle du fichier
+      let parts: any[] = [];
+      if (isBinaryMedia) {
+        const mediaMimeType = isRealPdf
+          ? 'application/pdf'
+          : (file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg');
+        parts = [
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType: mediaMimeType,
+              data: fileBuffer.toString('base64'),
+            },
+          },
+        ];
+      } else {
+        // Fichier texte, CSV ou simulation : passé en texte pour éviter toute erreur de décodage inlineData
+        const textContent = fileBuffer.toString('utf-8');
+        parts = [
+          {
+            text: `${prompt}\n\n=== RELEVÉ DE COMPTE FOURNI ===\n${textContent}`,
+          },
+        ];
+      }
 
       for (const mName of candidateModels) {
         try {
           const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Timeout Gemini Bank Statement ${mName} (> 25000ms)`)), 25000)
           );
+
+          const config: any = {
+            responseMimeType: 'application/json',
+          };
+          if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
+            config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+          }
+
           const generatePromise = ai.models.generateContent({
             model: mName,
             contents: [
               {
                 role: 'user',
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: fileBuffer.toString('base64'),
-                    },
-                  },
-                ],
+                parts,
               },
             ],
-            config: {
-              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            },
+            config,
           });
 
           const result: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -2163,6 +2188,54 @@ Renvoie UNIQUEMENT un JSON valide au format :
         } catch (err: any) {
           console.warn(`[Bank Reconciliation] Modèle ${mName} indisponible :`, err.message);
         }
+      }
+    }
+
+    // Heuristique de parsing direct si fichier texte/CSV avec lignes tabulées ou séparées par des pipes
+    if (extractedLines.length === 0 && file) {
+      try {
+        const rawContent = fs.readFileSync(file.path, 'utf-8');
+        const lines = rawContent.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#') || (trimmed.toLowerCase().includes('date') && trimmed.toLowerCase().includes('libell'))) continue;
+          if (trimmed.includes('|')) {
+            const parts = trimmed.split('|').map(p => p.trim());
+            if (parts.length >= 3) {
+              const dateMatch = parts[0].match(/\d{4}-\d{2}-\d{2}/) || parts[0].match(/\d{2}\/\d{2}\/\d{4}/);
+              const label = parts[1];
+              const debit = parts[2] ? parseFloat(parts[2].replace(',', '.')) : 0;
+              const credit = parts[3] ? parseFloat(parts[3].replace(',', '.')) : 0;
+              if (label && (!isNaN(debit) || !isNaN(credit)) && (debit > 0 || credit > 0)) {
+                let dateStr = parts[0];
+                if (dateMatch) {
+                  if (dateMatch[0].includes('/')) {
+                    const [d, m, y] = dateMatch[0].split('/');
+                    dateStr = `${y}-${m}-${d}`;
+                  } else {
+                    dateStr = dateMatch[0];
+                  }
+                }
+                const isCredit = (credit || 0) > 0;
+                extractedLines.push({
+                  date: dateStr,
+                  raw_label: label,
+                  amount: isCredit ? (credit || 0) : (debit || 0),
+                  type: isCredit ? 'credit' : 'debit',
+                  suggested_category: label.toLowerCase().includes('peage') ? 'peage'
+                    : label.toLowerCase().includes('sncf') ? 'train'
+                    : label.toLowerCase().includes('indigo') || label.toLowerCase().includes('parking') ? 'parking'
+                    : label.toLowerCase().includes('restaurant') || label.toLowerCase().includes('relais') ? 'repas'
+                    : label.toLowerCase().includes('urssaf') ? 'urssaf'
+                    : label.toLowerCase().includes('axa') || label.toLowerCase().includes('allianz') ? 'recette'
+                    : 'autre',
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // Fallback déterministe ci-dessous
       }
     }
 
@@ -2742,9 +2815,8 @@ Consignes :
   if (apiKey) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash',
       'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
 
@@ -2771,17 +2843,22 @@ Consignes :
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Timeout Gemini ${model} (> 20000ms)`)), 20000)
         );
+
+        const config: any = {
+          systemInstruction: "Tu t'appelles Rocco. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
+            "Tu es particulièrement agréable, chaleureux, bienveillant, prévenant, poli et rassurant avec Valentine. Tu l'appelles affectueusement et respectueusement 'Valentine'. " +
+            "Tu l'assistes avec enthousiasme et plaisir sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), son rapprochement bancaire ('tout est carré') et ses rapports d'expertise. " +
+            "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats, et des relevés bancaires pour pointer les comptes. " +
+            "RÈGLE D'EXACTITUDE & STYLE : Réponds avec professionnalisme, élégance, bienveillance et clarté en français. Ne sois jamais froid ni sec. Fais tout pour lui simplifier la vie et lui apporter sérénité.",
+        };
+        if (model.startsWith('gemini-3') || model.startsWith('gemini-4')) {
+          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+        }
+
         const generatePromise = ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-          config: {
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            systemInstruction: "Tu t'appelles Rocco. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
-              "Tu es particulièrement agréable, chaleureux, bienveillant, prévenant, poli et rassurant avec Valentine. Tu l'appelles affectueusement et respectueusement 'Valentine'. " +
-              "Tu l'assistes avec enthousiasme et plaisir sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), son rapprochement bancaire ('tout est carré') et ses rapports d'expertise. " +
-              "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats, et des relevés bancaires pour pointer les comptes. " +
-              "RÈGLE D'EXACTITUDE & STYLE : Réponds avec professionnalisme, élégance, bienveillance et clarté en français. Ne sois jamais froid ni sec. Fais tout pour lui simplifier la vie et lui apporter sérénité.",
-          },
+          config,
         });
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -2915,13 +2992,15 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-3.1-flash-lite',
-        'gemini-3.5-flash',
         'gemini-3.8-flash',
+        'gemini-3.1-flash-lite',
         'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
       const fileBuffer = fs.readFileSync(file.path);
+      const isRealPdf = fileBuffer.length >= 4 && fileBuffer.subarray(0, 4).toString() === '%PDF';
+      const isBinaryMedia = isAudio || isRealPdf || isImage;
+
       let mimeType = file.mimetype;
       if (isAudio) {
         if (file.originalname.endsWith('.mp3')) mimeType = 'audio/mp3';
@@ -2929,7 +3008,7 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
         else if (file.originalname.endsWith('.ogg')) mimeType = 'audio/ogg';
         else if (file.originalname.endsWith('.m4a')) mimeType = 'audio/mp4';
         else if (!mimeType || !mimeType.startsWith('audio/')) mimeType = 'audio/webm';
-      } else if (file.mimetype === 'application/pdf') {
+      } else if (isRealPdf) {
         mimeType = 'application/pdf';
       } else if (isImage) {
         mimeType = file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg';
@@ -2998,30 +3077,47 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
         },
       });
 
+      let parts: any[] = [];
+      if (isBinaryMedia) {
+        parts = [
+          { text: systemPrompt },
+          {
+            inlineData: {
+              mimeType,
+              data: fileBuffer.toString('base64'),
+            },
+          },
+        ];
+      } else {
+        parts = [
+          {
+            text: `${systemPrompt}\n\n=== CONTENU DU FICHIER FOURNI ===\n${fileBuffer.toString('utf-8')}`,
+          },
+        ];
+      }
+
       for (const mName of candidateModels) {
         try {
           const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> 20000ms)`)), 20000)
           );
+
+          const config: any = {
+            responseMimeType: 'application/json',
+          };
+          if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
+            config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+          }
+
           const generatePromise = ai.models.generateContent({
             model: mName,
             contents: [
               {
                 role: 'user',
-                parts: [
-                  { text: systemPrompt },
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: fileBuffer.toString('base64'),
-                    },
-                  },
-                ],
+                parts,
               },
             ],
-            config: {
-              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            },
+            config,
           });
 
           const result: any = await Promise.race([generatePromise, timeoutPromise]);

@@ -73,6 +73,7 @@ export interface Mission {
   status: MissionStatus;
   insurance_client: string; // Client (facturé) Ex: AXA XL
   client_contact?: string; // Interlocuteur client Ex: Yannick DELAUNAY
+  insurer_contact?: string; // Interlocuteur client / assureur (alias)
   insured_party?: string; // Assuré Ex: ALSTOM
   insured_reference?: string; // Réf. Assuré
   broker_name?: string; // Courtier

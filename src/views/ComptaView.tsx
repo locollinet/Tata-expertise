@@ -141,9 +141,22 @@ export const ComptaView: React.FC = () => {
   };
 
   const handleSimulateStatement = async () => {
-    const fakeContent = `RELEVE DE COMPTE BANCAIRE PROFESSIONNEL - ${selectedMonth}\nSOCIETE GENERALE / AGENCE ASNIERES\nCompte N° 00020194829\nEI VALENTINE PECHEUX\nDate Valeur | Libellé | Débit | Crédit\n`;
-    const blob = new Blob([fakeContent], { type: 'text/plain' });
-    const file = new File([blob], `Releve_Bancaire_${selectedMonth}.pdf`, { type: 'application/pdf' });
+    const fakeContent = `RELEVE DE COMPTE BANCAIRE PROFESSIONNEL - ${selectedMonth}
+SOCIETE GENERALE - Agence Professionnels Asnieres
+Titulaire : EI VALENTINE PECHEUX - Cabinet VP EXPERTISE
+Compte N° FR76 3000 3012 3456 7890 1234 567
+
+Date | Libelle des Operations | Debit | Credit
+${selectedMonth}-05 | PRLV SEPA SANEF PEAGE A1 TELEPEAGE | 42.80 |
+${selectedMonth}-08 | CB SNCF INTERCITES VOYAGE PARIS AMIENS | 58.40 |
+${selectedMonth}-12 | CB RESTAURANT LE RELAIS DU CHEMINOT | 34.50 |
+${selectedMonth}-14 | PRLV URSSAF ILE DE FRANCE COTISATIONS | 1140.00 |
+${selectedMonth}-18 | VIR SEPA AXA ASSURANCES INDEMNITE REF 2026-097 | | 2825.16
+${selectedMonth}-20 | CB STATIONNEMENT INDIGO GARE AMIENS | 18.00 |
+${selectedMonth}-25 | PRLV ORANGE TELECOM PRO INTERNET FIBRE | 49.99 |
+`;
+    const blob = new Blob([fakeContent], { type: 'text/csv' });
+    const file = new File([blob], `Releve_Bancaire_${selectedMonth}.csv`, { type: 'text/csv' });
     setStatementFile(file);
     await handleReconcileStatement(file);
   };
