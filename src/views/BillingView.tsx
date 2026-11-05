@@ -45,6 +45,11 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [groupByCategory, setGroupByCategory] = useState(true);
   const [subject, setSubject] = useState('');
   const [advanceAmount, setAdvanceAmount] = useState('0');
+  const [enableCoInsurance, setEnableCoInsurance] = useState(false);
+  const [coInsurers, setCoInsurers] = useState<Array<{ name: string; percentage: number; ref: string }>>([
+    { name: '', percentage: 50, ref: '' },
+    { name: '', percentage: 50, ref: '' },
+  ]);
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
   const [registerFilter, setRegisterFilter] = useState<string | 'all'>(initialMissionCode || 'all');
@@ -264,6 +269,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
     }
 
     try {
+      const splitPayload = enableCoInsurance
+        ? coInsurers.filter(c => c.name.trim()).map(c => {
+            const pct = Number(c.percentage) || 0;
+            return {
+              name: c.name.trim(),
+              percentage: pct,
+              ref: c.ref.trim(),
+              amount_ht: Math.round((calculatedHT * pct) / 100 * 100) / 100,
+              net_payable: Math.round((calculatedNetPayable * pct) / 100 * 100) / 100,
+            };
+          })
+        : null;
+
       const res = await api.prepareInvoice({
         mission_id: selectedMissionId,
         activity_ids: selectedActivities,
@@ -271,7 +289,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
         subject,
         advance_amount: parsedAdvance,
         group_by_category: groupByCategory,
-      });
+        split_details: splitPayload,
+      } as any);
       setPrepSuccess(
         `${res.message} (N° ${res.nextNum} — ${res.netPayable.toFixed(2).replace('.', ',')} € TTC). Vous pouvez télécharger le Word (.docx) ou ajuster les lignes dans le registre ci-dessous.`
       );
@@ -734,6 +753,91 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 />
               </div>
 
+              {/* Co-assurance & Répartition multi-payeurs */}
+              <div className="pt-2 border-t border-slate-200 space-y-2">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableCoInsurance}
+                    onChange={(e) => setEnableCoInsurance(e.target.checked)}
+                    className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
+                  />
+                  <span className="text-[11px] font-bold text-slate-700">
+                    Co-assurance / Répartition multi-payeurs
+                  </span>
+                </label>
+
+                {enableCoInsurance && (
+                  <div className="p-3 bg-white rounded-xl border border-sky-200 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span className="font-semibold text-slate-700">Compagnies co-assureurs :</span>
+                      <button
+                        type="button"
+                        onClick={() => setCoInsurers(prev => [...prev, { name: '', percentage: 0, ref: '' }])}
+                        className="text-[#0f3854] font-bold hover:underline"
+                      >
+                        + Ajouter un co-assureur
+                      </button>
+                    </div>
+
+                    {coInsurers.map((co, idx) => (
+                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                        <input
+                          type="text"
+                          placeholder="Nom (ex: HELVETIA)"
+                          value={co.name}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, name: val } : item));
+                          }}
+                          className="col-span-5 p-1.5 text-xs border border-slate-300 rounded bg-slate-50 font-semibold"
+                        />
+                        <div className="col-span-3 flex items-center space-x-0.5">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            placeholder="%"
+                            value={co.percentage || ''}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, percentage: val } : item));
+                            }}
+                            className="w-full p-1.5 text-xs border border-slate-300 rounded bg-slate-50 text-right font-bold"
+                          />
+                          <span className="text-[10px] text-slate-500 font-bold">%</span>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Réf"
+                          value={co.ref}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, ref: val } : item));
+                          }}
+                          className="col-span-3 p-1.5 text-xs border border-slate-300 rounded bg-slate-50 font-mono text-[10px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setCoInsurers(prev => prev.filter((_, i) => i !== idx))}
+                          className="col-span-1 text-slate-400 hover:text-rose-600 text-center font-bold"
+                          title="Supprimer"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+
+                    <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                      <span className="text-slate-500">Total quotes-parts :</span>
+                      <span className={`font-bold ${coInsurers.reduce((s, c) => s + (Number(c.percentage) || 0), 0) === 100 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {coInsurers.reduce((s, c) => s + (Number(c.percentage) || 0), 0)} %
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Totals summary breakdown */}
               <div className="pt-3 border-t border-slate-200 space-y-1.5 text-xs">
                 <div className="flex justify-between text-slate-600">
@@ -899,7 +1003,12 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-slate-700">
-                        {inv.client_name}
+                        <div className="font-medium">{inv.client_name}</div>
+                        {inv.split_details && (
+                          <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mt-0.5">
+                            Co-assurance
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-700">
                         {inv.total_ht.toFixed(2).replace('.', ',')} €

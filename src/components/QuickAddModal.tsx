@@ -165,7 +165,55 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       } else if (tab === 'expense') {
         if (parsedUnitPrice <= 0) throw new Error("Le montant unitaire doit être supérieur à zéro");
 
-        if (receiptFile) {
+        if (missionId === 'CABINET') {
+          // Frais généraux de cabinet hors dossier d'expertise -> écriture directe dans le livre comptable
+          if (receiptFile) {
+            const formData = new FormData();
+            formData.append('month', date.slice(0, 7));
+            formData.append('date', date);
+            formData.append('type', 'depense');
+            formData.append('object', expLabel.trim() || 'Frais généraux cabinet');
+            formData.append('party', 'Fournisseur / Déplacement');
+            formData.append('amount_ht', String(calculatedExpenseHT));
+            formData.append('vat_rate', String(expVatRate));
+            formData.append('vat_amount', String(calculatedExpenseTVA));
+            formData.append('amount_ttc', String(calculatedExpenseTTC));
+            formData.append('receipt', receiptFile);
+
+            const res = await fetch('/api/compta/entries', {
+              method: 'POST',
+              body: formData,
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || "Erreur lors de l'enregistrement de la dépense comptable");
+            }
+
+            await syncComptaFileToMac({
+              month: date.slice(0, 7),
+              subFolder: 'Justificatifs',
+              fileName: `${date}_Cabinet_${receiptFile.name}`,
+              data: receiptFile,
+            });
+          } else {
+            await api.addAccountingEntry({
+              month: date.slice(0, 7),
+              date,
+              type: 'depense',
+              object: expLabel.trim() || 'Frais généraux cabinet',
+              party: 'Fournisseur / Déplacement',
+              amount_ht: calculatedExpenseHT,
+              vat_rate: expVatRate,
+              vat_amount: calculatedExpenseTVA,
+              amount_ttc: calculatedExpenseTTC,
+            });
+          }
+
+          if (keepOpen) {
+            setReceiptFile(null);
+            setSuccessFeedback("Dépense générale enregistrée dans le livre comptable du cabinet !");
+          }
+        } else if (receiptFile) {
           const formData = new FormData();
           formData.append('mission_id', missionId);
           formData.append('date', date);
@@ -204,7 +252,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           });
         }
 
-        if (keepOpen) {
+        if (keepOpen && missionId !== 'CABINET') {
           setExpUnitPrice(expCategory === 'km' ? String(selectedMission?.custom_km_rate || 0.95) : '');
           setReceiptFile(null);
           setSuccessFeedback(`Frais enregistré sur ${selectedMission?.code || 'le dossier'} ! Prêt pour le suivant.`);
@@ -425,6 +473,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
               required
               className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-900"
             >
+              {tab === 'expense' && (
+                <option value="CABINET" className="font-bold text-[#0f3854] bg-sky-50">
+                  🏢 Dépense générale de cabinet (Hors dossier d'expertise)
+                </option>
+              )}
               {filteredMissions.length === 0 ? (
                 <option value="">Aucun dossier trouvé pour « {missionSearch} »</option>
               ) : (
@@ -436,6 +489,40 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 ))
               )}
             </select>
+
+            {/* Pastilles d'accès rapide aux 3 dossiers récents */}
+            {missions.length > 0 && (
+              <div className="pt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-slate-400 font-medium">Accès rapide :</span>
+                {tab === 'expense' && (
+                  <button
+                    type="button"
+                    onClick={() => setMissionId('CABINET')}
+                    className={`px-2 py-0.5 rounded-md border text-[10px] font-bold transition-colors ${
+                      missionId === 'CABINET'
+                        ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                        : 'bg-white text-[#0f3854] border-sky-200 hover:bg-sky-50'
+                    }`}
+                  >
+                    🏢 Cabinet
+                  </button>
+                )}
+                {missions.filter(m => m.status !== 'cloture').slice(0, 3).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setMissionId(m.id)}
+                    className={`px-2 py-0.5 rounded-md border text-[10px] font-mono font-bold transition-colors ${
+                      missionId === m.id
+                        ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {m.code}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Date */}

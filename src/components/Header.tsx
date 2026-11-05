@@ -165,14 +165,14 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
               title={
                 syncFolderName
-                  ? `Synchronisé avec votre Mac (${syncFolderName})${syncLastPath ? ` — Dernier fichier : ${syncLastPath}` : ''}`
-                  : "Cliquez pour relier un dossier de votre Finder Mac"
+                  ? `Sauvegarde active sur votre Mac (${syncFolderName})${syncLastPath ? ` — Dernier fichier : ${syncLastPath}` : ''}`
+                  : "Relier un dossier de votre Finder Mac pour une double sauvegarde automatique"
               }
             >
               <span className={`w-2 h-2 rounded-full shrink-0 ${syncFolderName ? 'bg-emerald-500 animate-pulse' : 'bg-sky-500'}`}></span>
               <FolderSync className={`w-3.5 h-3.5 shrink-0 ${syncFolderName ? 'text-emerald-600' : 'text-sky-600'}`} />
               <span className="hidden lg:inline">
-                {syncFolderName ? `✓ Synchronisé Mac (${syncFolderName})` : 'Connecter Finder Mac'}
+                {syncFolderName ? `✓ Sauvegardé Mac (${syncFolderName})` : 'Sauvegarde Finder Mac'}
               </span>
             </button>
 

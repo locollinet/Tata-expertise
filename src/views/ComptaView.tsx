@@ -31,6 +31,7 @@ import { syncComptaFileToMac, isLocalSyncConnected, getLocalSyncFolderName } fro
 export const ComptaView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('2026-10');
   const [activeSubTab, setActiveSubTab] = useState<'livre' | 'recurrents' | 'tva' | 'rapprochement'>('livre');
+  const [receiptFilter, setReceiptFilter] = useState<'all' | 'missing'>('all');
   const [data, setData] = useState<{
     month: string;
     entries: AccountingEntry[];
@@ -697,51 +698,109 @@ ${selectedMonth}-25 | PRLV ORANGE TELECOM PRO INTERNET FIBRE | 49.99 |
                 </button>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-900">
-                    Livre des recettes et dépenses — {monthLabels[selectedMonth] || selectedMonth} ({data.entries.length})
-                  </h2>
-                  <p className="text-[11px] text-slate-400">
-                    Cliquez sur « + Justif » pour joindre un reçu ou sur l'icône crayon pour ajuster un montant.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('recurrents')}
-                  className="text-xs font-semibold text-[#0f3854] hover:underline inline-flex items-center space-x-1"
-                >
-                  <Repeat className="w-3.5 h-3.5" />
-                  <span>Gérer mes abonnements mensuels / annuels →</span>
-                </button>
-              </div>
+              {/* Barre de filtrage & Justificatifs manquants */}
+              {(() => {
+                const missingCount = data.entries.filter(e => e.type === 'depense' && !e.receipt_filename).length;
+                const displayedEntries = data.entries.filter(e => {
+                  if (receiptFilter === 'missing') {
+                    return e.type === 'depense' && !e.receipt_filename;
+                  }
+                  return true;
+                });
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
-                      <th className="py-2.5 px-2.5 font-semibold">Date</th>
-                      <th className="py-2.5 px-2.5 font-semibold">Fréquence / Dossier</th>
-                      <th className="py-2.5 px-2.5 font-semibold">Objet de l'opération</th>
-                      <th className="py-2.5 px-2.5 font-semibold">Tiers (Client / Fournisseur)</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">Dépense HT</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">TVA déd.</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">Dépense TTC</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette HT</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">TVA coll.</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette TTC</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-center">Justificatif</th>
-                      <th className="py-2.5 px-2.5 font-semibold text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {data.entries.map((entry) => {
-                      const isRec = Boolean(entry.recurring_expense_id || (entry.frequency && entry.frequency !== 'ponctuel'));
-                      const tvaPct =
-                        entry.amount_ht > 0 && entry.vat_amount > 0
-                          ? `${Math.round((entry.vat_amount / entry.amount_ht) * 1000) / 10}%`
-                          : '0%';
-                      return (
+                return (
+                  <>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h2 className="text-sm font-bold text-slate-900">
+                            Livre des recettes et dépenses — {monthLabels[selectedMonth] || selectedMonth}
+                          </h2>
+                          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => setReceiptFilter('all')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
+                                receiptFilter === 'all'
+                                  ? 'bg-white text-[#0f3854] shadow-xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              Toutes ({data.entries.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptFilter('missing')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all inline-flex items-center space-x-1 ${
+                                receiptFilter === 'missing'
+                                  ? 'bg-amber-500 text-white shadow-xs'
+                                  : missingCount > 0
+                                  ? 'text-amber-800 bg-amber-50 hover:bg-amber-100'
+                                  : 'text-slate-400 hover:text-slate-600'
+                              }`}
+                              title="Afficher uniquement les dépenses sans reçu ou ticket pour votre comptable"
+                            >
+                              <span>⚠️ Justificatifs manquants</span>
+                              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                                receiptFilter === 'missing' ? 'bg-white/30 text-white' : 'bg-amber-200 text-amber-900'
+                              }`}>
+                                {missingCount}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {receiptFilter === 'missing'
+                            ? `Affichage exclusif des ${missingCount} dépense(s) sans reçu : joignez votre ticket en 1 clic ci-dessous.`
+                            : "Cliquez sur « Joindre justif » ou sur l'icône crayon pour ajuster un montant."}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('recurrents')}
+                        className="text-xs font-semibold text-[#0f3854] hover:underline inline-flex items-center space-x-1 self-start sm:self-auto"
+                      >
+                        <Repeat className="w-3.5 h-3.5" />
+                        <span>Gérer mes abonnements mensuels / annuels →</span>
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
+                            <th className="py-2.5 px-2.5 font-semibold">Date</th>
+                            <th className="py-2.5 px-2.5 font-semibold">Fréquence / Dossier</th>
+                            <th className="py-2.5 px-2.5 font-semibold">Objet de l'opération</th>
+                            <th className="py-2.5 px-2.5 font-semibold">Tiers (Client / Fournisseur)</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">Dépense HT</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">TVA déd.</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">Dépense TTC</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette HT</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">TVA coll.</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette TTC</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-center">Justificatif</th>
+                            <th className="py-2.5 px-2.5 font-semibold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {displayedEntries.length === 0 ? (
+                            <tr>
+                              <td colSpan={12} className="py-8 text-center text-xs text-slate-400">
+                                {receiptFilter === 'missing'
+                                  ? '🎉 Aucun justificatif manquant pour ce mois-ci ! Tout est carré.'
+                                  : 'Aucune écriture comptable pour ce mois.'}
+                              </td>
+                            </tr>
+                          ) : (
+                            displayedEntries.map((entry) => {
+                              const isRec = Boolean(entry.recurring_expense_id || (entry.frequency && entry.frequency !== 'ponctuel'));
+                              const tvaPct =
+                                entry.amount_ht > 0 && entry.vat_amount > 0
+                                  ? `${Math.round((entry.vat_amount / entry.amount_ht) * 1000) / 10}%`
+                                  : '0%';
+                              return (
                         <tr key={entry.id} className="hover:bg-slate-50/50">
                           <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap">
                             {entry.date.split('-').reverse().join('/')}
@@ -848,8 +907,11 @@ ${selectedMonth}-25 | PRLV ORANGE TELECOM PRO INTERNET FIBRE | 49.99 |
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
+            </>
+          );
+        })()}
+      </div>
+    )}
 
           {activeSubTab === 'recurrents' && (
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">

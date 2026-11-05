@@ -635,6 +635,7 @@ apiRouter.post('/invoices/prepare', (req, res) => {
     advance_amount = 0,
     group_by_category = true,
     date = new Date().toISOString().slice(0, 10),
+    split_details = null,
   } = req.body;
 
   if (!mission_id || (activity_ids.length === 0 && expense_ids.length === 0)) {
@@ -851,17 +852,18 @@ apiRouter.post('/invoices/prepare', (req, res) => {
       INSERT INTO invoices (
         id, invoice_number, mission_id, mission_code, client_name, client_address,
         subject, case_title, client_ref, our_ref, date, total_ht, vat_rate, vat_amount,
-        total_ttc, advance_amount, net_payable, status, paid_amount
+        total_ttc, advance_amount, net_payable, status, paid_amount, split_details
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, 'brouillon', 0
+        ?, ?, ?, 'brouillon', 0, ?
       )
     `).run(
       invoiceId, nextNum, mission.id, mission.code, mission.insurance_client,
       mission.billing_address || `${mission.insurance_client}\nService Sinistres`,
       invoiceSubject, mission.title, mission.case_reference, mission.code,
-      date, totalHT, vatRate, vatAmount, totalTTC, advance, netPayable
+      date, totalHT, vatRate, vatAmount, totalTTC, advance, netPayable,
+      split_details ? JSON.stringify(split_details) : null
     );
 
     const insertLine = db.prepare(`

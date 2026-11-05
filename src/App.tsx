@@ -9,12 +9,13 @@ import { ComptaView } from './views/ComptaView.js';
 import { QuickAddModal } from './components/QuickAddModal.js';
 import { CreateMissionModal } from './components/CreateMissionModal.js';
 import { AIAssistantDrawer } from './components/AIAssistantDrawer.js';
-import { Mission, DashboardSummary } from '@shared/types.js';
+import { Mission, DashboardSummary, DossierVoletKey } from '@shared/types.js';
 import { api } from './api.js';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'today' | 'missions' | 'billing' | 'compta'>('today');
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+  const [selectedMissionVolet, setSelectedMissionVolet] = useState<DossierVoletKey | undefined>(undefined);
   const [sourceTab, setSourceTab] = useState<'today' | 'missions' | 'billing'>('missions');
   const [billingPreselectedCode, setBillingPreselectedCode] = useState<string | undefined>(undefined);
 
@@ -24,19 +25,25 @@ export function App() {
   const [loading, setLoading] = useState(true);
 
   // Sync browser URL & history without full page reload
-  const updateURL = (tab: string, missionId?: string | null, replace = false) => {
+  const updateURL = (tab: string, missionId?: string | null, replace = false, volet?: DossierVoletKey) => {
     try {
       const url = new URL(window.location.href);
       url.searchParams.set('tab', tab);
       if (missionId && tab === 'missions') {
         url.searchParams.set('mission', missionId);
+        if (volet) {
+          url.searchParams.set('volet', volet);
+        } else {
+          url.searchParams.delete('volet');
+        }
       } else {
         url.searchParams.delete('mission');
+        url.searchParams.delete('volet');
       }
       if (replace) {
-        window.history.replaceState({ tab, missionId }, '', url.toString());
+        window.history.replaceState({ tab, missionId, volet }, '', url.toString());
       } else {
-        window.history.pushState({ tab, missionId }, '', url.toString());
+        window.history.pushState({ tab, missionId, volet }, '', url.toString());
       }
     } catch (_) {}
   };
@@ -46,12 +53,14 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab') as 'today' | 'missions' | 'billing' | 'compta' | null;
     const missionId = params.get('mission');
+    const volet = params.get('volet') as DossierVoletKey | null;
     const assistant = params.get('assistant');
     if (tab && ['today', 'missions', 'billing', 'compta'].includes(tab)) {
       setActiveTab(tab);
     }
     if (missionId) {
       setSelectedMissionId(missionId);
+      if (volet) setSelectedMissionVolet(volet);
       setActiveTab('missions');
     }
     if (assistant === 'open' || assistant === 'true' || assistant === '1') {
@@ -62,8 +71,10 @@ export function App() {
       const p = new URLSearchParams(window.location.search);
       const curTab = (p.get('tab') as any) || e.state?.tab || 'today';
       const curMission = p.get('mission') || e.state?.missionId || null;
+      const curVolet = (p.get('volet') as DossierVoletKey) || e.state?.volet || undefined;
       setActiveTab(curTab);
       setSelectedMissionId(curMission);
+      setSelectedMissionVolet(curVolet);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -121,7 +132,7 @@ export function App() {
     setIsQuickAddOpen(true);
   };
 
-  const handleNavigateToMission = (codeOrId: string, origin?: 'today' | 'missions' | 'billing') => {
+  const handleNavigateToMission = (codeOrId: string, origin?: 'today' | 'missions' | 'billing', initialVolet?: DossierVoletKey) => {
     const target = (codeOrId || '').trim().toLowerCase();
     const found = missions.find(m => 
       m.code.toLowerCase() === target || 
@@ -130,15 +141,17 @@ export function App() {
     );
     const mId = found ? found.id : codeOrId;
     setSelectedMissionId(mId);
+    setSelectedMissionVolet(initialVolet);
     setSourceTab(origin || (activeTab === 'missions' ? 'missions' : activeTab as any));
     setActiveTab('missions');
-    updateURL('missions', found ? found.code : mId);
+    updateURL('missions', found ? found.code : mId, false, initialVolet);
   };
 
   const handleNavigateToBilling = (missionCode?: string) => {
     setBillingPreselectedCode(missionCode);
     setActiveTab('billing');
     setSelectedMissionId(null);
+    setSelectedMissionVolet(undefined);
     updateURL('billing', null);
   };
 
@@ -146,13 +159,15 @@ export function App() {
     setActiveTab(tab);
     if (tab !== 'missions') {
       setSelectedMissionId(null);
+      setSelectedMissionVolet(undefined);
       updateURL(tab, null);
     } else {
-      updateURL('missions', selectedMissionId);
+      updateURL('missions', selectedMissionId, false, selectedMissionVolet);
     }
   };
 
   const handleBackFromMission = () => {
+    setSelectedMissionVolet(undefined);
     if (sourceTab === 'today') {
       setActiveTab('today');
       setSelectedMissionId(null);
@@ -185,7 +200,7 @@ export function App() {
             missions={missions}
             summary={summary}
             loading={loading}
-            onNavigateToMission={(code) => handleNavigateToMission(code, 'today')}
+            onNavigateToMission={(code, volet) => handleNavigateToMission(code, 'today', volet)}
             onNavigateToBilling={handleNavigateToBilling}
             onOpenQuickAdd={() => handleOpenQuickAdd()}
             onNavigateToMissions={() => handleTabChange('missions')}
@@ -200,6 +215,7 @@ export function App() {
               key={selectedMissionId}
               missionId={selectedMissionId}
               sourceTab={sourceTab}
+              initialVolet={selectedMissionVolet}
               initialMission={
                 missionsCache[selectedMissionId] ||
                 missions.find(m => m.id === selectedMissionId || m.code.toLowerCase() === selectedMissionId.toLowerCase())
@@ -223,6 +239,7 @@ export function App() {
               missions={missions}
               onSelectMission={(m) => {
                 setSelectedMissionId(m.id);
+                setSelectedMissionVolet(undefined);
                 setSourceTab('missions');
                 updateURL('missions', m.code);
               }}

@@ -21,13 +21,13 @@ import {
   ExternalLink,
   Download,
 } from 'lucide-react';
-import { DashboardSummary, Mission } from '@shared/types.js';
+import { DashboardSummary, Mission, DossierVoletKey } from '@shared/types.js';
 
 interface TodayViewProps {
   missions?: Mission[];
   summary: DashboardSummary | null;
   loading: boolean;
-  onNavigateToMission: (missionCode: string) => void;
+  onNavigateToMission: (missionCode: string, initialVolet?: DossierVoletKey) => void;
   onNavigateToBilling: (missionCode?: string) => void;
   onOpenQuickAdd: () => void;
   onNavigateToMissions?: () => void;
@@ -288,7 +288,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             <span className="text-xs text-slate-500 font-semibold">HT</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 truncate">
-            {unbilled_hours_total} h enregistrées • Remise à zéro auto à la facturation
+            {unbilled_hours_total} h enregistrées • Facturation au temps réel
           </p>
         </div>
 
@@ -437,7 +437,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 {proceduralDeadlines.map((action) => (
                   <div
                     key={action.id}
-                    onClick={() => onNavigateToMission(action.mission_code)}
+                    onClick={() => onNavigateToMission(action.mission_code, 'contradictoire')}
                     className="p-3.5 rounded-xl border border-slate-200 hover:border-[#0f3854]/40 hover:bg-slate-50/60 transition-all cursor-pointer group flex items-start justify-between gap-3"
                   >
                     <div className="min-w-0">
@@ -497,7 +497,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </h3>
                   <button
                     type="button"
-                    onClick={() => onNavigateToMission(nextTravel.mission_code)}
+                    onClick={() => onNavigateToMission(nextTravel.mission_code, 'constatations')}
                     className="text-[#0f3854] font-semibold hover:underline mt-0.5 inline-flex items-center space-x-1"
                   >
                     <span>Dossier {nextTravel.mission_code}</span>

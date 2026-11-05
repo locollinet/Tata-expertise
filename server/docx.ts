@@ -307,6 +307,36 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
         ? formatFrCurrency(invoice.advance_amount)
         : '';
 
+    let splitXml = '';
+    try {
+      const splitData = typeof invoice.split_details === 'string'
+        ? JSON.parse(invoice.split_details || '[]')
+        : (invoice.split_details || []);
+      if (Array.isArray(splitData) && splitData.length > 0) {
+        const splitLinesXml = splitData.map((s: any) => {
+          const pct = s.percentage ? `${s.percentage} %` : '';
+          const name = s.name || s.client_name || 'Co-assureur';
+          const ht = s.amount_ht ? formatFrCurrency(s.amount_ht) : (s.percentage ? formatFrCurrency((invoice.total_ht * Number(s.percentage)) / 100) : '');
+          const ttc = s.net_payable ? formatFrCurrency(s.net_payable) : (s.percentage ? formatFrCurrency((invoice.net_payable * Number(s.percentage)) / 100) : '');
+          const ref = s.ref ? ` (Réf: ${s.ref})` : '';
+          return `
+            <w:p>
+              <w:pPr><w:spacing w:before="20" w:after="20"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="15"/><w:color w:val="595959"/></w:rPr></w:pPr>
+              <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:sz w:val="15"/><w:color w:val="006A8E"/></w:rPr><w:t xml:space="preserve">• ${escapeXml(name)}${ref} [${escapeXml(pct)}] : </w:t></w:r>
+              <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:sz w:val="15"/><w:color w:val="595959"/></w:rPr><w:t xml:space="preserve">${escapeXml(ht)} HT — Net à payer TTC : </w:t></w:r>
+              <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:sz w:val="15"/><w:color w:val="262626"/></w:rPr><w:t>${escapeXml(ttc)}</w:t></w:r>
+            </w:p>`;
+        }).join('');
+
+        splitXml = `
+          <w:p><w:pPr><w:spacing w:before="120" w:after="40"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:sz w:val="16"/><w:color w:val="006A8E"/></w:rPr></w:pPr>
+            <w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:sz w:val="16"/><w:color w:val="006A8E"/></w:rPr><w:t>RÉPARTITION CO-ASSURANCE :</w:t></w:r>
+          </w:p>
+          ${splitLinesXml}
+        `;
+      }
+    } catch (_) {}
+
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -883,6 +913,7 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
     </w:tbl>
 
     <w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="993"/></w:tabs><w:spacing w:after="60" w:line="276" w:lineRule="auto"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr></w:p>
+    ${splitXml}
     <w:p><w:pPr><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:i/><w:color w:val="006A8E"/><w:sz w:val="20"/></w:rPr></w:pPr></w:p>
 
     <w:p>
