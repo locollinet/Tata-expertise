@@ -239,6 +239,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ status: replied ? 'traite' : 'a_traiter' }),
     }),
+  deleteCommunication: (id: string) =>
+    fetchJSON<{ message: string }>(`/communications/${id}`, {
+      method: 'DELETE',
+    }),
 
   // Travels
   addTravel: (data: Partial<TravelOrder>) => fetchJSON<{ id: string; message: string }>('/travels', {
@@ -258,6 +262,9 @@ export const api = {
   updateLRAR: (id: string, data: Partial<RegisteredMail>) => fetchJSON<{ message: string }>(`/lrar/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  }),
+  deleteLRAR: (id: string) => fetchJSON<{ message: string }>(`/lrar/${id}`, {
+    method: 'DELETE',
   }),
 
   // Accounting & Recurring Expenses

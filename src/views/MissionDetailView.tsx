@@ -112,8 +112,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [attOrg, setAttOrg] = useState('');
   const [attRole, setAttRole] = useState('');
   const [attPresence, setAttPresence] = useState<'site' | 'visio'>('site');
+  const [attEmail, setAttEmail] = useState('');
   const [rawFieldNotes, setRawFieldNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // Volet 4 (Contradictoire)
   const [showAddComm, setShowAddComm] = useState(false);
@@ -121,6 +123,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [commSubject, setCommSubject] = useState('');
   const [commBody, setCommBody] = useState('');
   const [commUrgency, setCommUrgency] = useState<'normale' | 'urgente'>('normale');
+
+  // Suivi LRAR & Mises en cause
+  const [showAddLRAR, setShowAddLRAR] = useState(false);
+  const [lrarRecipient, setLrarRecipient] = useState('');
+  const [lrarSubject, setLrarSubject] = useState('');
+  const [lrarTracking, setLrarTracking] = useState('');
+  const [lrarDate, setLrarDate] = useState(new Date().toISOString().slice(0, 10));
+  const [lrarStatus, setLrarStatus] = useState<'a_preparer' | 'prepare' | 'expedie' | 'distribue'>('a_preparer');
+  const [lrarNotes, setLrarNotes] = useState('');
 
   // Volet 5 (Comptes du préjudice)
   const [showAddDamageLine, setShowAddDamageLine] = useState(false);
@@ -229,7 +240,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     garde: (mission.activities?.length || 0) + (missionInvoices.length || 0),
     contrats: docsContrats.length,
     constatations: docsConstatations.length + allPhotos.length,
-    contradictoire: docsContradictoire.length + (mission.communications?.length || 0),
+    contradictoire: docsContradictoire.length + (mission.communications?.length || 0) + (mission.registered_mails?.length || 0),
     prejudice: damageLines.length + docsPrejudice.length,
     rapports: issuedReports.length + docsRapports.length,
   };
@@ -521,6 +532,76 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       showToast(err.message, 'error');
     } finally {
       setSavingNotes(false);
+    }
+  };
+
+  const handleCopyAttendees = () => {
+    const attendees: any[] = mission.attendees || [];
+    if (attendees.length === 0) {
+      showToast('Aucun participant à copier.', 'error');
+      return;
+    }
+    const onSite = attendees.filter((a: any) => a.present_on_site || a.presence_type === 'site');
+    const remote = attendees.filter((a: any) => !a.present_on_site && (a.present_remote || a.presence_type === 'visio'));
+    const other = attendees.filter((a: any) => !a.present_on_site && !a.present_remote && a.presence_type !== 'site' && a.presence_type !== 'visio');
+
+    let text = `FEUILLE D'ÉMARGEMENT — DOSSIER ${mission.code} (${mission.title})\n`;
+    text += `Date d'export : ${new Date().toLocaleDateString('fr-FR')}\n\n`;
+
+    if (onSite.length > 0) {
+      text += `PRÉSENTS SUR SITE (${onSite.length}) :\n`;
+      onSite.forEach((a: any) => {
+        text += `• ${a.name} (${a.organization || 'Non précisé'})${a.role ? ` — ${a.role}` : ''}${a.email ? ` [${a.email}]` : ''}\n`;
+      });
+      text += '\n';
+    }
+
+    if (remote.length > 0) {
+      text += `PRÉSENTS EN VISIOCONFÉRENCE (${remote.length}) :\n`;
+      remote.forEach((a: any) => {
+        text += `• ${a.name} (${a.organization || 'Non précisé'})${a.role ? ` — ${a.role}` : ''}${a.email ? ` [${a.email}]` : ''}\n`;
+      });
+      text += '\n';
+    }
+
+    if (other.length > 0) {
+      text += `AUTRES PARTICIPANTS (${other.length}) :\n`;
+      other.forEach((a: any) => {
+        text += `• ${a.name} (${a.organization || 'Non précisé'})${a.role ? ` — ${a.role}` : ''}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(text);
+    setCopySuccess(true);
+    showToast('Feuille d\'émargement copiée dans le presse-papier !');
+    setTimeout(() => setCopySuccess(false), 3000);
+  };
+
+  const handleCreateLRAR = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lrarRecipient.trim() || !lrarSubject.trim()) {
+      showToast('Destinataire et objet requis', 'error');
+      return;
+    }
+    try {
+      await api.addLRAR({
+        mission_id: mission.id,
+        recipient: lrarRecipient.trim(),
+        subject: lrarSubject.trim(),
+        tracking_number: lrarTracking.trim() || undefined,
+        status: lrarStatus,
+        sent_date: lrarDate || new Date().toISOString().slice(0, 10),
+        notes: lrarNotes.trim() || undefined,
+      });
+      setLrarRecipient('');
+      setLrarSubject('');
+      setLrarTracking('');
+      setLrarNotes('');
+      setShowAddLRAR(false);
+      showToast('Courrier recommandé enregistré.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Erreur lors de l\'enregistrement', 'error');
     }
   };
 
@@ -1562,13 +1643,24 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <Users className="w-4 h-4 text-[#0f3854]" />
                       <span>Participants & Émargement ({mission.attendees?.length || 0})</span>
                     </h3>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddAttendee(!showAddAttendee)}
-                      className="text-xs font-semibold text-[#0f3854] hover:underline"
-                    >
-                      + Ajouter
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyAttendees}
+                        className="inline-flex items-center space-x-1 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                        title="Copier la feuille d'émargement complète formatée pour le rapport ou vos emails"
+                      >
+                        {copySuccess ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copySuccess ? 'Copié !' : 'Copier'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddAttendee(!showAddAttendee)}
+                        className="text-xs font-bold text-[#0f3854] hover:underline cursor-pointer"
+                      >
+                        {showAddAttendee ? 'Fermer' : '+ Ajouter'}
+                      </button>
+                    </div>
                   </div>
 
                   {showAddAttendee && (
@@ -1580,6 +1672,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           name: attName.trim(),
                           organization: attOrg.trim(),
                           role: attRole.trim(),
+                          email: attEmail.trim() || undefined,
                           present_on_site: attPresence === 'site',
                           present_remote: attPresence === 'visio',
                           presence_type: attPresence,
@@ -1587,54 +1680,137 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         setAttName('');
                         setAttOrg('');
                         setAttRole('');
+                        setAttEmail('');
                         setShowAddAttendee(false);
+                        showToast('Participant ajouté.');
                         loadData();
                       }}
-                      className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs"
+                      className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5 text-xs"
                     >
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
                           type="text"
-                          placeholder="Nom *"
+                          placeholder="Nom & Prénom *"
                           value={attName}
                           onChange={(e) => setAttName(e.target.value)}
                           required
-                          className="rounded border-slate-300 p-1.5 border bg-white"
+                          className="rounded-lg border-slate-300 p-1.5 border bg-white font-medium"
                         />
                         <input
                           type="text"
-                          placeholder="Société"
+                          placeholder="Société / Organisme (ex: Saretec, SNCF...)"
                           value={attOrg}
                           onChange={(e) => setAttOrg(e.target.value)}
-                          className="rounded border-slate-300 p-1.5 border bg-white"
+                          className="rounded-lg border-slate-300 p-1.5 border bg-white"
                         />
                       </div>
-                      <div className="flex justify-end">
-                        <button type="submit" className="px-3 py-1 bg-[#0f3854] text-white rounded font-semibold">
-                          Ajouter
-                        </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Rôle (ex: Confrère adverse, Avocat, Conducteur...)"
+                          value={attRole}
+                          onChange={(e) => setAttRole(e.target.value)}
+                          className="rounded-lg border-slate-300 p-1.5 border bg-white"
+                        />
+                        <input
+                          type="email"
+                          placeholder="Email (facultatif)"
+                          value={attEmail}
+                          onChange={(e) => setAttEmail(e.target.value)}
+                          className="rounded-lg border-slate-300 p-1.5 border bg-white"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center space-x-1">
+                          <span className="text-[11px] text-slate-500 font-semibold mr-1">Présence :</span>
+                          <button
+                            type="button"
+                            onClick={() => setAttPresence('site')}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
+                              attPresence === 'site'
+                                ? 'bg-emerald-600 text-white shadow-2xs'
+                                : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                            }`}
+                          >
+                            📍 Sur site
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAttPresence('visio')}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
+                              attPresence === 'visio'
+                                ? 'bg-sky-600 text-white shadow-2xs'
+                                : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                            }`}
+                          >
+                            💻 En visio
+                          </button>
+                        </div>
+
+                        <div className="flex items-center space-x-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setShowAddAttendee(false)}
+                            className="px-2.5 py-1 border border-slate-300 rounded-md bg-white text-slate-600 hover:bg-slate-100"
+                          >
+                            Annuler
+                          </button>
+                          <button type="submit" className="px-3 py-1 bg-[#0f3854] text-white rounded-md font-semibold hover:bg-[#16496d]">
+                            Ajouter
+                          </button>
+                        </div>
                       </div>
                     </form>
                   )}
 
                   <div className="divide-y divide-slate-100 text-xs">
-                    {(mission.attendees || []).map((att: any) => (
-                      <div key={att.id} className="py-1.5 flex items-center justify-between">
-                        <span className="text-slate-800 font-medium">
-                          {att.name} <span className="text-slate-400">({att.organization})</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await api.deleteAttendee(att.id);
-                            loadData();
-                          }}
-                          className="text-slate-400 hover:text-rose-600"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
+                    {(mission.attendees || []).length === 0 ? (
+                      <p className="py-3 text-center text-slate-400 italic">Aucun participant saisi pour cette réunion.</p>
+                    ) : (
+                      (mission.attendees || []).map((att: any) => (
+                        <div key={att.id} className="py-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex items-center space-x-2">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                                att.present_on_site || att.presence_type === 'site'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'bg-sky-50 text-sky-700 border border-sky-200'
+                              }`}
+                            >
+                              {att.present_on_site || att.presence_type === 'site' ? '📍 Sur site' : '💻 En visio'}
+                            </span>
+                            <div className="truncate">
+                              <span className="text-slate-900 font-bold">{att.name}</span>
+                              {att.organization && (
+                                <span className="text-slate-500 font-medium"> ({att.organization})</span>
+                              )}
+                              {att.role && (
+                                <span className="text-slate-400 text-[11px] block sm:inline sm:ml-1">
+                                  — {att.role}
+                                </span>
+                              )}
+                              {att.email && (
+                                <span className="text-[10px] text-slate-400 block font-mono">
+                                  {att.email}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await api.deleteAttendee(att.id);
+                              loadData();
+                            }}
+                            className="text-slate-400 hover:text-rose-600 p-1 shrink-0"
+                            title="Supprimer ce participant"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -1666,88 +1842,423 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           {/* =====================================================================
               VOLET 4 : 04. CONTRADICTOIRE
              ===================================================================== */}
+          {/* =====================================================================
+              VOLET 4 : 04. CONTRADICTOIRE
+             ===================================================================== */}
           {activeVolet === 'contradictoire' && (
-            <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">
-                    Contradictoire, Dires & Convocations
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Mises en cause, convocations aux réunions, dires et courriers recommandés (LRAR).
-                  </p>
+            <div className="space-y-5">
+              {/* 1. DIRES, CONVOCATIONS & ÉCHANGES CONTRADICTOIRES */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                      <Mail className="w-4 h-4 text-[#0f3854]" />
+                      <span>Dires, Convocations & Échanges contradictoires ({(mission.communications || []).length})</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Consignez les dires de vos confrères, convocations officielles et courriers d'avocats.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddComm(!showAddComm)}
+                    className="px-3.5 py-1.5 bg-[#0f3854] text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-[#16496d] transition-colors"
+                  >
+                    {showAddComm ? 'Fermer' : '+ Noter un dire / échange'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowAddComm(!showAddComm)}
-                  className="px-3 py-1.5 bg-[#0f3854] text-white rounded-lg text-xs font-semibold cursor-pointer"
-                >
-                  + Noter un échange
-                </button>
+
+                {showAddComm && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!commSubject.trim()) return;
+                      await api.addCommunication(mission.id, {
+                        sender: commSender.trim() || 'Confrère',
+                        subject: commSubject.trim(),
+                        body: commBody.trim() || commSubject.trim(),
+                        body_Summary: commBody.trim() || commSubject.trim(),
+                        urgency: commUrgency,
+                      });
+                      setCommSender('');
+                      setCommSubject('');
+                      setCommBody('');
+                      setCommUrgency('normale');
+                      setShowAddComm(false);
+                      showToast('Échange contradictoire enregistré.');
+                      loadData();
+                    }}
+                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        placeholder="Émetteur / Confrère (ex: Saretec - M. Pechereau) *"
+                        value={commSender}
+                        onChange={(e) => setCommSender(e.target.value)}
+                        required
+                        className="rounded-lg border-slate-300 p-2 border bg-white"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Objet (ex: Dire n°2 sur le rapport préliminaire) *"
+                        value={commSubject}
+                        onChange={(e) => setCommSubject(e.target.value)}
+                        required
+                        className="sm:col-span-2 rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      placeholder="Synthèse du dire, argument contradictoire soulevé ou délai imposé..."
+                      value={commBody}
+                      onChange={(e) => setCommBody(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                    />
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[11px] text-slate-500 font-medium">Degré d'urgence :</span>
+                        <select
+                          value={commUrgency}
+                          onChange={(e: any) => setCommUrgency(e.target.value)}
+                          className="rounded-md border-slate-300 p-1 border bg-white text-xs font-semibold"
+                        >
+                          <option value="normale">Normal (délai standard)</option>
+                          <option value="urgente">🔥 Urgent (délai butoir proche)</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddComm(false)}
+                          className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-600 hover:bg-slate-100"
+                        >
+                          Annuler
+                        </button>
+                        <button type="submit" className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold hover:bg-[#16496d]">
+                          Enregistrer
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                )}
+
+                {/* Liste des échanges contradictoires */}
+                <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-xl overflow-hidden bg-slate-50/30 text-xs">
+                  {(mission.communications || []).length === 0 ? (
+                    <p className="py-6 text-center text-slate-400 italic">
+                      Aucun dire, convocation ou échange contradictoire noté sur ce dossier.
+                    </p>
+                  ) : (
+                    (mission.communications || []).map((comm: any) => {
+                      const isReplied = comm.status === 'repondu' || comm.status === 'traite';
+                      const isUrgent = comm.urgency === 'urgente';
+                      return (
+                        <div key={comm.id} className="p-3.5 bg-white hover:bg-slate-50/80 transition-colors flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isReplied
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                }`}
+                              >
+                                {isReplied ? '✓ Répondu' : '⏳ En attente de réponse'}
+                              </span>
+                              {isUrgent && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  🔥 Urgent
+                                </span>
+                              )}
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {(comm.date || comm.created_at || '').slice(0, 10).split('-').reverse().join('/')}
+                              </span>
+                              <span className="text-slate-400">•</span>
+                              <span className="font-bold text-[#0f3854]">{comm.sender}</span>
+                            </div>
+
+                            <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                              {comm.subject}
+                            </h4>
+
+                            {comm.body && comm.body !== comm.subject && (
+                              <p className="text-slate-600 text-[11px] leading-relaxed">
+                                {comm.body}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="shrink-0 flex items-center space-x-2 pt-2 sm:pt-0">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await api.toggleCommunicationReplied(comm.id, !isReplied);
+                                loadData();
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                                isReplied
+                                  ? 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                                  : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-bold'
+                              }`}
+                            >
+                              {isReplied ? 'Rouvrir' : 'Marquer comme répondu'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await api.deleteCommunication(comm.id);
+                                loadData();
+                              }}
+                              className="text-slate-400 hover:text-rose-600 p-1"
+                              title="Supprimer cet échange"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
-              {showAddComm && (
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (!commSubject.trim()) return;
-                    await api.addCommunication(mission.id, {
-                      sender: commSender.trim() || 'Confrère',
-                      subject: commSubject.trim(),
-                      body: commBody.trim(),
-                      body_Summary: commBody.trim(),
-                      urgency: commUrgency,
-                    });
-                    setCommSender('');
-                    setCommSubject('');
-                    setCommBody('');
-                    setShowAddComm(false);
-                    showToast('Échange enregistré.');
-                    loadData();
-                  }}
-                  className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs"
-                >
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <input
-                      type="text"
-                      placeholder="Émetteur / Confrère (ex: Saretec)"
-                      value={commSender}
-                      onChange={(e) => setCommSender(e.target.value)}
-                      className="rounded-lg border-slate-300 p-2 border bg-white"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Objet (ex: Convocation réunion contradictoire) *"
-                      value={commSubject}
-                      onChange={(e) => setCommSubject(e.target.value)}
-                      required
-                      className="sm:col-span-2 rounded-lg border-slate-300 p-2 border bg-white font-semibold"
-                    />
+              {/* 2. SUIVI DES RECOMMANDÉS (LRAR) & MISES EN CAUSE */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                      <Send className="w-4 h-4 text-[#0f3854]" />
+                      <span>Suivi des Recommandés (LRAR) & Mises en cause ({(mission.registered_mails || []).length})</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Traçabilité des lettres recommandées avec accusé de réception adressées aux confrères et parties adverses.
+                    </p>
                   </div>
-                  <textarea
-                    rows={2}
-                    placeholder="Synthèse de l'échange..."
-                    value={commBody}
-                    onChange={(e) => setCommBody(e.target.value)}
-                    className="w-full rounded-lg border-slate-300 p-2 border bg-white"
-                  />
-                  <div className="flex justify-end space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddComm(false)}
-                      className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white"
-                    >
-                      Annuler
-                    </button>
-                    <button type="submit" className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold">
-                      Enregistrer
-                    </button>
-                  </div>
-                </form>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => setShowAddLRAR(!showAddLRAR)}
+                    className="px-3.5 py-1.5 bg-[#0f3854] text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-[#16496d] transition-colors"
+                  >
+                    {showAddLRAR ? 'Fermer' : '+ Préparer un recommandé'}
+                  </button>
+                </div>
 
-              {renderVoletDropzone('contradictoire', 'Convocations, dires, accusés LRAR')}
-              {renderPieceTable(docsContradictoire, 'Aucune pièce contradictoire déposée.')}
+                {showAddLRAR && (
+                  <form onSubmit={handleCreateLRAR} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Destinataire (Confrère ou Partie adverse) *</label>
+                        <input
+                          type="text"
+                          placeholder="ex: Cabinet Saretec — M. Pechereau"
+                          value={lrarRecipient}
+                          onChange={(e) => setLrarRecipient(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-medium"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Objet du recommandé *</label>
+                        <input
+                          type="text"
+                          placeholder="ex: Convocation avec sommation à réunion d'expertise"
+                          value={lrarSubject}
+                          onChange={(e) => setLrarSubject(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">N° Suivi La Poste (13 caractères)</label>
+                        <input
+                          type="text"
+                          placeholder="ex: 1A 123 456 7890 1"
+                          value={lrarTracking}
+                          onChange={(e) => setLrarTracking(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Date d'envoi</label>
+                        <input
+                          type="date"
+                          value={lrarDate}
+                          onChange={(e) => setLrarDate(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Statut d'expédition</label>
+                        <select
+                          value={lrarStatus}
+                          onChange={(e: any) => setLrarStatus(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        >
+                          <option value="a_preparer">✉ À préparer</option>
+                          <option value="prepare">Prêt à l'envoi</option>
+                          <option value="expedie">✈ Expédié</option>
+                          <option value="distribue">✓ Distribué / AR Reçu</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Observations / Numéro de pli</label>
+                      <input
+                        type="text"
+                        placeholder="ex: LRAR avec avis de réception contenant convocation du 12 mai"
+                        value={lrarNotes}
+                        onChange={(e) => setLrarNotes(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                      />
+                    </div>
+
+                    <div className="flex justify-end space-x-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddLRAR(false)}
+                        className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-600 hover:bg-slate-100"
+                      >
+                        Annuler
+                      </button>
+                      <button type="submit" className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold hover:bg-[#16496d]">
+                        Enregistrer le recommandé
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Tableau de suivi des LRAR */}
+                <div className="border border-slate-200/90 rounded-xl overflow-hidden bg-white shadow-2xs">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-500 font-medium">
+                        <th className="py-2.5 px-3.5">N° Suivi La Poste</th>
+                        <th className="py-2.5 px-3.5">Destinataire & Objet</th>
+                        <th className="py-2.5 px-3.5 w-28">Date d'envoi</th>
+                        <th className="py-2.5 px-3.5 w-32 text-center">Statut</th>
+                        <th className="py-2.5 px-3.5 text-right w-24">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(mission.registered_mails || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-slate-400 italic">
+                            Aucun courrier recommandé enregistré pour ce dossier.
+                          </td>
+                        </tr>
+                      ) : (
+                        (mission.registered_mails || []).map((mail: any) => {
+                          const trackingClean = (mail.tracking_number || '').replace(/\s+/g, '');
+                          return (
+                            <tr key={mail.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2.5 px-3.5 font-mono">
+                                {trackingClean ? (
+                                  <a
+                                    href={`https://www.laposte.fr/outils/suivre-vos-envois?code=${encodeURIComponent(trackingClean)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-bold text-[#0f3854] hover:underline inline-flex items-center space-x-1"
+                                    title="Suivre en direct sur laposte.fr"
+                                  >
+                                    <span>{mail.tracking_number}</span>
+                                    <ExternalLink className="w-3 h-3 text-slate-400" />
+                                  </a>
+                                ) : (
+                                  <span className="text-slate-400 italic">Sans N° de suivi</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3.5">
+                                <span className="font-bold text-slate-900 block">{mail.recipient}</span>
+                                <span className="text-slate-600 text-[11px]">{mail.subject}</span>
+                                {mail.notes && <span className="text-slate-400 text-[10px] block">{mail.notes}</span>}
+                              </td>
+                              <td className="py-2.5 px-3.5 text-slate-500 whitespace-nowrap">
+                                {(mail.sent_date || mail.created_at || '').slice(0, 10).split('-').reverse().join('/')}
+                              </td>
+                              <td className="py-2.5 px-3.5 text-center">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    mail.status === 'distribue'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : mail.status === 'expedie'
+                                      ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                      : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  }`}
+                                >
+                                  {mail.status === 'distribue'
+                                    ? '✓ AR Reçu'
+                                    : mail.status === 'expedie'
+                                    ? '✈ Expédié'
+                                    : '✉ À préparer'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3.5 text-right whitespace-nowrap space-x-1.5">
+                                {mail.status === 'a_preparer' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      await api.updateLRAR(mail.id, { status: 'expedie' });
+                                      loadData();
+                                    }}
+                                    className="text-[11px] text-[#0f3854] hover:underline font-semibold"
+                                  >
+                                    Expédier
+                                  </button>
+                                )}
+                                {mail.status === 'expedie' && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      await api.updateLRAR(mail.id, { status: 'distribue' });
+                                      loadData();
+                                    }}
+                                    className="text-[11px] text-emerald-700 hover:underline font-semibold"
+                                  >
+                                    AR reçu
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await api.deleteLRAR(mail.id);
+                                    showToast('Courrier recommandé retiré.');
+                                    loadData();
+                                  }}
+                                  className="text-slate-400 hover:text-rose-600 p-1"
+                                  title="Supprimer ce suivi LRAR"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 3. PIÈCES TRANSMISES & DIRES OFFICIELS */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Pièces du contradictoire & Dires formels déposés ({docsContradictoire.length})
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Mises en cause, convocations, dires officiels et accusés de réception LRAR scannés.
+                  </p>
+                </div>
+
+                {renderVoletDropzone('contradictoire', 'Convocations, dires, accusés LRAR')}
+                {renderPieceTable(docsContradictoire, 'Aucune pièce contradictoire déposée.')}
+              </div>
             </div>
           )}
 

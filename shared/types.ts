@@ -104,6 +104,16 @@ export interface Mission {
   invoices_count?: number;
   last_invoice_date?: string | null;
   last_invoice_number?: string | null;
+  activities?: Activity[];
+  expenses?: Expense[];
+  attendees?: Attendee[];
+  communications?: Communication[];
+  registered_mails?: RegisteredMail[];
+  travels?: TravelOrder[];
+  damage_lines?: DamageLine[];
+  issued_reports?: IssuedReport[];
+  documents?: MissionDocument[];
+  photos?: Photo[];
   created_at: string;
   updated_at: string;
 }

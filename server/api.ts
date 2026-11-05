@@ -1610,6 +1610,11 @@ apiRouter.put('/communications/:id', (req, res) => {
   res.json({ message: "Communication mise à jour" });
 });
 
+apiRouter.delete('/communications/:id', (req, res) => {
+  db.prepare('DELETE FROM communications WHERE id = ?').run(req.params.id);
+  res.json({ message: "Communication supprimée" });
+});
+
 // ---------------- TRAVEL ORDERS & LRAR ----------------
 apiRouter.post('/travels', (req, res) => {
   const { mission_id, destination, start_date, end_date, train_info, hotel_info, notes, checklist = [] } = req.body;
@@ -1677,6 +1682,11 @@ apiRouter.put('/lrar/:id', (req, res) => {
   `).run(recipient, subject, tracking_number, status, sent_date, notes, req.params.id);
 
   res.json({ message: "Courrier LRAR mis à jour" });
+});
+
+apiRouter.delete('/lrar/:id', (req, res) => {
+  db.prepare('DELETE FROM registered_mails WHERE id = ?').run(req.params.id);
+  res.json({ message: "Courrier LRAR supprimé" });
 });
 
 // ---------------- COMPTA, FRAIS RÉCURRENTS & TVA MENSUELLE ----------------
