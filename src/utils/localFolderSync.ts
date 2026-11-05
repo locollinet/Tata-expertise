@@ -135,9 +135,39 @@ function markSyncSuccess(detail?: string) {
   window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
 }
 
+export async function getDossiersRootHandle(rootHandle: any): Promise<{ handle: any; folderName: string }> {
+  try {
+    const handle = await rootHandle.getDirectoryHandle('01_Dossiers_Expertise', { create: false });
+    return { handle, folderName: '01_Dossiers_Expertise' };
+  } catch {
+    try {
+      const handle = await rootHandle.getDirectoryHandle('Dossiers', { create: false });
+      return { handle, folderName: 'Dossiers' };
+    } catch {
+      const handle = await rootHandle.getDirectoryHandle('01_Dossiers_Expertise', { create: true });
+      return { handle, folderName: '01_Dossiers_Expertise' };
+    }
+  }
+}
+
+export async function getComptaRootHandle(rootHandle: any): Promise<{ handle: any; folderName: string }> {
+  try {
+    const handle = await rootHandle.getDirectoryHandle('02_Frais_Generaux_Compta', { create: false });
+    return { handle, folderName: '02_Frais_Generaux_Compta' };
+  } catch {
+    try {
+      const handle = await rootHandle.getDirectoryHandle('Compta', { create: false });
+      return { handle, folderName: 'Compta' };
+    } catch {
+      const handle = await rootHandle.getDirectoryHandle('02_Frais_Generaux_Compta', { create: true });
+      return { handle, folderName: '02_Frais_Generaux_Compta' };
+    }
+  }
+}
+
 /**
- * Crée automatiquement le dossier d'un dossier d'expertise dans `Dossiers/<Code_Dossier>`
- * avec ses 6 sous-dossiers numérotés (01 à 06) + le dossier `Compta/` séparé à la racine.
+ * Crée automatiquement le dossier d'un dossier d'expertise dans `01_Dossiers_Expertise/<Code_Dossier>`
+ * avec ses 6 sous-dossiers numérotés (01 à 06) + le dossier `02_Frais_Generaux_Compta/` séparé à la racine.
  */
 export async function ensureMissionFolderOnMac(missionCode: string): Promise<boolean> {
   if (!isFileSystemAccessSupported()) return false;
@@ -150,15 +180,15 @@ export async function ensureMissionFolderOnMac(missionCode: string): Promise<boo
     }
     if (perm !== 'granted') return false;
 
-    const dossiersRoot = await rootHandle.getDirectoryHandle('Dossiers', { create: true });
-    await rootHandle.getDirectoryHandle('Compta', { create: true });
+    const { handle: dossiersRoot, folderName: dossiersName } = await getDossiersRootHandle(rootHandle);
+    await getComptaRootHandle(rootHandle);
 
     const safeMission = (missionCode || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
     const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
     for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
       await missionDir.getDirectoryHandle(folder, { create: true });
     }
-    markSyncSuccess(`${rootHandle.name}/Dossiers/${safeMission}`);
+    markSyncSuccess(`${rootHandle.name}/${dossiersName}/${safeMission}`);
     return true;
   } catch {
     return false;
@@ -184,7 +214,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
     if (perm !== 'granted') return { missionsSynced, filesSynced };
 
     // 1. Créer le dossier Compta séparé + l'arborescence 01..06 de tous les dossiers
-    await rootHandle.getDirectoryHandle('Compta', { create: true });
+    await getComptaRootHandle(rootHandle);
     const missionsRes = await fetch('/api/missions');
     if (missionsRes.ok) {
       const missions = await missionsRes.json();
@@ -396,7 +426,7 @@ export async function syncComptaFileToMac(params: {
       }
       if (perm !== 'granted') return { synced: false };
 
-      const comptaRoot = await rootHandle.getDirectoryHandle('Compta', { create: true });
+      const { handle: comptaRoot, folderName: comptaName } = await getComptaRootHandle(rootHandle);
       const monthDir = await comptaRoot.getDirectoryHandle(safeMonth, { create: true });
       const subDir = await monthDir.getDirectoryHandle(targetSub, { create: true });
       const fileHandle = await subDir.getFileHandle(safeFile, { create: true });
@@ -404,7 +434,7 @@ export async function syncComptaFileToMac(params: {
       await writable.write(params.data);
       await writable.close();
 
-      const fullPath = `${rootHandle.name}/Compta/${safeMonth}/${targetSub}/${safeFile}`;
+      const fullPath = `${rootHandle.name}/${comptaName}/${safeMonth}/${targetSub}/${safeFile}`;
       markSyncSuccess(fullPath);
       return {
         synced: true,
@@ -481,7 +511,7 @@ export async function syncFileToLocalMacFolder(params: {
       }
       if (perm !== 'granted') return { synced: false };
 
-      const dossiersRoot = await rootHandle.getDirectoryHandle('Dossiers', { create: true });
+      const { handle: dossiersRoot, folderName: dossiersName } = await getDossiersRootHandle(rootHandle);
       const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
       for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
         await missionDir.getDirectoryHandle(folder, { create: true });
@@ -492,7 +522,7 @@ export async function syncFileToLocalMacFolder(params: {
       await writable.write(params.data);
       await writable.close();
 
-      const fullPath = `${rootHandle.name}/Dossiers/${safeMission}/${canonicalVolet}/${safeFile}`;
+      const fullPath = `${rootHandle.name}/${dossiersName}/${safeMission}/${canonicalVolet}/${safeFile}`;
       markSyncSuccess(fullPath);
       return {
         synced: true,

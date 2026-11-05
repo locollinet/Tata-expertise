@@ -74,7 +74,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
             <span>Mes Dossiers d'Expertise</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Cliquez sur un dossier pour ouvrir sa <strong>Page de garde</strong> (File Register) et ses 6 volets synchronisés Mac
+            Registres d'expertise, suivi contradictoire et synchronisation des 6 volets.
           </p>
         </div>
 

@@ -411,24 +411,27 @@ export const BillingView: React.FC<BillingViewProps> = ({
   };
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto pb-12">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Title */}
-      <div>
-        <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
-          <Receipt className="w-6 h-6 text-[#0f3854]" />
-          <span>Gestion des Honoraires & Facturation</span>
-        </h1>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Modèle officiel Word Century Gothic (facture.dotx), regroupement par catégorie métier, multi-factures par dossier et ajustement des heures.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+            <Receipt className="w-5 h-5 text-[#0f3854]" />
+            <span>Notes d'honoraires & Facturation</span>
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Format officiel Century Gothic (.docx), gestion des acomptes et suivi des règlements.
+          </p>
+        </div>
       </div>
 
       {/* 1. SECTION PREPARATION DE NOTE D'HONORAIRES */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-          <div>
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Étape 1</span>
-            <h2 className="text-base font-bold text-slate-900">Préparer une note d'honoraires (remise à zéro du compteur pointage après facturation)</h2>
+          <div className="flex items-center space-x-2.5">
+            <span className="w-2 h-2 rounded-full bg-[#0f3854]"></span>
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Nouvelle note d'honoraires</h2>
+            <span className="text-[11px] text-slate-400 font-normal">| Remise à zéro auto du pointage</span>
           </div>
 
           {/* Mission selection with Search Loupe */}
@@ -452,7 +455,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                     if (match) setSelectedMissionId(match.id);
                   }
                 }}
-                placeholder="Loupe : n° dossier (ex: 728), client..."
+                placeholder="Rechercher dossier (ex: 728), client..."
                 className="text-xs rounded-lg border-slate-300 pl-8 pr-3 py-1.5 bg-white border focus:border-[#0f3854] w-56"
               />
             </div>
@@ -460,11 +463,11 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <select
               value={selectedMissionId}
               onChange={(e) => setSelectedMissionId(e.target.value)}
-              className="text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-1.5 px-3 bg-slate-50 border font-medium text-slate-800"
+              className="text-xs rounded-lg border-slate-300 shadow-2xs focus:border-[#0f3854] focus:ring-[#0f3854] py-1.5 px-3 bg-slate-50 border font-medium text-slate-800"
             >
               {filteredMissions.map(m => (
                 <option key={m.id} value={m.id}>
-                  {m.code} — {m.title.slice(0, 42)}... ({(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT à facturer)
+                  {m.code} — {m.title.slice(0, 38)}... ({(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT)
                 </option>
               ))}
             </select>
@@ -491,16 +494,16 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Temps à facturer ({unbilledActivities.length})
+                  Temps pointé ({unbilledActivities.length})
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  Astuce : cliquez sur le nombre d'heures pour arrondir ou ajuster avant facturation
+                <span className="text-[11px] text-slate-400">
+                  Cliquez sur le temps pour ajuster ou arrondir
                 </span>
               </div>
 
               {unbilledActivities.length === 0 ? (
                 <p className="text-xs text-slate-400 py-3 bg-slate-50 rounded-lg text-center">
-                  Aucun temps en attente de facturation pour ce dossier (compteur à zéro).
+                  Compteur à zéro • Aucun temps en attente de facturation sur ce dossier.
                 </p>
               ) : (
                 <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
@@ -771,12 +774,14 @@ export const BillingView: React.FC<BillingViewProps> = ({
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div>
-            <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              <span>Registre officiel des Notes d'honoraires & Règlements ({invoices.length})</span>
-            </h2>
-            <p className="text-xs text-slate-500">
-              Téléchargez le Word (.docx) dès le brouillon, ajustez les heures/lignes à tout moment avant émission, et suivez vos règlements.
+            <div className="flex items-center space-x-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                Registre des notes d'honoraires ({invoices.length})
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Téléchargement Word (.docx), ajustement avant émission et suivi des règlements.
             </p>
           </div>
         </div>

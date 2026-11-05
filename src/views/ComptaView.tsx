@@ -487,11 +487,11 @@ export const ComptaView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
-            <Calculator className="w-6 h-6 text-[#0f3854]" />
-            <span>Suivi Comptable, Abonnements Récurrents & Détail TVA</span>
+            <Calculator className="w-5 h-5 text-[#0f3854]" />
+            <span>Comptabilité & Justificatifs</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Vos abonnements et charges fixes (Loyer, URSSAF, SFR, CORGECO, ADIS...) s'intègrent automatiquement chaque mois et restent modifiables ponctuellement.
+            Livre mensuel, abonnements récurrents intégrés automatiquement et classement des reçus.
           </p>
         </div>
 
@@ -661,14 +661,14 @@ export const ComptaView: React.FC = () => {
 
           {activeSubTab === 'livre' && (
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-              {/* Bandeau explicatif : Dossier Mac Compta séparé des Dossiers d'expertise */}
-              <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                <div className="flex items-center space-x-2 text-slate-700">
+              {/* Bandeau discret : Dossier Mac Compta séparé */}
+              <div className="py-2.5 px-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-2 text-slate-600">
                   <FolderOpen className="w-4 h-4 text-[#0f3854] shrink-0" />
                   <span>
-                    Classement Mac séparé des dossiers d'expertise : tous vos justificatifs de frais et factures sont rangés à part dans{' '}
-                    <code className="font-mono font-bold text-[#0f3854] bg-white px-1.5 py-0.5 rounded border border-sky-200">
-                      {isLocalSyncConnected() ? `${getLocalSyncFolderName()}/` : ''}Compta/{selectedMonth}/Justificatifs/
+                    Dossier Mac dédié :{' '}
+                    <code className="font-mono font-semibold text-[#0f3854] bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                      {isLocalSyncConnected() ? `${getLocalSyncFolderName()}/` : ''}02_Frais_Generaux_Compta/{selectedMonth}/Justificatifs/
                     </code>
                   </span>
                 </div>
@@ -678,19 +678,19 @@ export const ComptaView: React.FC = () => {
                     setEntryFrequency('ponctuel');
                     setShowAddModal(true);
                   }}
-                  className="text-xs font-bold text-[#0f3854] hover:underline shrink-0"
+                  className="text-xs font-semibold text-[#0f3854] hover:underline shrink-0"
                 >
-                  + Saisir un frais avec justificatif →
+                  + Nouveau frais avec justificatif →
                 </button>
               </div>
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900">
-                    Livre comptable — {monthLabels[selectedMonth] || selectedMonth} ({data.entries.length} écritures)
+                    Livre des recettes et dépenses — {monthLabels[selectedMonth] || selectedMonth} ({data.entries.length})
                   </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Cliquez sur « + Joindre justif » pour glisser un reçu/facture sur n'importe quelle ligne ou sur « Modifier » pour ajuster un montant.
+                  <p className="text-[11px] text-slate-400">
+                    Cliquez sur « + Justif » pour joindre un reçu ou sur l'icône crayon pour ajuster un montant.
                   </p>
                 </div>
                 <button
