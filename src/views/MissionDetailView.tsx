@@ -1538,8 +1538,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   )}
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* =====================================================================
               VOLET 2 : 02. CONTRATS
