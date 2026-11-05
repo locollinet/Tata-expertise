@@ -124,6 +124,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+  saveReportDraft: (missionId: string, data: Partial<ReportDraft>) =>
+    fetchJSON<{ message: string }>(`/reports/${missionId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 
   // Volet 5 : Comptes du préjudice
   getDamageLines: (missionId: string) => fetchJSON<DamageLine[]>(`/missions/${missionId}/damage-lines`),
@@ -144,15 +149,20 @@ export const api = {
 
   // Volet 6 : Rapports émis (Packages datés + PJ numérotées)
   getIssuedReports: (missionId: string) => fetchJSON<IssuedReport[]>(`/missions/${missionId}/issued-reports`),
-  addIssuedReport: async (missionId: string, data: Partial<IssuedReport> & { file?: File | null }) => {
-    const fd = new FormData();
-    if (data.report_type) fd.append('report_type', data.report_type);
-    if (data.title) fd.append('title', data.title);
-    if (data.sent_date) fd.append('sent_date', data.sent_date);
-    if (data.recipient) fd.append('recipient', data.recipient);
-    if (data.notes) fd.append('notes', data.notes);
-    if (data.attached_piece_numbers) fd.append('attached_piece_numbers', JSON.stringify(data.attached_piece_numbers));
-    if (data.file) fd.append('file', data.file);
+  addIssuedReport: async (missionId: string, data: (Partial<IssuedReport> & { file?: File | null }) | FormData) => {
+    let fd: FormData;
+    if (data instanceof FormData) {
+      fd = data;
+    } else {
+      fd = new FormData();
+      if (data.report_type) fd.append('report_type', data.report_type);
+      if (data.title) fd.append('title', data.title);
+      if (data.sent_date) fd.append('sent_date', data.sent_date);
+      if (data.recipient) fd.append('recipient', data.recipient);
+      if (data.notes) fd.append('notes', data.notes);
+      if (data.attached_piece_numbers) fd.append('attached_piece_numbers', JSON.stringify(data.attached_piece_numbers));
+      if (data.file) fd.append('file', data.file);
+    }
 
     const res = await fetch(`${BASE_URL}/missions/${missionId}/issued-reports`, {
       method: 'POST',
@@ -190,12 +200,18 @@ export const api = {
       body: JSON.stringify(data),
     }),
   deleteDocument: (id: string) => fetchJSON<{ message: string }>(`/documents/${id}`, { method: 'DELETE' }),
+  deleteMissionDocument: (id: string) => fetchJSON<{ message: string }>(`/documents/${id}`, { method: 'DELETE' }),
 
   // Attendees
-  addAttendee: (data: Partial<Attendee>) => fetchJSON<{ id: string; message: string }>('/attendees', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+  addAttendee: (dataOrMissionId: Partial<Attendee> | string, legacyData?: Partial<Attendee>) => {
+    const payload = typeof dataOrMissionId === 'string'
+      ? { ...legacyData, mission_id: dataOrMissionId }
+      : dataOrMissionId;
+    return fetchJSON<{ id: string; message: string }>('/attendees', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   deleteAttendee: (id: string) => fetchJSON<{ message: string }>(`/attendees/${id}`, { method: 'DELETE' }),
 
   // Communications
@@ -205,14 +221,24 @@ export const api = {
     if (status) params.set('status', status);
     return fetchJSON<Communication[]>(`/communications?${params.toString()}`);
   },
-  addCommunication: (data: Partial<Communication>) => fetchJSON<{ id: string; message: string }>('/communications', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+  addCommunication: (dataOrMissionId: Partial<Communication> | string, legacyData?: Partial<Communication>) => {
+    const payload = typeof dataOrMissionId === 'string'
+      ? { ...legacyData, mission_id: dataOrMissionId }
+      : dataOrMissionId;
+    return fetchJSON<{ id: string; message: string }>('/communications', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
   updateCommunication: (id: string, data: Partial<Communication>) => fetchJSON<{ message: string }>(`/communications/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
+  toggleCommunicationReplied: (id: string, replied: boolean) =>
+    fetchJSON<{ message: string }>(`/communications/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: replied ? 'traite' : 'a_traiter' }),
+    }),
 
   // Travels
   addTravel: (data: Partial<TravelOrder>) => fetchJSON<{ id: string; message: string }>('/travels', {
@@ -257,7 +283,15 @@ export const api = {
       tva_nette_a_payer: number;
     };
   }>(`/compta/entries?month=${month}`),
-  addAccountingEntry: async (data: Partial<AccountingEntry> & { category?: string; receiptFile?: File | null }) => {
+  addAccountingEntry: async (data: (Partial<AccountingEntry> & { category?: string; receiptFile?: File | null }) | FormData) => {
+    if (data instanceof FormData) {
+      const res = await fetch(`${BASE_URL}/compta/entries`, { method: 'POST', body: data });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Erreur HTTP ${res.status}`);
+      }
+      return res.json();
+    }
     if (data.receiptFile) {
       const fd = new FormData();
       if (data.month) fd.append('month', data.month);
@@ -289,12 +323,34 @@ export const api = {
       body: JSON.stringify(data),
     });
   },
-  updateAccountingEntry: (id: string, data: Partial<AccountingEntry> & { update_recurring_template?: boolean }) =>
-    fetchJSON<{ message: string; receipt_filename?: string; receipt_original_name?: string }>(`/compta/entries/${id}`, {
+  updateAccountingEntry: async (id: string, data: (Partial<AccountingEntry> & { update_recurring_template?: boolean }) | FormData) => {
+    if (data instanceof FormData) {
+      const res = await fetch(`${BASE_URL}/compta/entries/${id}`, { method: 'PUT', body: data });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Erreur HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+    return fetchJSON<{ message: string; receipt_filename?: string; receipt_original_name?: string }>(`/compta/entries/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
-    }),
+    });
+  },
   uploadAccountingReceipt: async (entryId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('receipt', file);
+    const res = await fetch(`${BASE_URL}/compta/entries/${entryId}/receipt`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
+  },
+  uploadAccountingEntryReceipt: async (entryId: string, file: File) => {
     const fd = new FormData();
     fd.append('receipt', file);
     const res = await fetch(`${BASE_URL}/compta/entries/${entryId}/receipt`, {

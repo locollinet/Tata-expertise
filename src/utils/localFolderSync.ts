@@ -308,6 +308,14 @@ export function getLocalSyncStatus(): {
   };
 }
 
+export function isLocalSyncConnected(): boolean {
+  return getLocalSyncStatus().connected;
+}
+
+export function getLocalSyncFolderName(): string {
+  return getLocalSyncStatus().folderName || 'Rocco_VP_Expertise';
+}
+
 /**
  * Enregistre simultanément une pièce / photo / document dans Firebase Firestore
  */

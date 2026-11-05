@@ -17,7 +17,7 @@ export type DossierVoletKey =
   | 'rapports';      // 6. Rapports émis (Packages datés + PJ numérotées + projet de rapport)
 
 export interface AdverseParty {
-  id: string;
+  id?: string;
   party_name: string;    // Ex: SNCF Réseau, VINCI...
   expert_firm?: string;  // Cabinet du confrère (ex: Saretec, Polyexpert, Stelliant...)
   expert_name?: string;  // Nom du confrère (ex: Pechereau)
@@ -39,8 +39,11 @@ export interface DamageLine {
   category: string;        // Ex: Matériel roulant, Infrastructure, Perte d'exploitation, Frais de secours, Autre
   label: string;           // Poste / Désignation
   claimed_amount: number;  // Montant réclamé (€ HT)
+  claimed_amount_ht?: number; // Alias
   retained_amount: number; // Montant retenu par Valentine (€ HT)
+  retained_amount_ht?: number; // Alias
   comment?: string;        // Observation / analyse (ex: réfaction maintenance courante)
+  notes?: string;          // Alias
   piece_numbers: number[]; // Numéros de pièces jointes liées (ex: [4, 12])
   order_index: number;
   created_at: string;
@@ -53,6 +56,7 @@ export interface IssuedReport {
   report_type: string;     // Ex: Rapport préliminaire, Rapport d'étape, Rapport définitif, Note technique
   title: string;           // Ex: Rapport du 12 juillet 2026
   sent_date: string;       // YYYY-MM-DD
+  issued_date?: string;    // Alias
   recipient: string;       // Mandant / Destinataire
   filename?: string | null;
   original_name?: string | null;
@@ -309,6 +313,7 @@ export interface Attendee {
   phone?: string;
   present_on_site: boolean;
   present_remote: boolean;
+  presence_type?: 'site' | 'visio';
 }
 
 export interface Photo {
@@ -327,14 +332,18 @@ export interface Photo {
 
 export type DocumentCategory = 
   | 'contrat_client'
+  | 'contrat'
   | 'constatation_jour_j'
   | 'photo_terrain'
   | 'extraction_technique'
   | 'emargement_pv'
   | 'note_technique'
   | 'procedure_dires'
+  | 'courrier_adverse'
   | 'justificatif_prejudice'
+  | 'devis_facture'
   | 'rapport_emis'
+  | 'rapport_technique'
   | 'capture_ecran'
   | 'justificatif_frais'
   | 'autre';
@@ -383,6 +392,7 @@ export interface Communication {
   date: string;
   subject: string;
   body: string;
+  body_Summary?: string;
   importance: 'haute' | 'normale' | 'basse';
   urgency: 'urgente' | 'normale';
   status: 'a_traiter' | 'en_cours' | 'repondu' | 'archive';

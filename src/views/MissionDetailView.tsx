@@ -260,17 +260,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const missionInvoices: any[] = mission.invoices || [];
 
   // Filter documents by volet
-  const docsContrats = allDocuments.filter((d) => d.section === 'contrats' || d.category === 'contrat');
+  const docsContrats = allDocuments.filter((d) => d.section === 'contrats' || d.category === 'contrat' || d.category === 'contrat_client');
   const docsConstatations = allDocuments.filter(
-    (d) => d.section === 'constatations' || (!d.section && ['photo_terrain', 'autre'].includes(d.category))
+    (d) => d.section === 'constatations' || (!d.section && ['photo_terrain', 'autre', 'constatation_jour_j', 'extraction_technique'].includes(d.category))
   );
   const docsContradictoire = allDocuments.filter(
-    (d) => d.section === 'contradictoire' || d.category === 'courrier_adverse'
+    (d) => d.section === 'contradictoire' || d.category === 'courrier_adverse' || d.category === 'procedure_dires'
   );
   const docsPrejudice = allDocuments.filter(
-    (d) => d.section === 'prejudice' || (!d.section && ['devis_facture', 'rapport_technique'].includes(d.category))
+    (d) => d.section === 'prejudice' || (!d.section && ['devis_facture', 'rapport_technique', 'justificatif_prejudice'].includes(d.category))
   );
-  const docsRapports = allDocuments.filter((d) => d.section === 'rapports');
+  const docsRapports = allDocuments.filter((d) => d.section === 'rapports' || d.category === 'rapport_emis');
 
   // Counts per volet for badges
   const voletCounts: Record<DossierVoletKey, number> = {
@@ -368,14 +368,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     e.preventDefault();
     try {
       const cleanedParties = adverseParties.filter(
-        (p) => p.party_name.trim() || p.expert_firm.trim() || p.expert_name.trim()
+        (p) => p.party_name?.trim() || (p.expert_firm && p.expert_firm.trim()) || (p.expert_name && p.expert_name.trim())
       );
       await api.updateMission(mission.id, {
         code: missionCodeEdit.trim(),
         title: missionTitleEdit.trim(),
         insurance_client: clientName.trim(),
         case_reference: clientRef.trim(),
-        insurer_contact: clientContact.trim(),
+        client_contact: clientContact.trim(),
         billing_address: billingAddress.trim(),
         insured_party: insuredParty.trim(),
         insured_reference: insuredRef.trim(),
@@ -483,9 +483,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         await api.updateDamageLine(editingDamageId, {
           category: dmgCategory,
           label: dmgLabel.trim(),
+          claimed_amount: claimed,
+          retained_amount: retained,
           claimed_amount_ht: claimed,
           retained_amount_ht: retained,
           piece_numbers: dmgSelectedPieces,
+          comment: dmgNotes.trim() || undefined,
           notes: dmgNotes.trim() || undefined,
         });
         showToast('Ligne de préjudice mise à jour.');
@@ -493,9 +496,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         await api.addDamageLine(mission.id, {
           category: dmgCategory,
           label: dmgLabel.trim(),
+          claimed_amount: claimed,
+          retained_amount: retained,
           claimed_amount_ht: claimed,
           retained_amount_ht: retained,
           piece_numbers: dmgSelectedPieces,
+          comment: dmgNotes.trim() || undefined,
           notes: dmgNotes.trim() || undefined,
         });
         showToast('Poste ajouté aux Comptes du préjudice.');
@@ -581,8 +587,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     .reverse()
     .join('/');
 
-  const totalClaimedHT = damageLines.reduce((acc, l) => acc + (Number(l.claimed_amount_ht) || 0), 0);
-  const totalRetainedHT = damageLines.reduce((acc, l) => acc + (Number(l.retained_amount_ht) || 0), 0);
+  const totalClaimedHT = damageLines.reduce((acc, l) => acc + (Number(l.claimed_amount_ht ?? l.claimed_amount) || 0), 0);
+  const totalRetainedHT = damageLines.reduce((acc, l) => acc + (Number(l.retained_amount_ht ?? l.retained_amount) || 0), 0);
 
   const currentVoletMeta = VOLETS_CONFIG.find((v) => v.key === activeVolet) || VOLETS_CONFIG[0];
 
@@ -1062,7 +1068,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           onClick={() =>
                             setAdverseParties([
                               ...adverseParties,
-                              { party_name: '', expert_firm: '', expert_name: '', lawyer_name: '' },
+                              { id: `adv-${Date.now()}-${adverseParties.length + 1}`, party_name: '', expert_firm: '', expert_name: '', lawyer_name: '' },
                             ])
                           }
                           className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[11px] font-semibold text-[#0f3854] hover:bg-slate-100"
@@ -1709,6 +1715,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           name: attName.trim(),
                           organization: attOrg.trim(),
                           role: attRole.trim(),
+                          present_on_site: attPresence === 'site',
+                          present_remote: attPresence === 'visio',
                           presence_type: attPresence,
                         });
                         setAttName('');
@@ -1826,6 +1834,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       await api.addCommunication(mission.id, {
                         sender: commSender.trim() || 'Confrère / Partie',
                         subject: commSubject.trim(),
+                        body: commBody.trim(),
                         body_Summary: commBody.trim(),
                         urgency: commUrgency,
                       });
@@ -2119,14 +2128,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <tr key={line.id} className="hover:bg-slate-50">
                             <td className="py-2.5 px-3">
                               <span className="font-bold text-slate-900 block">{line.label}</span>
-                              {line.notes && <span className="text-[11px] text-slate-500">{line.notes}</span>}
+                              {(line.notes || line.comment) && <span className="text-[11px] text-slate-500">{line.notes || line.comment}</span>}
                             </td>
                             <td className="py-2.5 px-3 text-slate-600 capitalize">{line.category.replace('_', ' ')}</td>
                             <td className="py-2.5 px-3 text-right font-semibold text-slate-700">
-                              {Number(line.claimed_amount_ht).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                              {Number(line.claimed_amount_ht ?? line.claimed_amount ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
                             </td>
                             <td className="py-2.5 px-3 text-right font-extrabold text-[#0f3854]">
-                              {Number(line.retained_amount_ht).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                              {Number(line.retained_amount_ht ?? line.retained_amount ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
                             </td>
                             <td className="py-2.5 px-3">
                               <div className="flex flex-wrap gap-1">
@@ -2145,11 +2154,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                 type="button"
                                 onClick={() => {
                                   setEditingDamageId(line.id);
-                                  setDmgCategory(line.category);
+                                  setDmgCategory(line.category as any);
                                   setDmgLabel(line.label);
-                                  setDmgClaimed(String(line.claimed_amount_ht));
-                                  setDmgRetained(String(line.retained_amount_ht));
-                                  setDmgNotes(line.notes || '');
+                                  setDmgClaimed(String(line.claimed_amount_ht ?? line.claimed_amount ?? ''));
+                                  setDmgRetained(String(line.retained_amount_ht ?? line.retained_amount ?? ''));
+                                  setDmgNotes(line.notes || line.comment || '');
                                   setDmgSelectedPieces(line.piece_numbers || []);
                                   setShowAddDamageLine(true);
                                 }}
@@ -2377,7 +2386,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                               {rep.report_type}
                             </span>
                             <span className="text-xs font-mono font-bold text-slate-600">
-                              Envoyé le {(rep.issued_date || '').split('-').reverse().join('/')}
+                              Envoyé le {((rep.sent_date || rep.issued_date || '')).split('-').reverse().join('/')}
                             </span>
                             {rep.recipient && (
                               <span className="text-xs text-slate-500">• Destinataire : {rep.recipient}</span>
