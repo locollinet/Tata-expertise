@@ -36,6 +36,10 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 app.use('/uploads', express.static(uploadsDir));
+const publicUploadsDir = path.resolve(process.cwd(), 'public/uploads');
+if (fs.existsSync(publicUploadsDir)) {
+  app.use('/uploads', express.static(publicUploadsDir));
+}
 
 // API routes
 app.use('/api', apiRouter);

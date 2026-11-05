@@ -113,7 +113,17 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
         throw new Error("Enregistrement audio non supporté sur ce navigateur.");
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      let options: MediaRecorderOptions | undefined = undefined;
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          options = { mimeType: 'audio/webm;codecs=opus' };
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          options = { mimeType: 'audio/webm' };
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          options = { mimeType: 'audio/mp4' };
+        }
+      }
+      const mediaRecorder = options ? new MediaRecorder(stream, options) : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -125,9 +135,13 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const actualMime = mediaRecorder.mimeType || (audioChunksRef.current[0]?.type) || 'audio/webm';
+        const isMp4 = actualMime.includes('mp4') || actualMime.includes('aac');
+        const finalType = isMp4 ? 'audio/mp4' : (actualMime.includes('ogg') ? 'audio/ogg' : 'audio/webm');
+        const ext = isMp4 ? 'm4a' : (actualMime.includes('ogg') ? 'ogg' : 'webm');
+        const audioBlob = new Blob(audioChunksRef.current, { type: finalType });
         if (audioBlob.size > 500) {
-          const audioFile = new File([audioBlob], `note_vocale_${Date.now()}.webm`, { type: 'audio/webm' });
+          const audioFile = new File([audioBlob], `note_vocale_${Date.now()}.${ext}`, { type: finalType });
           handleFilePicked(audioFile);
         }
       };

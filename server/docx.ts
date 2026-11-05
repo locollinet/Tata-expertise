@@ -1021,8 +1021,14 @@ export async function generateReportDocx(
         })
       );
       // If photo file exists on disk and is readable, embed it
-      const photoPath = path.resolve(process.cwd(), 'data/uploads', photo.filename);
-      if (fs.existsSync(photoPath)) {
+      const cleanFilename = path.basename(photo.filename);
+      const candidatePaths = [
+        path.resolve(process.cwd(), 'data/uploads', cleanFilename),
+        path.resolve(process.cwd(), 'public/uploads', cleanFilename),
+        path.resolve(process.cwd(), 'uploads', cleanFilename),
+      ];
+      const photoPath = candidatePaths.find(p => fs.existsSync(p));
+      if (photoPath) {
         try {
           const imageBuffer = fs.readFileSync(photoPath);
           children.push(

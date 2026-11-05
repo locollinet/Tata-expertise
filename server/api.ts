@@ -2951,6 +2951,14 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
       }
     }
 
+    // Inclure une sauvegarde intégrale de la base de données et des données de missions
+    const dbFile = process.env.DB_PATH || path.resolve(process.cwd(), 'data/vp_expertise.db');
+    if (fs.existsSync(dbFile)) {
+      rootFolder.file('_Sauvegarde_Securisee/vp_expertise.db', fs.readFileSync(dbFile));
+    }
+    const allMissions = db.prepare('SELECT * FROM missions').all();
+    rootFolder.file('_Sauvegarde_Securisee/export_dossiers.json', JSON.stringify(allMissions, null, 2));
+
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', 'attachment; filename="VP_Expertise_iCloud_Dossiers.zip"');
