@@ -183,19 +183,21 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
       .join('');
 
     // Largeur utile exacte entre marge gauche (3828 dxa) et marge droite (1274 dxa) sur A4 (11906 dxa) = 6804 dxa (12,0 cm = 4320540 EMU)
-    // Proportions exactes des 5 colonnes R, S, T, U, V de son Excel : 3444 + 580 + 580 + 1100 + 1100 = 6804 dxa
-    const COL_OBJET = 3444;
-    const COL_QTE = 580;
-    const COL_TPS = 580;
-    const COL_PU = 1100;
-    const COL_MT = 1100;
-    const COL_LEFT_3 = COL_OBJET + COL_QTE + COL_TPS; // 4604 dxa
+    // Colonne Objet élargie à 3824 dxa + police 7.5pt (sz=15) et lignes aérées pour que
+    // « Étude de documents, analyse, gestion du dossier » tienne sur une seule ligne sans retour à la ligne.
+    const COL_OBJET = 3824;
+    const COL_QTE = 440;
+    const COL_TPS = 480;
+    const COL_PU = 1030;
+    const COL_MT = 1030;
+    const COL_LEFT_3 = COL_OBJET + COL_QTE + COL_TPS; // 4744 dxa
     const TABLE_WIDTH = COL_LEFT_3 + COL_PU + COL_MT; // 6804 dxa
 
     const lines = invoice.lines || [];
-    // Adapter légèrement la hauteur de ligne selon le nombre de lignes pour toujours tenir sur 1 page comme dans Facture_2026-103
-    const rowSpacing = lines.length > 7 ? 35 : 55;
-    const rowHeight = lines.length > 7 ? 240 : 280;
+    // Aération généreuse des lignes tout en tenant sur 1 page
+    const rowSpacing = lines.length > 8 ? 45 : 65;
+    const rowHeight = lines.length > 8 ? 260 : 300;
+    const itemFontSz = 15; // 7.5pt Century Gothic : net, aéré, une seule ligne
 
     const itemRowsXml = lines
       .map(line => {
@@ -220,10 +222,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
             <w:p>
               <w:pPr>
                 <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
               </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
                 <w:t>${escapeXml(line.description)}</w:t>
               </w:r>
             </w:p>
@@ -237,10 +239,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
               <w:pPr>
                 <w:jc w:val="center"/>
                 <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
               </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
                 <w:t>${escapeXml(formatFrNumber(qtyVal))}</w:t>
               </w:r>
             </w:p>
@@ -254,10 +256,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
               <w:pPr>
                 <w:jc w:val="center"/>
                 <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
               </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
                 <w:t>${escapeXml(tpsText)}</w:t>
               </w:r>
             </w:p>
@@ -271,10 +273,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
               <w:pPr>
                 <w:jc w:val="right"/>
                 <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
               </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
                 <w:t>${escapeXml(formatFrCurrency(line.unit_price_ht))}</w:t>
               </w:r>
             </w:p>
@@ -288,10 +290,10 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
               <w:pPr>
                 <w:jc w:val="right"/>
                 <w:spacing w:before="${rowSpacing}" w:after="${rowSpacing}" w:line="220" w:lineRule="auto"/>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
               </w:pPr>
               <w:r>
-                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr>
+                <w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="595959"/><w:sz w:val="${itemFontSz}"/><w:szCs w:val="${itemFontSz}"/></w:rPr>
                 <w:t>${escapeXml(formatFrCurrency(line.total_ht))}</w:t>
               </w:r>
             </w:p>

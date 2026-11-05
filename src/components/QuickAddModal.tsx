@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { X, Clock, Receipt, Check, AlertCircle, Camera, Users, Search, Archive } from 'lucide-react';
 import { Mission, ACTIVITY_CATEGORY_LABELS, ActivityCategory } from '@shared/types.js';
 import { api } from '../api.js';
-import { syncFileToLocalMacFolder, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
+import { syncFileToLocalMacFolder, syncComptaFileToMac, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -185,10 +185,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             throw new Error(err.error || "Erreur lors de l'enregistrement du frais");
           }
 
-          await syncFileToLocalMacFolder({
-            missionCode: selectedMission?.code || 'VP_Dossier',
-            subFolder: 'Justificatifs_Frais',
-            fileName: receiptFile.name,
+          // Les justificatifs de frais sont rangés dans le dossier Compta séparé des dossiers d'expertise sur le Mac
+          await syncComptaFileToMac({
+            month: date.slice(0, 7),
+            subFolder: 'Justificatifs',
+            fileName: `${date}_${selectedMission?.code || 'Frais'}_${receiptFile.name}`,
             data: receiptFile,
           });
         } else {
@@ -244,12 +245,21 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           isSelectedForReport: photoForReport,
         });
 
-        await syncFileToLocalMacFolder({
-          missionCode: selectedMission?.code || 'VP_Dossier',
-          subFolder: 'Photos_Terrain',
-          fileName: photoFile.name,
-          data: photoFile,
-        });
+        if (photoType === 'justificatif') {
+          await syncComptaFileToMac({
+            month: date.slice(0, 7),
+            subFolder: 'Justificatifs',
+            fileName: `${date}_${selectedMission?.code || 'Frais'}_${photoFile.name}`,
+            data: photoFile,
+          });
+        } else {
+          await syncFileToLocalMacFolder({
+            missionCode: selectedMission?.code || 'VP_Dossier',
+            subFolder: '03_Constatations_immediates',
+            fileName: photoFile.name,
+            data: photoFile,
+          });
+        }
 
         if (keepOpen) {
           setPhotoCaption('');
@@ -453,7 +463,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                     onChange={(e: any) => setCategory(e.target.value)}
                     className="w-full text-xs rounded-lg border-slate-300 shadow-xs focus:border-[#0f3854] focus:ring-[#0f3854] py-2 px-2.5 bg-white border font-medium text-slate-800"
                   >
-                    <option value="etude_documents">Étude de documents, gestion du dossier</option>
+                    <option value="etude_documents">Étude de documents, analyse, gestion du dossier</option>
                     <option value="expertise">Expertise</option>
                     <option value="reunion_assureurs">Réunion avec les assureurs</option>
                     <option value="reunion_assure">Réunion avec l’assuré</option>

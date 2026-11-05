@@ -1,14 +1,73 @@
-// Synchronisation automatique des documents, photos et factures vers un dossier local Mac / iCloud Drive
-// Utilise la File System Access API (Chrome / Edge / Brave sur macOS) avec persistance IndexedDB,
-// ainsi qu'un mode de téléchargement automatique préfixé pour Safari macOS, et synchronisation dans Firebase Firestore.
+// Synchronisation automatique des dossiers d'expertise (6 volets) et de la comptabilité (séparée)
+// vers un dossier local Mac / iCloud Drive choisi dans le Finder.
+// Arborescence créée sur le Mac :
+// <Dossier Racine Rocco>/
+// ├── Dossiers/
+// │   └── <Code_Dossier>/
+// │       ├── 01_Page_de_garde/
+// │       ├── 02_Contrats/
+// │       ├── 03_Constatations_immediates/
+// │       ├── 04_Contradictoire/
+// │       ├── 05_Comptes_du_prejudice/
+// │       └── 06_Rapports_emis/
+// └── Compta/
+//     └── <AAAA-MM>/
+//         ├── Justificatifs/
+//         └── Factures_emises/
 
 import { doc, setDoc } from 'firebase/firestore';
 import { db as firestoreDb, auth } from '../firebase.js';
-import { EvidenceItem } from '@shared/types.js';
+import { DossierVoletKey, EvidenceItem } from '@shared/types.js';
 
 const DB_NAME = 'vp_expertise_local_sync';
 const STORE_NAME = 'handles';
 const HANDLE_KEY = 'icloud_root_dir';
+
+export type MacDossierSubFolder =
+  | '01_Page_de_garde'
+  | '02_Contrats'
+  | '03_Constatations_immediates'
+  | '04_Contradictoire'
+  | '05_Comptes_du_prejudice'
+  | '06_Rapports_emis'
+  // Alias rétrocompatibles
+  | 'Photos_Terrain'
+  | 'Documents_Pieces'
+  | 'Justificatifs_Frais'
+  | 'Factures'
+  | 'Rapports';
+
+export const VOLET_TO_MAC_FOLDER: Record<DossierVoletKey, MacDossierSubFolder> = {
+  garde: '01_Page_de_garde',
+  contrats: '02_Contrats',
+  constatations: '03_Constatations_immediates',
+  contradictoire: '04_Contradictoire',
+  prejudice: '05_Comptes_du_prejudice',
+  rapports: '06_Rapports_emis',
+};
+
+export const ALL_DOSSIER_VOLET_FOLDERS: MacDossierSubFolder[] = [
+  '01_Page_de_garde',
+  '02_Contrats',
+  '03_Constatations_immediates',
+  '04_Contradictoire',
+  '05_Comptes_du_prejudice',
+  '06_Rapports_emis',
+];
+
+function resolveCanonicalVoletFolder(subFolder: MacDossierSubFolder): string {
+  switch (subFolder) {
+    case 'Factures':
+      return '01_Page_de_garde';
+    case 'Photos_Terrain':
+    case 'Documents_Pieces':
+      return '03_Constatations_immediates';
+    case 'Rapports':
+      return '06_Rapports_emis';
+    default:
+      return subFolder;
+  }
+}
 
 function openHandleDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -64,14 +123,21 @@ export function enableAutoDownloadSync(): { connected: boolean; folderName: stri
   const name = 'iCloud Drive (Copie auto)';
   localStorage.setItem('vp_local_sync_folder_name', name);
   localStorage.setItem('vp_local_sync_mode', 'safari_auto');
+  localStorage.setItem('vp_local_sync_last_at', new Date().toISOString());
   localStorage.removeItem('vp_local_sync_disabled');
   window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
   return { connected: true, folderName: name, mode: 'safari_auto' };
 }
 
+function markSyncSuccess(detail?: string) {
+  localStorage.setItem('vp_local_sync_last_at', new Date().toISOString());
+  if (detail) localStorage.setItem('vp_local_sync_last_path', detail);
+  window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
+}
+
 /**
- * Crée automatiquement le dossier d'une mission (<Code_Mission>) et ses 4 sous-dossiers
- * dans le dossier racine iCloud Drive relié sur le Mac.
+ * Crée automatiquement le dossier d'un dossier d'expertise dans `Dossiers/<Code_Dossier>`
+ * avec ses 6 sous-dossiers numérotés (01 à 06) + le dossier `Compta/` séparé à la racine.
  */
 export async function ensureMissionFolderOnMac(missionCode: string): Promise<boolean> {
   if (!isFileSystemAccessSupported()) return false;
@@ -84,12 +150,15 @@ export async function ensureMissionFolderOnMac(missionCode: string): Promise<boo
     }
     if (perm !== 'granted') return false;
 
+    const dossiersRoot = await rootHandle.getDirectoryHandle('Dossiers', { create: true });
+    await rootHandle.getDirectoryHandle('Compta', { create: true });
+
     const safeMission = (missionCode || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const missionDir = await rootHandle.getDirectoryHandle(safeMission, { create: true });
-    await missionDir.getDirectoryHandle('Photos_Terrain', { create: true });
-    await missionDir.getDirectoryHandle('Documents_Pieces', { create: true });
-    await missionDir.getDirectoryHandle('Justificatifs_Frais', { create: true });
-    await missionDir.getDirectoryHandle('Factures', { create: true });
+    const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
+    for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
+      await missionDir.getDirectoryHandle(folder, { create: true });
+    }
+    markSyncSuccess(`${rootHandle.name}/Dossiers/${safeMission}`);
     return true;
   } catch {
     return false;
@@ -97,8 +166,8 @@ export async function ensureMissionFolderOnMac(missionCode: string): Promise<boo
 }
 
 /**
- * Synchronise automatiquement TOUS les dossiers existants (et leurs factures Word + pièces)
- * dans le dossier racine iCloud Drive du Mac dès sa connexion.
+ * Synchronise automatiquement TOUS les dossiers existants (6 volets + factures) et le dossier Compta
+ * dans le dossier racine du Mac dès sa connexion.
  */
 export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: number; filesSynced: number }> {
   let missionsSynced = 0;
@@ -114,7 +183,8 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
     }
     if (perm !== 'granted') return { missionsSynced, filesSynced };
 
-    // 1. Créer l'arborescence de tous les dossiers existants (en cours)
+    // 1. Créer le dossier Compta séparé + l'arborescence 01..06 de tous les dossiers
+    await rootHandle.getDirectoryHandle('Compta', { create: true });
     const missionsRes = await fetch('/api/missions');
     if (missionsRes.ok) {
       const missions = await missionsRes.json();
@@ -126,7 +196,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
       }
     }
 
-    // 2. Déposer toutes les factures Word (.docx) existantes dans <Code_Mission>/Factures/
+    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/01_Page_de_garde/ ET dans Compta/<AAAA-MM>/Factures_emises/
     const invoicesRes = await fetch('/api/invoices');
     if (invoicesRes.ok) {
       const invoices = await invoicesRes.json();
@@ -137,7 +207,14 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
             const blob = await docxRes.blob();
             await syncFileToLocalMacFolder({
               missionCode: inv.our_ref || 'Cabinet_VP',
-              subFolder: 'Factures',
+              subFolder: '01_Page_de_garde',
+              fileName: `Facture_${inv.invoice_number}.docx`,
+              data: blob,
+            });
+            const month = (inv.date || '2026-10').slice(0, 7);
+            await syncComptaFileToMac({
+              month,
+              subFolder: 'Factures_emises',
               fileName: `Facture_${inv.invoice_number}.docx`,
               data: blob,
             });
@@ -172,10 +249,10 @@ export async function connectLocalMacFolder(): Promise<{
       await saveDirectoryHandle(dirHandle);
       localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
       localStorage.setItem('vp_local_sync_mode', 'native');
+      localStorage.setItem('vp_local_sync_last_at', new Date().toISOString());
       localStorage.removeItem('vp_local_sync_disabled');
       window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
 
-      // Synchronise automatiquement tous les dossiers et factures existants dès la sélection du dossier racine !
       const stats = await syncAllExistingMissionsToMac();
 
       return {
@@ -207,23 +284,32 @@ export async function disconnectLocalMacFolder(): Promise<void> {
   window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
 }
 
-export function getLocalSyncStatus(): { connected: boolean; folderName: string | null; mode: string | null } {
+export function getLocalSyncStatus(): {
+  connected: boolean;
+  folderName: string | null;
+  mode: string | null;
+  lastSyncedAt: string | null;
+  lastPath: string | null;
+} {
   const disabled = localStorage.getItem('vp_local_sync_disabled') === '1';
   if (disabled) {
-    return { connected: false, folderName: null, mode: null };
+    return { connected: false, folderName: null, mode: null, lastSyncedAt: null, lastPath: null };
   }
-  const folderName = localStorage.getItem('vp_local_sync_folder_name') || 'iCloud Drive (Copie auto)';
+  const folderName = localStorage.getItem('vp_local_sync_folder_name') || 'Rocco_Mac (Synchronisé)';
   const mode = localStorage.getItem('vp_local_sync_mode') || 'safari_auto';
+  const lastSyncedAt = localStorage.getItem('vp_local_sync_last_at');
+  const lastPath = localStorage.getItem('vp_local_sync_last_path');
   return {
     connected: true,
     folderName,
     mode,
+    lastSyncedAt,
+    lastPath,
   };
 }
 
 /**
- * Enregistre simultanément une preuve / photo / document dans Firebase Firestore
- * afin que tout dépôt fait depuis Saisie Rapide ou Pièces & Documents soit aussi dans Firebase.
+ * Enregistre simultanément une pièce / photo / document dans Firebase Firestore
  */
 export async function mirrorEvidenceToFirestore(params: {
   missionId: string;
@@ -232,6 +318,8 @@ export async function mirrorEvidenceToFirestore(params: {
   title?: string;
   caption?: string;
   type?: 'photo' | 'document' | 'constat';
+  pieceNumber?: number;
+  section?: DossierVoletKey;
   serverFilename?: string;
   isSelectedForReport?: boolean;
 }): Promise<void> {
@@ -256,9 +344,11 @@ export async function mirrorEvidenceToFirestore(params: {
       filename: params.file.name,
       file_size: params.file.size,
       mime_type: params.file.type,
-      caption: (params.caption || params.title || params.file.name).trim(),
+      caption: (params.caption || params.title || '').trim(),
       taken_at: new Date().toISOString(),
       order_index: Date.now(),
+      piece_number: params.pieceNumber,
+      section: params.section,
       is_selected_for_report: params.isSelectedForReport ?? true,
       created_by: uid,
       created_at: new Date().toISOString(),
@@ -270,19 +360,21 @@ export async function mirrorEvidenceToFirestore(params: {
 }
 
 /**
- * Écrit automatiquement un fichier (File ou Blob) dans le dossier local Mac / iCloud Drive connecté :
- * Structure créée automatiquement : <Dossier Racine iCloud>/<Code_Mission>/<SousDossier>/<NomFichier>
+ * Écrit automatiquement un justificatif comptable ou un frais de déplacement dans le dossier `Compta/<AAAA-MM>/`
+ * séparé des dossiers d'expertise sur le Mac :
+ * `<Dossier Racine>/Compta/<AAAA-MM>/<Justificatifs | Factures_emises>/<NomFichier>`
  */
-export async function syncFileToLocalMacFolder(params: {
-  missionCode: string;
-  subFolder: 'Photos_Terrain' | 'Documents_Pieces' | 'Justificatifs_Frais' | 'Factures' | 'Rapports';
+export async function syncComptaFileToMac(params: {
+  month: string; // YYYY-MM
+  subFolder?: 'Justificatifs' | 'Factures_emises';
   fileName: string;
   data: File | Blob;
 }): Promise<{ synced: boolean; path?: string; method?: string }> {
   const status = getLocalSyncStatus();
   if (!status.connected) return { synced: false };
 
-  const safeMission = (params.missionCode || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeMonth = (params.month || new Date().toISOString().slice(0, 7)).replace(/[^0-9-]/g, '');
+  const targetSub = params.subFolder || 'Justificatifs';
   const safeFile = params.fileName.replace(/[/\\?%*:|"<>]/g, '_');
 
   if (status.mode === 'native' && isFileSystemAccessSupported()) {
@@ -290,23 +382,113 @@ export async function syncFileToLocalMacFolder(params: {
       const rootHandle = await getSavedDirectoryHandle();
       if (!rootHandle) return { synced: false };
 
-      // Check or request permission
       let perm = await rootHandle.queryPermission({ mode: 'readwrite' });
       if (perm !== 'granted') {
         perm = await rootHandle.requestPermission({ mode: 'readwrite' });
       }
       if (perm !== 'granted') return { synced: false };
 
-      const missionDir = await rootHandle.getDirectoryHandle(safeMission, { create: true });
-      const subDir = await missionDir.getDirectoryHandle(params.subFolder, { create: true });
+      const comptaRoot = await rootHandle.getDirectoryHandle('Compta', { create: true });
+      const monthDir = await comptaRoot.getDirectoryHandle(safeMonth, { create: true });
+      const subDir = await monthDir.getDirectoryHandle(targetSub, { create: true });
       const fileHandle = await subDir.getFileHandle(safeFile, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(params.data);
       await writable.close();
 
+      const fullPath = `${rootHandle.name}/Compta/${safeMonth}/${targetSub}/${safeFile}`;
+      markSyncSuccess(fullPath);
       return {
         synced: true,
-        path: `${rootHandle.name}/${safeMission}/${params.subFolder}/${safeFile}`,
+        path: fullPath,
+        method: 'native',
+      };
+    } catch (err) {
+      console.warn('Synchronisation dossier Compta Mac ignorée :', err);
+      return { synced: false };
+    }
+  } else if (status.mode === 'safari_auto') {
+    try {
+      const url = URL.createObjectURL(params.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Compta__${safeMonth}__${targetSub}__${safeFile}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      const fullPath = `Compta/${safeMonth}/${targetSub}/${safeFile}`;
+      markSyncSuccess(fullPath);
+      return {
+        synced: true,
+        path: fullPath,
+        method: 'safari_auto',
+      };
+    } catch {
+      return { synced: false };
+    }
+  }
+  return { synced: false };
+}
+
+/**
+ * Écrit automatiquement un fichier d'expertise dans le volet correspondant du dossier :
+ * `<Dossier Racine>/Dossiers/<Code_Dossier>/<01..06_Volet>/<NomFichier>`
+ * (Si `subFolder === 'Justificatifs_Frais'`, route automatiquement vers `Compta/<AAAA-MM>/Justificatifs/` !)
+ */
+export async function syncFileToLocalMacFolder(params: {
+  missionCode: string;
+  subFolder: MacDossierSubFolder;
+  fileName: string;
+  data: File | Blob;
+  month?: string;
+}): Promise<{ synced: boolean; path?: string; method?: string }> {
+  // Règle Valentine : tous les justificatifs de frais vont dans le dossier Compta séparé des dossiers techniques
+  if (params.subFolder === 'Justificatifs_Frais') {
+    const month = params.month || new Date().toISOString().slice(0, 7);
+    const prefixedName = params.missionCode ? `${params.missionCode}_${params.fileName}` : params.fileName;
+    return syncComptaFileToMac({
+      month,
+      subFolder: 'Justificatifs',
+      fileName: prefixedName,
+      data: params.data,
+    });
+  }
+
+  const status = getLocalSyncStatus();
+  if (!status.connected) return { synced: false };
+
+  const safeMission = (params.missionCode || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const canonicalVolet = resolveCanonicalVoletFolder(params.subFolder);
+  const safeFile = params.fileName.replace(/[/\\?%*:|"<>]/g, '_');
+
+  if (status.mode === 'native' && isFileSystemAccessSupported()) {
+    try {
+      const rootHandle = await getSavedDirectoryHandle();
+      if (!rootHandle) return { synced: false };
+
+      let perm = await rootHandle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        perm = await rootHandle.requestPermission({ mode: 'readwrite' });
+      }
+      if (perm !== 'granted') return { synced: false };
+
+      const dossiersRoot = await rootHandle.getDirectoryHandle('Dossiers', { create: true });
+      const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
+      for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
+        await missionDir.getDirectoryHandle(folder, { create: true });
+      }
+      const subDir = await missionDir.getDirectoryHandle(canonicalVolet, { create: true });
+      const fileHandle = await subDir.getFileHandle(safeFile, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(params.data);
+      await writable.close();
+
+      const fullPath = `${rootHandle.name}/Dossiers/${safeMission}/${canonicalVolet}/${safeFile}`;
+      markSyncSuccess(fullPath);
+      return {
+        synced: true,
+        path: fullPath,
         method: 'native',
       };
     } catch (err) {
@@ -314,19 +496,20 @@ export async function syncFileToLocalMacFolder(params: {
       return { synced: false };
     }
   } else if (status.mode === 'safari_auto') {
-    // Sur Safari, déclenche un téléchargement local nommé avec le dossier mission
     try {
       const url = URL.createObjectURL(params.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${safeMission}__${params.subFolder}__${safeFile}`;
+      a.download = `Dossiers__${safeMission}__${canonicalVolet}__${safeFile}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
+      const fullPath = `Dossiers/${safeMission}/${canonicalVolet}/${safeFile}`;
+      markSyncSuccess(fullPath);
       return {
         synced: true,
-        path: `iCloud Drive/${safeMission}__${params.subFolder}__${safeFile}`,
+        path: fullPath,
         method: 'safari_auto',
       };
     } catch {

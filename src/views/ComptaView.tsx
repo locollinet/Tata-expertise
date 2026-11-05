@@ -21,9 +21,12 @@ import {
   RefreshCw,
   Search,
   ExternalLink,
+  Paperclip,
+  FolderOpen,
 } from 'lucide-react';
 import { AccountingEntry, RecurringExpense, RecurringFrequency, BankReconciliationReport, BankStatementItem } from '@shared/types.js';
 import { api } from '../api.js';
+import { syncComptaFileToMac, isLocalSyncConnected, getLocalSyncFolderName } from '../utils/localFolderSync.js';
 
 export const ComptaView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('2026-10');
@@ -75,6 +78,7 @@ export const ComptaView: React.FC = () => {
   const [entryVatAmount, setEntryVatAmount] = useState('0');
   const [entryAmountTTC, setEntryAmountTTC] = useState('');
   const [entryComment, setEntryComment] = useState('');
+  const [entryReceiptFile, setEntryReceiptFile] = useState<File | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Edit Monthly Entry Modal (pour ajuster ponctuellement un mois ex: hors-forfait téléphone à l'étranger)
@@ -85,6 +89,7 @@ export const ComptaView: React.FC = () => {
   const [editHT, setEditHT] = useState('');
   const [editVat, setEditVat] = useState('');
   const [editComment, setEditComment] = useState('');
+  const [editReceiptFile, setEditReceiptFile] = useState<File | null>(null);
   const [updateTemplateToo, setUpdateTemplateToo] = useState(false);
 
   // Edit Recurring Template Modal (pour modifier un abonnement une fois par an)
@@ -256,22 +261,50 @@ export const ComptaView: React.FC = () => {
       const ttc = parseFloat(entryAmountTTC.replace(',', '.')) || Math.round((ht + vat) * 100) / 100;
       const numericRate = entryVatRateMode === 'custom' ? (ht > 0 ? vat / ht : 0) : parseFloat(entryVatRateMode);
 
-      const res = await api.addAccountingEntry({
-        month: selectedMonth,
-        type: entryType,
-        frequency: entryType === 'depense' ? entryFrequency : 'ponctuel',
-        date: entryDate,
-        piece_number: entryPiece || undefined,
-        invoice_number: entryInvoice || undefined,
-        mission_code: entryCode || undefined,
-        object: entryObject,
-        party: entryParty,
-        amount_ht: ht,
-        vat_rate: numericRate,
-        vat_amount: vat,
-        amount_ttc: ttc,
-        comment: entryComment || undefined,
-      });
+      let res: any;
+      if (entryReceiptFile) {
+        const formData = new FormData();
+        formData.append('month', selectedMonth);
+        formData.append('type', entryType);
+        formData.append('frequency', entryType === 'depense' ? entryFrequency : 'ponctuel');
+        formData.append('date', entryDate);
+        if (entryPiece) formData.append('piece_number', entryPiece);
+        if (entryInvoice) formData.append('invoice_number', entryInvoice);
+        if (entryCode) formData.append('mission_code', entryCode);
+        formData.append('object', entryObject);
+        formData.append('party', entryParty);
+        formData.append('amount_ht', String(ht));
+        formData.append('vat_rate', String(numericRate));
+        formData.append('vat_amount', String(vat));
+        formData.append('amount_ttc', String(ttc));
+        if (entryComment) formData.append('comment', entryComment);
+        formData.append('receipt', entryReceiptFile);
+
+        res = await api.addAccountingEntry(formData);
+        await syncComptaFileToMac({
+          month: selectedMonth,
+          subFolder: 'Justificatifs',
+          fileName: `${entryDate}_${entryParty.replace(/[^a-zA-Z0-9_-]/g, '_')}_${entryReceiptFile.name}`,
+          data: entryReceiptFile,
+        });
+      } else {
+        res = await api.addAccountingEntry({
+          month: selectedMonth,
+          type: entryType,
+          frequency: entryType === 'depense' ? entryFrequency : 'ponctuel',
+          date: entryDate,
+          piece_number: entryPiece || undefined,
+          invoice_number: entryInvoice || undefined,
+          mission_code: entryCode || undefined,
+          object: entryObject,
+          party: entryParty,
+          amount_ht: ht,
+          vat_rate: numericRate,
+          vat_amount: vat,
+          amount_ttc: ttc,
+          comment: entryComment || undefined,
+        });
+      }
       setShowAddModal(false);
       setModalError(null);
       setEntryObject('');
@@ -280,6 +313,7 @@ export const ComptaView: React.FC = () => {
       setEntryVatAmount('0');
       setEntryAmountTTC('');
       setEntryComment('');
+      setEntryReceiptFile(null);
       setFeedback(res.message);
       setTimeout(() => setFeedback(null), 4000);
       loadMonthData();
@@ -296,6 +330,7 @@ export const ComptaView: React.FC = () => {
     setEditHT(String(entry.amount_ht));
     setEditVat(String(entry.vat_amount));
     setEditComment(entry.comment || '');
+    setEditReceiptFile(null);
     setUpdateTemplateToo(false);
   };
 
@@ -306,17 +341,39 @@ export const ComptaView: React.FC = () => {
     const vat = parseFloat(editVat.replace(',', '.')) || 0;
     const ttc = Math.round((ht + vat) * 100) / 100;
 
-    await api.updateAccountingEntry(editingEntry.id, {
-      date: editDate,
-      object: editObject,
-      party: editParty,
-      amount_ht: ht,
-      vat_amount: vat,
-      amount_ttc: ttc,
-      comment: editComment,
-      update_recurring_template: updateTemplateToo,
-    });
+    if (editReceiptFile) {
+      const formData = new FormData();
+      formData.append('date', editDate);
+      formData.append('object', editObject);
+      formData.append('party', editParty);
+      formData.append('amount_ht', String(ht));
+      formData.append('vat_amount', String(vat));
+      formData.append('amount_ttc', String(ttc));
+      formData.append('comment', editComment);
+      formData.append('update_recurring_template', String(updateTemplateToo));
+      formData.append('receipt', editReceiptFile);
+      await api.updateAccountingEntry(editingEntry.id, formData);
+
+      await syncComptaFileToMac({
+        month: selectedMonth,
+        subFolder: 'Justificatifs',
+        fileName: `${editDate}_${editParty.replace(/[^a-zA-Z0-9_-]/g, '_')}_${editReceiptFile.name}`,
+        data: editReceiptFile,
+      });
+    } else {
+      await api.updateAccountingEntry(editingEntry.id, {
+        date: editDate,
+        object: editObject,
+        party: editParty,
+        amount_ht: ht,
+        vat_amount: vat,
+        amount_ttc: ttc,
+        comment: editComment,
+        update_recurring_template: updateTemplateToo,
+      });
+    }
     setEditingEntry(null);
+    setEditReceiptFile(null);
     setFeedback(
       updateTemplateToo
         ? "Écriture et modèle d'abonnement récurrent mis à jour !"
@@ -324,6 +381,23 @@ export const ComptaView: React.FC = () => {
     );
     setTimeout(() => setFeedback(null), 4000);
     loadMonthData();
+  };
+
+  const handleQuickAttachReceipt = async (entry: AccountingEntry, file: File) => {
+    try {
+      await api.uploadAccountingEntryReceipt(entry.id, file);
+      await syncComptaFileToMac({
+        month: selectedMonth,
+        subFolder: 'Justificatifs',
+        fileName: `${entry.date}_${entry.party.replace(/[^a-zA-Z0-9_-]/g, '_')}_${file.name}`,
+        data: file,
+      });
+      setFeedback(`Justificatif « ${file.name} » rattaché à « ${entry.object} » et classé dans Compta/${selectedMonth}/Justificatifs !`);
+      setTimeout(() => setFeedback(null), 4000);
+      loadMonthData();
+    } catch (err: any) {
+      setFeedback(`Erreur upload justificatif : ${err.message}`);
+    }
   };
 
   const handleDeleteEntry = async (id: string) => {
@@ -587,13 +661,36 @@ export const ComptaView: React.FC = () => {
 
           {activeSubTab === 'livre' && (
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+              {/* Bandeau explicatif : Dossier Mac Compta séparé des Dossiers d'expertise */}
+              <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-2 text-slate-700">
+                  <FolderOpen className="w-4 h-4 text-[#0f3854] shrink-0" />
+                  <span>
+                    Classement Mac séparé des dossiers d'expertise : tous vos justificatifs de frais et factures sont rangés à part dans{' '}
+                    <code className="font-mono font-bold text-[#0f3854] bg-white px-1.5 py-0.5 rounded border border-sky-200">
+                      {isLocalSyncConnected() ? `${getLocalSyncFolderName()}/` : ''}Compta/{selectedMonth}/Justificatifs/
+                    </code>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEntryFrequency('ponctuel');
+                    setShowAddModal(true);
+                  }}
+                  className="text-xs font-bold text-[#0f3854] hover:underline shrink-0"
+                >
+                  + Saisir un frais avec justificatif →
+                </button>
+              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900">
                     Livre comptable — {monthLabels[selectedMonth] || selectedMonth} ({data.entries.length} écritures)
                   </h2>
                   <p className="text-[11px] text-slate-500">
-                    Cliquez sur « Modifier » sur n'importe quelle ligne (ex: dépassement téléphone à l'étranger, régularisation URSSAF) pour l'ajuster ce mois-ci.
+                    Cliquez sur « + Joindre justif » pour glisser un reçu/facture sur n'importe quelle ligne ou sur « Modifier » pour ajuster un montant.
                   </p>
                 </div>
                 <button
@@ -620,6 +717,7 @@ export const ComptaView: React.FC = () => {
                       <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette HT</th>
                       <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">TVA coll.</th>
                       <th className="py-2.5 px-2.5 font-semibold text-right text-[#0f3854] bg-sky-50/30">Recette TTC</th>
+                      <th className="py-2.5 px-2.5 font-semibold text-center">Justificatif</th>
                       <th className="py-2.5 px-2.5 font-semibold text-right">Actions</th>
                     </tr>
                   </thead>
@@ -678,6 +776,39 @@ export const ComptaView: React.FC = () => {
                           </td>
                           <td className="py-2 px-2.5 text-right font-bold text-[#0f3854] bg-sky-50/20 whitespace-nowrap">
                             {entry.type === 'recette' ? `${entry.amount_ttc.toFixed(2).replace('.', ',')} €` : '—'}
+                          </td>
+                          {/* Justificatif */}
+                          <td className="py-2 px-2.5 text-center whitespace-nowrap">
+                            {entry.receipt_filename ? (
+                              <div className="inline-flex items-center space-x-1">
+                                <a
+                                  href={`/uploads/${entry.receipt_filename}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={entry.receipt_original_name || entry.receipt_filename}
+                                  className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold hover:bg-emerald-100"
+                                >
+                                  <Paperclip className="w-3 h-3" />
+                                  <span>Voir justif</span>
+                                </a>
+                              </div>
+                            ) : (
+                              <label className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-semibold cursor-pointer">
+                                <Plus className="w-3 h-3 text-[#0f3854]" />
+                                <span>Joindre justif</span>
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleQuickAttachReceipt(entry, e.target.files[0]);
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                />
+                              </label>
+                            )}
                           </td>
                           <td className="py-2 px-2.5 text-right whitespace-nowrap space-x-1">
                             <button
@@ -1436,6 +1567,21 @@ export const ComptaView: React.FC = () => {
                 />
               </div>
 
+              <div className="p-3 bg-sky-50/60 border border-sky-200 rounded-xl space-y-1.5">
+                <label className="block font-bold text-[#0f3854]">
+                  📎 Justificatif (Facture PDF, ticket, reçu photo — facultatif)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setEntryReceiptFile(e.target.files ? e.target.files[0] : null)}
+                  className="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-white file:text-[#0f3854]"
+                />
+                <span className="block text-[10px] text-slate-500">
+                  Sera classé automatiquement dans votre dossier Mac séparé : <code>Compta/{selectedMonth}/Justificatifs/</code>
+                </span>
+              </div>
+
               <div className="flex justify-end space-x-2 pt-3">
                 <button
                   type="button"
@@ -1535,6 +1681,29 @@ export const ComptaView: React.FC = () => {
                   value={editComment}
                   onChange={(e) => setEditComment(e.target.value)}
                   className="w-full rounded-md border-slate-300 p-2 border bg-white"
+                />
+              </div>
+
+              <div className="p-3 bg-sky-50/60 border border-sky-200 rounded-xl space-y-1.5">
+                <label className="block font-bold text-[#0f3854]">
+                  📎 Justificatif ({editingEntry.receipt_filename ? 'Remplacer le justificatif existant' : 'Joindre un justificatif'})
+                </label>
+                {editingEntry.receipt_filename && (
+                  <a
+                    href={`/uploads/${editingEntry.receipt_filename}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1 text-[11px] font-bold text-emerald-700 hover:underline"
+                  >
+                    <Paperclip className="w-3 h-3" />
+                    <span>Voir le justificatif actuel ({editingEntry.receipt_original_name || editingEntry.receipt_filename})</span>
+                  </a>
+                )}
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setEditReceiptFile(e.target.files ? e.target.files[0] : null)}
+                  className="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-white file:text-[#0f3854]"
                 />
               </div>
 

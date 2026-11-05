@@ -1,4 +1,4 @@
-import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport } from '@shared/types.js';
+import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport, DamageLine, IssuedReport } from '@shared/types.js';
 
 const BASE_URL = '/api';
 
@@ -25,7 +25,7 @@ export const api = {
   // Dashboard
   getDashboard: () => fetchJSON<DashboardSummary>('/dashboard'),
 
-  // Missions
+  // Missions / Dossiers
   getMissions: (query?: string, status?: string) => {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -37,7 +37,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(data),
   }),
-  updateMission: (id: string, data: Partial<Mission>) => fetchJSON<{ message: string }>(`/missions/${id}`, {
+  updateMission: (id: string, data: Partial<Mission> & { stake_note?: string; stake_date?: string }) => fetchJSON<{ message: string; stake_history?: any[]; adverse_parties?: any[] }>(`/missions/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
@@ -56,10 +56,30 @@ export const api = {
   }),
 
   // Expenses
-  addExpense: (data: Partial<Expense>) => fetchJSON<{ id: string; total_ht: number; total_ttc: number; message: string }>('/expenses', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+  addExpense: async (data: Partial<Expense> & { receiptFile?: File | null }) => {
+    if (data.receiptFile) {
+      const fd = new FormData();
+      if (data.mission_id) fd.append('mission_id', data.mission_id);
+      if (data.date) fd.append('date', data.date);
+      if (data.category) fd.append('category', data.category);
+      if (data.label) fd.append('label', data.label);
+      if (data.quantity !== undefined) fd.append('quantity', String(data.quantity));
+      if (data.unit_price !== undefined) fd.append('unit_price', String(data.unit_price));
+      if (data.vat_rate !== undefined) fd.append('vat_rate', String(data.vat_rate));
+      if (data.is_refacturable !== undefined) fd.append('is_refacturable', String(data.is_refacturable));
+      fd.append('receipt', data.receiptFile);
+      const res = await fetch(`${BASE_URL}/expenses`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Erreur HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+    return fetchJSON<{ id: string; total_ht: number; total_ttc: number; receipt_filename?: string; receipt_original_name?: string; message: string }>('/expenses', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
   updateExpense: (id: string, data: Partial<Expense>) => fetchJSON<{ id: string; total_ht: number; total_ttc: number; message: string }>(`/expenses/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -103,6 +123,55 @@ export const api = {
     fetchJSON<{ message: string }>(`/reports/${missionId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  // Volet 5 : Comptes du préjudice
+  getDamageLines: (missionId: string) => fetchJSON<DamageLine[]>(`/missions/${missionId}/damage-lines`),
+  addDamageLine: (missionId: string, data: Partial<DamageLine>) =>
+    fetchJSON<{ id: string; message: string }>(`/missions/${missionId}/damage-lines`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateDamageLine: (id: string, data: Partial<DamageLine>) =>
+    fetchJSON<{ message: string }>(`/damage-lines/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteDamageLine: (id: string) =>
+    fetchJSON<{ message: string }>(`/damage-lines/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Volet 6 : Rapports émis (Packages datés + PJ numérotées)
+  getIssuedReports: (missionId: string) => fetchJSON<IssuedReport[]>(`/missions/${missionId}/issued-reports`),
+  addIssuedReport: async (missionId: string, data: Partial<IssuedReport> & { file?: File | null }) => {
+    const fd = new FormData();
+    if (data.report_type) fd.append('report_type', data.report_type);
+    if (data.title) fd.append('title', data.title);
+    if (data.sent_date) fd.append('sent_date', data.sent_date);
+    if (data.recipient) fd.append('recipient', data.recipient);
+    if (data.notes) fd.append('notes', data.notes);
+    if (data.attached_piece_numbers) fd.append('attached_piece_numbers', JSON.stringify(data.attached_piece_numbers));
+    if (data.file) fd.append('file', data.file);
+
+    const res = await fetch(`${BASE_URL}/missions/${missionId}/issued-reports`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  updateIssuedReport: (id: string, data: Partial<IssuedReport>) =>
+    fetchJSON<{ message: string }>(`/issued-reports/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteIssuedReport: (id: string) =>
+    fetchJSON<{ message: string }>(`/issued-reports/${id}`, {
+      method: 'DELETE',
     }),
 
   // Photos
@@ -188,14 +257,59 @@ export const api = {
       tva_nette_a_payer: number;
     };
   }>(`/compta/entries?month=${month}`),
-  addAccountingEntry: (data: Partial<AccountingEntry> & { category?: string }) => fetchJSON<{ id: string; message: string }>('/compta/entries', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+  addAccountingEntry: async (data: Partial<AccountingEntry> & { category?: string; receiptFile?: File | null }) => {
+    if (data.receiptFile) {
+      const fd = new FormData();
+      if (data.month) fd.append('month', data.month);
+      if (data.type) fd.append('type', data.type);
+      if (data.piece_number) fd.append('piece_number', data.piece_number);
+      if (data.date) fd.append('date', data.date);
+      if (data.invoice_number) fd.append('invoice_number', data.invoice_number);
+      if (data.mission_code) fd.append('mission_code', data.mission_code);
+      if (data.object) fd.append('object', data.object);
+      if (data.party) fd.append('party', data.party);
+      if (data.amount_ht !== undefined) fd.append('amount_ht', String(data.amount_ht));
+      if (data.vat_rate !== undefined) fd.append('vat_rate', String(data.vat_rate));
+      if (data.vat_amount !== undefined) fd.append('vat_amount', String(data.vat_amount));
+      if (data.amount_ttc !== undefined) fd.append('amount_ttc', String(data.amount_ttc));
+      if (data.frequency) fd.append('frequency', data.frequency);
+      if (data.category) fd.append('category', data.category);
+      if (data.comment) fd.append('comment', data.comment);
+      fd.append('receipt', data.receiptFile);
+
+      const res = await fetch(`${BASE_URL}/compta/entries`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Erreur HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+    return fetchJSON<{ id: string; receipt_filename?: string; receipt_original_name?: string; message: string }>('/compta/entries', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
   updateAccountingEntry: (id: string, data: Partial<AccountingEntry> & { update_recurring_template?: boolean }) =>
-    fetchJSON<{ message: string }>(`/compta/entries/${id}`, {
+    fetchJSON<{ message: string; receipt_filename?: string; receipt_original_name?: string }>(`/compta/entries/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+  uploadAccountingReceipt: async (entryId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('receipt', file);
+    const res = await fetch(`${BASE_URL}/compta/entries/${entryId}/receipt`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
+  },
+  deleteAccountingReceipt: (entryId: string) =>
+    fetchJSON<{ message: string }>(`/compta/entries/${entryId}/receipt`, {
+      method: 'DELETE',
     }),
   deleteAccountingEntry: (id: string) =>
     fetchJSON<{ message: string }>(`/compta/entries/${id}`, {

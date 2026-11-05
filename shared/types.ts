@@ -1,4 +1,4 @@
-// Types métier partagés pour l'application VP Expertise
+// Types métier partagés pour l'application Rocco — VP Expertise
 
 export type MissionStatus = 
   | 'en_cours' 
@@ -8,16 +8,76 @@ export type MissionStatus =
   | 'accord_en_cours' 
   | 'cloture';
 
+export type DossierVoletKey =
+  | 'garde'          // 1. Page de garde (File Register)
+  | 'contrats'       // 2. Contrats client / Assuré
+  | 'constatations'  // 3. Constatations immédiates (Jour J, visites terrain, extractions Durandal)
+  | 'contradictoire' // 4. Respect du contradictoire (Mises en cause, convocations, dires, LRAR)
+  | 'prejudice'      // 5. Comptes du préjudice (Tableau de décompte + justificatifs liés)
+  | 'rapports';      // 6. Rapports émis (Packages datés + PJ numérotées + projet de rapport)
+
+export interface AdverseParty {
+  id: string;
+  party_name: string;    // Ex: SNCF Réseau, VINCI...
+  expert_firm?: string;  // Cabinet du confrère (ex: Saretec, Polyexpert, Stelliant...)
+  expert_name?: string;  // Nom du confrère (ex: Pechereau)
+  lawyer_name?: string;  // Avocat éventuel
+  reference?: string;    // Référence éventuelle de la partie adverse / confrère
+}
+
+export interface StakeEntry {
+  id: string;
+  date: string;          // YYYY-MM-DD
+  amount: number;        // Montant estimatif du préjudice en €
+  note?: string;         // Ex: "Estimation à l'ouverture", "Réévaluation après chiffrage contradictoire"
+}
+
+export interface DamageLine {
+  id: string;
+  mission_id: string;
+  mission_code: string;
+  category: string;        // Ex: Matériel roulant, Infrastructure, Perte d'exploitation, Frais de secours, Autre
+  label: string;           // Poste / Désignation
+  claimed_amount: number;  // Montant réclamé (€ HT)
+  retained_amount: number; // Montant retenu par Valentine (€ HT)
+  comment?: string;        // Observation / analyse (ex: réfaction maintenance courante)
+  piece_numbers: number[]; // Numéros de pièces jointes liées (ex: [4, 12])
+  order_index: number;
+  created_at: string;
+}
+
+export interface IssuedReport {
+  id: string;
+  mission_id: string;
+  mission_code: string;
+  report_type: string;     // Ex: Rapport préliminaire, Rapport d'étape, Rapport définitif, Note technique
+  title: string;           // Ex: Rapport du 12 juillet 2026
+  sent_date: string;       // YYYY-MM-DD
+  recipient: string;       // Mandant / Destinataire
+  filename?: string | null;
+  original_name?: string | null;
+  attached_piece_numbers: number[]; // Liste des pièces numérotées envoyées dans ce package
+  notes?: string;
+  created_at: string;
+}
+
 export interface Mission {
   id: string;
-  code: string; // Ex: VP2026922
+  code: string; // N/Réf. Ex: VP2026922
   title: string; // Ex: ALSTOM - SGP Ligne 18...
-  case_reference: string; // Ex: 11161461
+  case_reference: string; // Réf. Client (V/Réf.) Ex: 11161461
   status: MissionStatus;
-  insurance_client: string; // Ex: AXA XL
-  client_contact?: string; // Ex: Yannick DELAUNAY
-  insured_party?: string; // Ex: ALSTOM
-  third_parties?: string; // Ex: SGP / VINCI
+  insurance_client: string; // Client (facturé) Ex: AXA XL
+  client_contact?: string; // Interlocuteur client Ex: Yannick DELAUNAY
+  insured_party?: string; // Assuré Ex: ALSTOM
+  insured_reference?: string; // Réf. Assuré
+  broker_name?: string; // Courtier
+  broker_reference?: string; // Réf. Courtier
+  third_parties?: string; // Texte libre historique (rétrocompatibilité)
+  adverse_parties?: AdverseParty[]; // Parties adverses structurées avec confrères
+  stake_amount?: number | null; // Enjeu actuel du dossier (€)
+  initial_stake_amount?: number | null; // Enjeu initial (€)
+  stake_history?: StakeEntry[]; // Historique de l'évolution de l'enjeu
   court_reference?: string; // Ex: Tribunal Judiciaire de Nanterre
   incident_date?: string;
   reception_date: string;
@@ -35,6 +95,10 @@ export interface Mission {
   unbilled_hours?: number;
   unbilled_expenses?: number;
   total_unbilled_ht?: number;
+  total_billed_ht?: number;
+  invoices_count?: number;
+  last_invoice_date?: string | null;
+  last_invoice_number?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +116,8 @@ export interface EvidenceItem {
   caption?: string;
   taken_at?: string;
   order_index?: number;
+  piece_number?: number;
+  section?: DossierVoletKey;
   is_selected_for_report?: boolean;
   created_by?: string;
   created_at: string;
@@ -71,17 +137,17 @@ export type ActivityCategory =
   | 'echanges_tel';
 
 export const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
-  etude_documents: 'Étude de documents, gestion du dossier',
+  etude_documents: 'Étude de documents, analyse, gestion du dossier',
   expertise: 'Expertise',
   reunion_assureurs: 'Réunion avec les assureurs',
   reunion_assure: 'Réunion avec l’assuré',
   redaction: 'Rédaction Expert',
   deplacement: 'Déplacement expert',
   // Alias de rétrocompatibilité
-  analyse: 'Étude de documents, gestion du dossier',
+  analyse: 'Étude de documents, analyse, gestion du dossier',
   visio: 'Réunion avec les assureurs',
   reunion: 'Expertise',
-  echanges_tel: 'Étude de documents, gestion du dossier',
+  echanges_tel: 'Étude de documents, analyse, gestion du dossier',
 };
 
 export type ActivityStatus = 
@@ -153,6 +219,7 @@ export interface Expense {
   vat_amount: number;
   total_ttc: number;
   receipt_filename?: string | null;
+  receipt_original_name?: string | null;
   status: ExpenseStatus;
   invoice_id?: string | null;
   is_refacturable: boolean;
@@ -252,16 +319,23 @@ export interface Photo {
   caption: string;
   taken_at?: string;
   order_index: number;
+  piece_number?: number;
+  sub_section?: 'jour_j' | 'terrain' | 'extractions';
   is_selected_for_report: boolean;
   created_at: string;
 }
 
 export type DocumentCategory = 
+  | 'contrat_client'
+  | 'constatation_jour_j'
   | 'photo_terrain'
-  | 'capture_ecran'
-  | 'procedure_dires'
+  | 'extraction_technique'
   | 'emargement_pv'
   | 'note_technique'
+  | 'procedure_dires'
+  | 'justificatif_prejudice'
+  | 'rapport_emis'
+  | 'capture_ecran'
   | 'justificatif_frais'
   | 'autre';
 
@@ -269,6 +343,9 @@ export interface MissionDocument {
   id: string;
   mission_id: string;
   mission_code: string;
+  piece_number?: number;
+  section?: DossierVoletKey;
+  sub_section?: string;
   filename: string;
   original_name: string;
   mime_type: string;
@@ -381,6 +458,8 @@ export interface AccountingEntry {
   amount_ttc: number;
   frequency?: RecurringFrequency;
   recurring_expense_id?: string | null;
+  receipt_filename?: string | null;
+  receipt_original_name?: string | null;
   comment?: string;
 }
 

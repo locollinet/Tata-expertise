@@ -26,7 +26,14 @@ export function initDatabase() {
       insurance_client TEXT NOT NULL,
       client_contact TEXT,
       insured_party TEXT,
+      insured_reference TEXT,
+      broker_name TEXT,
+      broker_reference TEXT,
       third_parties TEXT,
+      adverse_parties TEXT DEFAULT '[]',
+      stake_amount REAL,
+      initial_stake_amount REAL,
+      stake_history TEXT DEFAULT '[]',
       court_reference TEXT,
       incident_date TEXT,
       reception_date TEXT NOT NULL,
@@ -73,6 +80,7 @@ export function initDatabase() {
       vat_amount REAL NOT NULL DEFAULT 0,
       total_ttc REAL NOT NULL,
       receipt_filename TEXT,
+      receipt_original_name TEXT,
       status TEXT NOT NULL DEFAULT 'a_facturer',
       invoice_id TEXT REFERENCES invoices(id) ON DELETE SET NULL,
       is_refacturable INTEGER NOT NULL DEFAULT 1,
@@ -155,6 +163,8 @@ export function initDatabase() {
       caption TEXT NOT NULL,
       taken_at TEXT,
       order_index INTEGER NOT NULL DEFAULT 0,
+      piece_number INTEGER,
+      sub_section TEXT DEFAULT 'terrain',
       is_selected_for_report INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -163,6 +173,9 @@ export function initDatabase() {
       id TEXT PRIMARY KEY,
       mission_id TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
       mission_code TEXT NOT NULL,
+      piece_number INTEGER,
+      section TEXT DEFAULT 'constatations',
+      sub_section TEXT DEFAULT '',
       filename TEXT NOT NULL,
       original_name TEXT NOT NULL,
       mime_type TEXT NOT NULL,
@@ -170,6 +183,35 @@ export function initDatabase() {
       category TEXT NOT NULL DEFAULT 'autre',
       caption TEXT NOT NULL DEFAULT '',
       is_selected_for_report INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS damage_lines (
+      id TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      mission_code TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Matériel roulant',
+      label TEXT NOT NULL,
+      claimed_amount REAL NOT NULL DEFAULT 0,
+      retained_amount REAL NOT NULL DEFAULT 0,
+      comment TEXT DEFAULT '',
+      piece_numbers TEXT NOT NULL DEFAULT '[]',
+      order_index INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS issued_reports (
+      id TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+      mission_code TEXT NOT NULL,
+      report_type TEXT NOT NULL DEFAULT 'Rapport d''étape',
+      title TEXT NOT NULL,
+      sent_date TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      filename TEXT,
+      original_name TEXT,
+      attached_piece_numbers TEXT NOT NULL DEFAULT '[]',
+      notes TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -249,6 +291,8 @@ export function initDatabase() {
       amount_ttc REAL NOT NULL,
       frequency TEXT DEFAULT 'ponctuel',
       recurring_expense_id TEXT,
+      receipt_filename TEXT,
+      receipt_original_name TEXT,
       comment TEXT
     );
 
@@ -268,33 +312,223 @@ export function initDatabase() {
     );
   `);
 
-  try {
-    db.exec("ALTER TABLE report_drafts ADD COLUMN raw_field_notes TEXT DEFAULT ''");
-  } catch (_) {}
+  // Safe incremental schema migrations
+  const alterStatements = [
+    "ALTER TABLE report_drafts ADD COLUMN raw_field_notes TEXT DEFAULT ''",
+    "ALTER TABLE missions ADD COLUMN custom_billing_threshold REAL DEFAULT 3500",
+    "ALTER TABLE missions ADD COLUMN custom_vat_rate REAL DEFAULT 0.20",
+    "ALTER TABLE missions ADD COLUMN insured_reference TEXT",
+    "ALTER TABLE missions ADD COLUMN broker_name TEXT",
+    "ALTER TABLE missions ADD COLUMN broker_reference TEXT",
+    "ALTER TABLE missions ADD COLUMN adverse_parties TEXT DEFAULT '[]'",
+    "ALTER TABLE missions ADD COLUMN stake_amount REAL",
+    "ALTER TABLE missions ADD COLUMN initial_stake_amount REAL",
+    "ALTER TABLE missions ADD COLUMN stake_history TEXT DEFAULT '[]'",
+    "ALTER TABLE expenses ADD COLUMN vat_rate REAL DEFAULT 0.20",
+    "ALTER TABLE expenses ADD COLUMN receipt_original_name TEXT",
+    "ALTER TABLE accounting_entries ADD COLUMN vat_rate REAL DEFAULT 0",
+    "ALTER TABLE accounting_entries ADD COLUMN frequency TEXT DEFAULT 'ponctuel'",
+    "ALTER TABLE accounting_entries ADD COLUMN recurring_expense_id TEXT",
+    "ALTER TABLE accounting_entries ADD COLUMN receipt_filename TEXT",
+    "ALTER TABLE accounting_entries ADD COLUMN receipt_original_name TEXT",
+    "ALTER TABLE documents ADD COLUMN piece_number INTEGER",
+    "ALTER TABLE documents ADD COLUMN section TEXT DEFAULT 'constatations'",
+    "ALTER TABLE documents ADD COLUMN sub_section TEXT DEFAULT ''",
+    "ALTER TABLE photos ADD COLUMN piece_number INTEGER",
+    "ALTER TABLE photos ADD COLUMN sub_section TEXT DEFAULT 'terrain'",
+  ];
 
-  try {
-    db.exec("ALTER TABLE missions ADD COLUMN custom_billing_threshold REAL DEFAULT 3500");
-  } catch (_) {}
+  for (const stmt of alterStatements) {
+    try {
+      db.exec(stmt);
+    } catch (_) {}
+  }
 
+  // Non-destructive migration of existing missions (adverse_parties, stake_amount, numbered pieces, damage_lines, issued_reports)
   try {
-    db.exec("ALTER TABLE missions ADD COLUMN custom_vat_rate REAL DEFAULT 0.20");
-  } catch (_) {}
+    const allMissions = db.prepare('SELECT * FROM missions').all() as any[];
+    for (const m of allMissions) {
+      let currentAdverse: any[] = [];
+      try {
+        currentAdverse = m.adverse_parties ? JSON.parse(m.adverse_parties) : [];
+      } catch {
+        currentAdverse = [];
+      }
 
-  try {
-    db.exec("ALTER TABLE expenses ADD COLUMN vat_rate REAL DEFAULT 0.20");
-  } catch (_) {}
+      if (currentAdverse.length === 0 && m.third_parties) {
+        if (m.code === 'VP2026922') {
+          currentAdverse = [
+            {
+              id: 'adv-sgp',
+              party_name: 'Société du Grand Paris (SGP)',
+              expert_firm: 'Saretec',
+              expert_name: 'M. Pechereau',
+              lawyer_name: 'Me Laurent (Cab. Gide)',
+              reference: 'SGP-L18-OA08',
+            },
+            {
+              id: 'adv-vinci',
+              party_name: 'VINCI Construction Grands Projets',
+              expert_firm: 'Polyexpert',
+              expert_name: 'Marc Vasseur',
+              lawyer_name: '',
+              reference: 'SIN-2026-4412',
+            },
+          ];
+        } else if (m.code === 'VP2025915') {
+          currentAdverse = [
+            {
+              id: 'adv-sncf',
+              party_name: 'SNCF Réseau',
+              expert_firm: 'Saretec',
+              expert_name: 'Pechereau',
+              lawyer_name: '',
+              reference: 'RES-2025-889',
+            },
+          ];
+        } else {
+          const parts = String(m.third_parties)
+            .split(/[/,;]/)
+            .map((s: string) => s.trim())
+            .filter(Boolean);
+          currentAdverse = parts.map((name: string, idx: number) => ({
+            id: `adv-${m.id}-${idx + 1}`,
+            party_name: name,
+            expert_firm: idx === 0 ? 'Saretec' : '',
+            expert_name: idx === 0 ? 'Confrère mandaté' : '',
+            lawyer_name: '',
+            reference: '',
+          }));
+        }
+        db.prepare('UPDATE missions SET adverse_parties = ? WHERE id = ?').run(JSON.stringify(currentAdverse), m.id);
+      }
 
-  try {
-    db.exec("ALTER TABLE accounting_entries ADD COLUMN vat_rate REAL DEFAULT 0");
-  } catch (_) {}
+      if (m.stake_amount === null || m.stake_amount === undefined) {
+        let initialStake = 450000;
+        let currentStake = 450000;
+        let history: any[] = [];
+        let brokerName = m.broker_name || null;
+        let brokerRef = m.broker_reference || null;
+        let insuredRef = m.insured_reference || null;
 
-  try {
-    db.exec("ALTER TABLE accounting_entries ADD COLUMN frequency TEXT DEFAULT 'ponctuel'");
-  } catch (_) {}
+        if (m.code === 'VP2026922') {
+          initialStake = 2800000;
+          currentStake = 3150000;
+          brokerName = 'Marsh France';
+          brokerRef = 'MRSH-26-8841';
+          insuredRef = 'ALS-L18-SIN04';
+          history = [
+            { id: 'stk-1', date: '2026-04-30', amount: 2800000, note: 'Estimation initiale à réception du mandat' },
+            { id: 'stk-2', date: '2026-09-25', amount: 3150000, note: 'Réévaluation après chiffrage contradictoire sous trémie OA-08' },
+          ];
+        } else if (m.code === 'VP2025915') {
+          initialStake = 1200000;
+          currentStake = 980000;
+          brokerName = 'Willis Towers Watson';
+          brokerRef = 'WTW-2025-119';
+          insuredRef = 'FWD-wagons-09';
+          history = [
+            { id: 'stk-1', date: '2025-08-17', amount: 1200000, note: 'Estimation initiale (immobilisation + réparations)' },
+            { id: 'stk-2', date: '2026-09-09', amount: 980000, note: 'Ajustement suite à réunion d’expertise à Fos' },
+          ];
+        } else {
+          initialStake = 350000;
+          currentStake = 350000;
+          history = [
+            { id: 'stk-1', date: m.reception_date || '2026-06-01', amount: 350000, note: 'Estimation initiale du préjudice' },
+          ];
+        }
 
-  try {
-    db.exec("ALTER TABLE accounting_entries ADD COLUMN recurring_expense_id TEXT");
-  } catch (_) {}
+        db.prepare(`
+          UPDATE missions
+          SET stake_amount = ?, initial_stake_amount = ?, stake_history = ?,
+              broker_name = COALESCE(broker_name, ?),
+              broker_reference = COALESCE(broker_reference, ?),
+              insured_reference = COALESCE(insured_reference, ?)
+          WHERE id = ?
+        `).run(currentStake, initialStake, JSON.stringify(history), brokerName, brokerRef, insuredRef, m.id);
+      }
+
+      // Ensure sequential piece_number & section on existing documents of this mission
+      const docs = db.prepare('SELECT * FROM documents WHERE mission_id = ? ORDER BY created_at ASC, id ASC').all(m.id) as any[];
+      let nextPiece = 1;
+      for (const d of docs) {
+        if (d.piece_number && d.piece_number >= nextPiece) {
+          nextPiece = d.piece_number + 1;
+        }
+      }
+      for (const d of docs) {
+        if (!d.piece_number) {
+          let inferredSection = d.section || 'constatations';
+          if (d.category === 'contrat_client') inferredSection = 'contrats';
+          else if (d.category === 'procedure_dires') inferredSection = 'contradictoire';
+          else if (d.category === 'justificatif_prejudice') inferredSection = 'prejudice';
+          else if (d.category === 'rapport_emis' || d.category === 'note_technique') inferredSection = 'rapports';
+          else inferredSection = 'constatations';
+
+          db.prepare('UPDATE documents SET piece_number = ?, section = ? WHERE id = ?').run(nextPiece++, inferredSection, d.id);
+        }
+      }
+
+      // Seed default damage lines and issued report for flagship mission VP2026922 if empty
+      if (m.code === 'VP2026922') {
+        const dmgCount = db.prepare('SELECT COUNT(*) as c FROM damage_lines WHERE mission_id = ?').get(m.id) as { c: number };
+        if (dmgCount.c === 0) {
+          const insertDmg = db.prepare(`
+            INSERT INTO damage_lines (id, mission_id, mission_code, category, label, claimed_amount, retained_amount, comment, piece_numbers, order_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          insertDmg.run(
+            'dmg-1', m.id, m.code, 'Matériel & Équipements',
+            'Remise en état sous-station électrique et câblages sous trémie OA-08',
+            1850000, 1680000,
+            'Déduction de 170 k€ correspondant à une mise à niveau non imputable au sinistre',
+            JSON.stringify([1, 2]), 1
+          );
+          insertDmg.run(
+            'dmg-2', m.id, m.code, 'Frais de déblaiement & sécurisation',
+            'Étayage d’urgence, relevés laser 3D et évacuation des gravats de dalle',
+            620000, 620000,
+            'Frais intégralement justifiés par les constats immédiats du jour J',
+            JSON.stringify([3]), 2
+          );
+          insertDmg.run(
+            'dmg-3', m.id, m.code, 'Pertes immatérielles / Retard chantier',
+            'Immobilisation des équipes d’essais ferroviaires Alstom (6 semaines)',
+            980000, 850000,
+            'Retenu sur base des feuilles de pointage contradictoires',
+            JSON.stringify([4]), 3
+          );
+        }
+
+        const repCount = db.prepare('SELECT COUNT(*) as c FROM issued_reports WHERE mission_id = ?').get(m.id) as { c: number };
+        if (repCount.c === 0) {
+          const insertRep = db.prepare(`
+            INSERT INTO issued_reports (id, mission_id, mission_code, report_type, title, sent_date, recipient, filename, original_name, attached_piece_numbers, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          insertRep.run(
+            'irep-1', m.id, m.code, 'Rapport préliminaire',
+            'Rapport préliminaire de constatations immédiates — Trémie OA-08',
+            '2026-05-18', 'AXA XL (Yannick DELAUNAY) & Marsh France',
+            null, 'Rapport_Preliminaire_VP2026922_2026-05-18.docx',
+            JSON.stringify([1, 2]),
+            'Envoi initial après la première visite sur site et recueil des éléments du jour J.'
+          );
+          insertRep.run(
+            'irep-2', m.id, m.code, 'Rapport d’étape',
+            'Note technique d’étape n°2 — Analyse contradictoire & chiffrage provisoire',
+            '2026-09-28', 'AXA XL (Yannick DELAUNAY)',
+            null, 'Rapport_Etape_2_VP2026922_2026-09-28.docx',
+            JSON.stringify([1, 2, 3, 4]),
+            'Diffusé suite à la réunion contradictoire du 25/09/2026 à Massy.'
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Migration non-destructive ignorée :', err);
+  }
 
   // Seed default recurring expenses from Valentine's Compta_2026.xlsx if empty
   const recCount = db.prepare('SELECT COUNT(*) as c FROM recurring_expenses').get() as { c: number };

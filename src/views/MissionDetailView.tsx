@@ -1,15 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ArrowLeft, ArrowRight, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
+  ArrowLeft, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
   CheckCircle2, AlertCircle, Save, ExternalLink, Calendar, Copy, Check,
   FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera,
-  ChevronDown, Smartphone, Mic, Edit3, Archive, RotateCcw
+  ChevronDown, Edit3, Archive, RotateCcw, Users, Scale, Calculator, Send, Sparkles, Package, Building2, TrendingUp
 } from 'lucide-react';
 import { api } from '../api.js';
-import { ACTIVITY_CATEGORY_LABELS, EXPENSE_CATEGORY_LABELS } from '@shared/types.js';
-import { FirebaseEvidenceManager } from '../components/FirebaseEvidenceManager.js';
+import {
+  ACTIVITY_CATEGORY_LABELS,
+  EXPENSE_CATEGORY_LABELS,
+  DossierVoletKey,
+  AdverseParty,
+  DamageLine,
+  IssuedReport,
+  MissionDocument,
+} from '@shared/types.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
-import { syncFileToLocalMacFolder, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
+import {
+  syncFileToLocalMacFolder,
+  syncComptaFileToMac,
+  mirrorEvidenceToFirestore,
+  VOLET_TO_MAC_FOLDER,
+  isLocalSyncConnected,
+  getLocalSyncFolderName,
+} from '../utils/localFolderSync.js';
 
 interface MissionDetailViewProps {
   missionId: string;
@@ -20,6 +34,57 @@ interface MissionDetailViewProps {
   onOpenQuickAdd: (missionId: string) => void;
   onPrepareBilling: (missionId: string) => void;
 }
+
+const VOLETS_CONFIG: Array<{
+  key: DossierVoletKey;
+  num: string;
+  label: string;
+  shortDesc: string;
+  macFolder: string;
+}> = [
+  {
+    key: 'garde',
+    num: '01',
+    label: 'Page de garde',
+    shortDesc: 'Références, parties & confrères, enjeu, factures, pointage',
+    macFolder: '01_Page_de_garde',
+  },
+  {
+    key: 'contrats',
+    num: '02',
+    label: 'Contrats',
+    shortDesc: 'Polices client & assuré, environnement contractuel',
+    macFolder: '02_Contrats',
+  },
+  {
+    key: 'constatations',
+    num: '03',
+    label: 'Constatations immédiates',
+    shortDesc: 'Jour J, visites terrain, photos en vrac & extractions',
+    macFolder: '03_Constatations_immediates',
+  },
+  {
+    key: 'contradictoire',
+    num: '04',
+    label: 'Contradictoire',
+    shortDesc: 'Mises en cause, convocations, dires, courriers LRAR',
+    macFolder: '04_Contradictoire',
+  },
+  {
+    key: 'prejudice',
+    num: '05',
+    label: 'Comptes du préjudice',
+    shortDesc: 'Chiffrage réclamé / retenu & pièces justificatives liées',
+    macFolder: '05_Comptes_du_prejudice',
+  },
+  {
+    key: 'rapports',
+    num: '06',
+    label: 'Rapports émis',
+    shortDesc: 'Rapports diffusés + pièces jointes (.zip avocats) & rédaction',
+    macFolder: '06_Rapports_emis',
+  },
+];
 
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   missionId,
@@ -32,57 +97,130 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 }) => {
   const [mission, setMission] = useState<any>(initialMission || null);
   const [loading, setLoading] = useState(!initialMission || !initialMission.activities);
-  const initialSubtab = new URLSearchParams(window.location.search).get('subtab') as 'overview' | 'time' | 'evidences' | 'rates' | 'docs' | 'report' | 'comms' | 'travel' | null;
-  const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'evidences' | 'rates' | 'docs' | 'report' | 'comms' | 'travel'>(initialSubtab || 'time');
+
+  // Map legacy subtab query param if any, defaulting to 'garde' (1. Page de garde)
+  const rawSubtab = new URLSearchParams(window.location.search).get('subtab');
+  const resolveInitialVolet = (s: string | null): DossierVoletKey => {
+    if (!s) return 'garde';
+    if (['garde', 'contrats', 'constatations', 'contradictoire', 'prejudice', 'rapports'].includes(s)) {
+      return s as DossierVoletKey;
+    }
+    if (s === 'evidences') return 'constatations';
+    if (s === 'comms') return 'contradictoire';
+    if (s === 'report') return 'rapports';
+    return 'garde';
+  };
+
+  const [activeVolet, setActiveVolet] = useState<DossierVoletKey>(resolveInitialVolet(rawSubtab));
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // New Document Upload & Dropzone state
-  const [docCategory, setDocCategory] = useState<string>('photo_terrain');
-  const [docCaption, setDocCaption] = useState('');
+  // Global & Volet Document Upload state (sans légende obligatoire)
   const [uploadingDocs, setUploadingDocs] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [docFilter, setDocFilter] = useState('all');
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [docOptionalNote, setDocOptionalNote] = useState('');
+  const [constatSubSection, setConstatSubSection] = useState<'jour_j' | 'visite_terrain' | 'extractions'>('visite_terrain');
 
-  // New attendee form state
+  // Volet 1 (Page de garde) — Parties & Références editing
+  const [editingParties, setEditingParties] = useState(false);
+  const [clientName, setClientName] = useState('');
+  const [clientRef, setClientRef] = useState('');
+  const [clientContact, setClientContact] = useState('');
+  const [billingAddress, setBillingAddress] = useState('');
+  const [insuredParty, setInsuredParty] = useState('');
+  const [insuredRef, setInsuredRef] = useState('');
+  const [brokerName, setBrokerName] = useState('');
+  const [brokerRef, setBrokerRef] = useState('');
+  const [missionCodeEdit, setMissionCodeEdit] = useState('');
+  const [missionTitleEdit, setMissionTitleEdit] = useState('');
+  const [adverseParties, setAdverseParties] = useState<AdverseParty[]>([]);
+
+  // Volet 1 — Enjeu du dossier update state
+  const [showUpdateStake, setShowUpdateStake] = useState(false);
+  const [newStakeAmount, setNewStakeAmount] = useState('');
+  const [newStakeNote, setNewStakeNote] = useState('');
+
+  // Volet 1 — Inline edit activity hours
+  const [editingActId, setEditingActId] = useState<string | null>(null);
+  const [editActHours, setEditActHours] = useState<string>('');
+  const [showRatesDrawer, setShowRatesDrawer] = useState(false);
+
+  // Volet 1 — New travel / site visit form
+  const [showAddTravel, setShowAddTravel] = useState(false);
+  const [travelDest, setTravelDest] = useState('');
+  const [travelStart, setTravelStart] = useState(new Date().toISOString().slice(0, 10));
+  const [travelTransport, setTravelTransport] = useState('Train SNCF');
+  const [travelReg, setTravelReg] = useState('');
+
+  // Volet 3 (Constatations) — Attendees & Field notes
   const [showAddAttendee, setShowAddAttendee] = useState(false);
   const [attName, setAttName] = useState('');
   const [attOrg, setAttOrg] = useState('');
   const [attRole, setAttRole] = useState('');
   const [attPresence, setAttPresence] = useState<'site' | 'visio'>('site');
-  const [showBatchAttendees, setShowBatchAttendees] = useState(false);
-  const [batchText, setBatchText] = useState('');
-  const [batchPresence, setBatchPresence] = useState<'site' | 'visio'>('visio');
-  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [rawFieldNotes, setRawFieldNotes] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
 
-  // Report draft edit state
-  const [reportFacts, setReportFacts] = useState(initialMission?.report_draft?.section_facts || '');
-  const [reportObs, setReportObs] = useState(initialMission?.report_draft?.section_observations || '');
-  const [reportAnalysis, setReportAnalysis] = useState(initialMission?.report_draft?.section_analysis || '');
-  const [reportConc, setReportConc] = useState(initialMission?.report_draft?.section_conclusions || '');
-  const [rawFieldNotes, setRawFieldNotes] = useState(initialMission?.report_draft?.raw_field_notes || '');
-  const [reportSaved, setReportSaved] = useState(false);
-
-  // New photo upload state
-  const [showAddPhoto, setShowAddPhoto] = useState(false);
-  const [photoCaption, setPhotoCaption] = useState('');
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-
-  // New communication form state
+  // Volet 4 (Contradictoire) — New communication / dire / LRAR
   const [showAddComm, setShowAddComm] = useState(false);
   const [commSender, setCommSender] = useState('');
   const [commSubject, setCommSubject] = useState('');
   const [commBody, setCommBody] = useState('');
   const [commUrgency, setCommUrgency] = useState<'normale' | 'urgente'>('normale');
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Inline edit activity hours state
-  const [editingActId, setEditingActId] = useState<string | null>(null);
-  const [editActHours, setEditActHours] = useState<string>('');
+  // Volet 5 (Comptes du préjudice) — New / Edit damage line
+  const [showAddDamageLine, setShowAddDamageLine] = useState(false);
+  const [dmgCategory, setDmgCategory] = useState<'materiel' | 'exploitation' | 'frais_annexes' | 'autre'>('materiel');
+  const [dmgLabel, setDmgLabel] = useState('');
+  const [dmgClaimed, setDmgClaimed] = useState('');
+  const [dmgRetained, setDmgRetained] = useState('');
+  const [dmgNotes, setDmgNotes] = useState('');
+  const [dmgSelectedPieces, setDmgSelectedPieces] = useState<number[]>([]);
+  const [editingDamageId, setEditingDamageId] = useState<string | null>(null);
+
+  // Volet 6 (Rapports émis) — New Issued Report package + Draft editor
+  const [showAddIssuedReport, setShowAddIssuedReport] = useState(false);
+  const [repType, setRepType] = useState<'preliminaire' | 'intermediaire' | 'final' | 'note_synthese'>('intermediaire');
+  const [repTitle, setRepTitle] = useState('');
+  const [repDate, setRepDate] = useState(new Date().toISOString().slice(0, 10));
+  const [repRecipient, setRepRecipient] = useState('');
+  const [repNotes, setRepNotes] = useState('');
+  const [repSelectedPieces, setRepSelectedPieces] = useState<number[]>([]);
+  const [repFile, setRepFile] = useState<File | null>(null);
+  const [submittingReportPkg, setSubmittingReportPkg] = useState(false);
+  const [showDraftEditor, setShowDraftEditor] = useState(false);
+
+  // Report draft sections
+  const [reportFacts, setReportFacts] = useState('');
+  const [reportObs, setReportObs] = useState('');
+  const [reportAnalysis, setReportAnalysis] = useState('');
+  const [reportConc, setReportConc] = useState('');
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ type, message });
-    setTimeout(() => setFeedback(null), 3500);
+    setTimeout(() => setFeedback(null), 4000);
+  };
+
+  const syncFormStateFromMission = (data: any) => {
+    setClientName(data.insurance_client || '');
+    setClientRef(data.case_reference || '');
+    setClientContact(data.insurer_contact || '');
+    setBillingAddress(data.billing_address || '');
+    setInsuredParty(data.insured_party || '');
+    setInsuredRef(data.insured_reference || '');
+    setBrokerName(data.broker_name || '');
+    setBrokerRef(data.broker_reference || '');
+    setMissionCodeEdit(data.code || '');
+    setMissionTitleEdit(data.title || '');
+    setAdverseParties(Array.isArray(data.adverse_parties) ? data.adverse_parties : []);
+    setNewStakeAmount(data.stake_amount ? String(data.stake_amount) : '');
+    if (data.report_draft) {
+      setReportFacts(data.report_draft.section_facts || '');
+      setReportObs(data.report_draft.section_observations || '');
+      setReportAnalysis(data.report_draft.section_analysis || '');
+      setReportConc(data.report_draft.section_conclusions || '');
+      setRawFieldNotes(data.report_draft.raw_field_notes || '');
+    }
   };
 
   const loadData = async () => {
@@ -90,13 +228,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       const data = await api.getMission(missionId);
       setMission(data);
       onCacheMission?.(data);
-      if (data.report_draft) {
-        setReportFacts(data.report_draft.section_facts || '');
-        setReportObs(data.report_draft.section_observations || '');
-        setReportAnalysis(data.report_draft.section_analysis || '');
-        setReportConc(data.report_draft.section_conclusions || '');
-        setRawFieldNotes(data.report_draft.raw_field_notes || '');
-      }
+      syncFormStateFromMission(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -107,6 +239,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   useEffect(() => {
     if (initialMission && (!mission || mission.id !== missionId)) {
       setMission(initialMission);
+      syncFormStateFromMission(initialMission);
       setLoading(!initialMission.activities);
     }
     loadData();
@@ -119,6 +252,162 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       </div>
     );
   }
+
+  const allDocuments: MissionDocument[] = mission.documents || [];
+  const allPhotos: any[] = mission.photos || [];
+  const damageLines: DamageLine[] = mission.damage_lines || [];
+  const issuedReports: IssuedReport[] = mission.issued_reports || [];
+  const missionInvoices: any[] = mission.invoices || [];
+
+  // Filter documents by volet
+  const docsContrats = allDocuments.filter((d) => d.section === 'contrats' || d.category === 'contrat');
+  const docsConstatations = allDocuments.filter(
+    (d) => d.section === 'constatations' || (!d.section && ['photo_terrain', 'autre'].includes(d.category))
+  );
+  const docsContradictoire = allDocuments.filter(
+    (d) => d.section === 'contradictoire' || d.category === 'courrier_adverse'
+  );
+  const docsPrejudice = allDocuments.filter(
+    (d) => d.section === 'prejudice' || (!d.section && ['devis_facture', 'rapport_technique'].includes(d.category))
+  );
+  const docsRapports = allDocuments.filter((d) => d.section === 'rapports');
+
+  // Counts per volet for badges
+  const voletCounts: Record<DossierVoletKey, number> = {
+    garde: (mission.activities?.length || 0) + (missionInvoices.length || 0),
+    contrats: docsContrats.length,
+    constatations: docsConstatations.length + allPhotos.length + (mission.attendees?.length || 0),
+    contradictoire: docsContradictoire.length + (mission.communications?.length || 0),
+    prejudice: damageLines.length + docsPrejudice.length,
+    rapports: issuedReports.length + docsRapports.length,
+  };
+
+  // Universal upload handler for any Volet (with automatic Pièce n° numbering & Mac folder sync)
+  const handleUploadFilesToVolet = async (
+    files: FileList | File[],
+    targetVolet: DossierVoletKey,
+    subSec?: string
+  ) => {
+    if (!files || files.length === 0) return;
+    setUploadingDocs(true);
+    try {
+      const sectionMap: Record<DossierVoletKey, string> = {
+        garde: 'contrats',
+        contrats: 'contrats',
+        constatations: 'constatations',
+        contradictoire: 'contradictoire',
+        prejudice: 'prejudice',
+        rapports: 'rapports',
+      };
+      const categoryMap: Record<DossierVoletKey, string> = {
+        garde: 'autre',
+        contrats: 'contrat',
+        constatations: 'photo_terrain',
+        contradictoire: 'courrier_adverse',
+        prejudice: 'devis_facture',
+        rapports: 'rapport_technique',
+      };
+
+      const formData = new FormData();
+      formData.append('section', sectionMap[targetVolet]);
+      formData.append('category', categoryMap[targetVolet]);
+      if (subSec) formData.append('sub_section', subSec);
+      if (docOptionalNote.trim()) formData.append('caption', docOptionalNote.trim());
+
+      for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+      }
+
+      const res = await fetch(`/api/missions/${mission.id}/documents`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Erreur lors du dépôt des pièces');
+      }
+      const result = await res.json();
+      const createdDocs: MissionDocument[] = result.documents || [];
+
+      const macSubFolder = VOLET_TO_MAC_FOLDER[targetVolet] || '03_Constatations_immediates';
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const pieceNum = createdDocs[i]?.piece_number;
+        const macFileName = pieceNum ? `Piece_${pieceNum}_${f.name}` : f.name;
+        await syncFileToLocalMacFolder({
+          missionCode: mission.code,
+          subFolder: macSubFolder,
+          fileName: macFileName,
+          data: f,
+        });
+        await mirrorEvidenceToFirestore({
+          missionId: mission.id,
+          missionCode: mission.code,
+          file: f,
+          title: docOptionalNote.trim() || f.name,
+          caption: docOptionalNote.trim() || f.name,
+          type: f.type.startsWith('image/') ? 'photo' : 'document',
+          isSelectedForReport: false,
+        });
+      }
+
+      setDocOptionalNote('');
+      const nums = createdDocs.map((d) => `Pièce n°${d.piece_number}`).join(', ');
+      showToast(
+        `${files.length} fichier(s) classé(s) (${nums || 'numérotés'}) et synchronisé(s) dans Dossiers/${mission.code}/${macSubFolder}`
+      );
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setUploadingDocs(false);
+    }
+  };
+
+  const handleSavePartiesAndRefs = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const cleanedParties = adverseParties.filter(
+        (p) => p.party_name.trim() || p.expert_firm.trim() || p.expert_name.trim()
+      );
+      await api.updateMission(mission.id, {
+        code: missionCodeEdit.trim(),
+        title: missionTitleEdit.trim(),
+        insurance_client: clientName.trim(),
+        case_reference: clientRef.trim(),
+        insurer_contact: clientContact.trim(),
+        billing_address: billingAddress.trim(),
+        insured_party: insuredParty.trim(),
+        insured_reference: insuredRef.trim(),
+        broker_name: brokerName.trim(),
+        broker_reference: brokerRef.trim(),
+        adverse_parties: cleanedParties,
+      });
+      setEditingParties(false);
+      showToast('Parties, références et confrères enregistrés !');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleUpdateStake = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const num = parseFloat(newStakeAmount.replace(/\s/g, '').replace(',', '.'));
+    if (isNaN(num) || num < 0) return;
+    try {
+      await api.updateMission(mission.id, {
+        stake_amount: num,
+        stake_note: newStakeNote.trim() || 'Mise à jour de l’enjeu estimé',
+      });
+      setShowUpdateStake(false);
+      setNewStakeNote('');
+      showToast(`Enjeu du dossier actualisé à ${num.toLocaleString('fr-FR')} € HT.`);
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
 
   const handleSaveActivityHours = async (actId: string) => {
     const numHours = parseFloat(editActHours.replace(',', '.'));
@@ -139,7 +428,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       await api.updateMission(mission.id, { status: nextStatus });
       showToast(
         nextStatus === 'cloture'
-          ? 'Dossier clôturé / archivé (masqué par défaut dans les recherches).'
+          ? 'Dossier clôturé / archivé.'
           : 'Dossier réouvert et remis en cours !'
       );
       loadData();
@@ -148,1780 +437,2073 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     }
   };
 
-  const handleUploadPhoto = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!photoFile) return;
-    setUploadingPhoto(true);
+  const handleDownloadInvoiceDocx = async (inv: any) => {
     try {
-      const formData = new FormData();
-      formData.append('mission_id', mission.id);
-      formData.append('caption', photoCaption.trim() || photoFile.name);
-      formData.append('photo', photoFile);
+      const res = await fetch(`/api/invoices/${inv.id}/docx`);
+      if (!res.ok) throw new Error('Erreur lors de la génération Word');
+      const blob = await res.blob();
+      const fileName = `Facture_${inv.invoice_number}.docx`;
 
-      const res = await fetch('/api/photos', {
-        method: 'POST',
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Erreur lors de l'upload");
-      }
-      const photoJson = await res.json();
-      await mirrorEvidenceToFirestore({
-        missionId: mission.id,
-        missionCode: mission.code,
-        file: photoFile,
-        title: photoCaption.trim() || photoFile.name,
-        caption: photoCaption.trim() || photoFile.name,
-        type: 'photo',
-        serverFilename: photoJson.filename,
-        isSelectedForReport: true,
-      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+
       await syncFileToLocalMacFolder({
         missionCode: mission.code,
-        subFolder: 'Photos_Terrain',
-        fileName: photoFile.name,
-        data: photoFile,
+        subFolder: '01_Page_de_garde',
+        fileName,
+        data: blob,
       });
-      setPhotoFile(null);
-      setPhotoCaption('');
-      setShowAddPhoto(false);
-      loadData();
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setUploadingPhoto(false);
-    }
-  };
-
-  const handleTogglePhotoReport = async (photo: any) => {
-    try {
-      await api.updatePhoto(photo.id, {
-        is_selected_for_report: !photo.is_selected_for_report,
+      await syncComptaFileToMac({
+        month: (inv.date || '').slice(0, 7),
+        subFolder: 'Factures_emises',
+        fileName,
+        data: blob,
       });
-      loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
     }
   };
 
-  const handleDeletePhoto = async (photoId: string) => {
+  const handleSaveDamageLine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dmgLabel.trim()) return;
+    const claimed = parseFloat(dmgClaimed.replace(/\s/g, '').replace(',', '.')) || 0;
+    const retained =
+      dmgRetained.trim() !== ''
+        ? parseFloat(dmgRetained.replace(/\s/g, '').replace(',', '.'))
+        : claimed;
     try {
-      await api.deletePhoto(photoId);
-      showToast("Photo supprimée.");
+      if (editingDamageId) {
+        await api.updateDamageLine(editingDamageId, {
+          category: dmgCategory,
+          label: dmgLabel.trim(),
+          claimed_amount_ht: claimed,
+          retained_amount_ht: retained,
+          piece_numbers: dmgSelectedPieces,
+          notes: dmgNotes.trim() || undefined,
+        });
+        showToast('Ligne de préjudice mise à jour.');
+      } else {
+        await api.addDamageLine(mission.id, {
+          category: dmgCategory,
+          label: dmgLabel.trim(),
+          claimed_amount_ht: claimed,
+          retained_amount_ht: retained,
+          piece_numbers: dmgSelectedPieces,
+          notes: dmgNotes.trim() || undefined,
+        });
+        showToast('Poste ajouté aux Comptes du préjudice.');
+      }
+      setShowAddDamageLine(false);
+      setEditingDamageId(null);
+      setDmgLabel('');
+      setDmgClaimed('');
+      setDmgRetained('');
+      setDmgNotes('');
+      setDmgSelectedPieces([]);
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
     }
   };
 
-  const handleUploadDocuments = async (filesToUpload: FileList | File[]) => {
-    if (!filesToUpload || filesToUpload.length === 0) return;
-    setUploadingDocs(true);
+  const handleCreateIssuedReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!repTitle.trim()) return;
+    setSubmittingReportPkg(true);
     try {
       const formData = new FormData();
-      formData.append('category', docCategory);
-      formData.append('caption', docCaption);
-      for (let i = 0; i < filesToUpload.length; i++) {
-        formData.append('files', filesToUpload[i]);
-      }
-      const res = await fetch(`/api/missions/${mission.id}/documents`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Erreur lors du téléversement");
-      }
-      const subFolder = docCategory === 'photo_terrain'
-        ? 'Photos_Terrain'
-        : docCategory === 'justificatif_frais'
-        ? 'Justificatifs_Frais'
-        : 'Documents_Pieces';
-      for (let i = 0; i < filesToUpload.length; i++) {
-        const f = filesToUpload[i];
-        await mirrorEvidenceToFirestore({
-          missionId: mission.id,
-          missionCode: mission.code,
-          file: f,
-          title: docCaption.trim() || f.name,
-          caption: docCaption.trim() || f.name,
-          type: docCategory === 'photo_terrain' ? 'photo' : 'document',
-          isSelectedForReport: docCategory === 'photo_terrain',
-        });
+      formData.append('report_type', repType);
+      formData.append('title', repTitle.trim());
+      formData.append('issued_date', repDate);
+      formData.append('recipient', repRecipient.trim() || mission.insurance_client);
+      formData.append('attached_piece_numbers', JSON.stringify(repSelectedPieces));
+      if (repNotes.trim()) formData.append('notes', repNotes.trim());
+      if (repFile) formData.append('file', repFile);
+
+      await api.addIssuedReport(mission.id, formData);
+
+      if (repFile) {
         await syncFileToLocalMacFolder({
           missionCode: mission.code,
-          subFolder,
-          fileName: f.name,
-          data: f,
+          subFolder: '06_Rapports_emis',
+          fileName: `${repDate}_${repFile.name}`,
+          data: repFile,
         });
       }
-      setDocCaption('');
-      showToast("Document(s) téléversé(s) et synchronisé(s) avec succès.");
+
+      setShowAddIssuedReport(false);
+      setRepTitle('');
+      setRepNotes('');
+      setRepSelectedPieces([]);
+      setRepFile(null);
+      showToast('Rapport émis et liste des pièces jointes archivés avec succès !');
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
-      setUploadingDocs(false);
+      setSubmittingReportPkg(false);
     }
   };
 
-  const handleDeleteDocument = async (docId: string) => {
+  const handleSaveReportDraft = async () => {
+    setSavingNotes(true);
     try {
-      await api.deleteDocument(docId);
-      showToast("Document retiré du dossier.");
-      loadData();
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  const handleToggleDocReport = async (doc: any) => {
-    try {
-      await api.updateDocument(doc.id, {
-        is_selected_for_report: !doc.is_selected_for_report,
-      });
-      loadData();
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  const handleSaveReport = async () => {
-    try {
-      await api.updateReportDraft(mission.id, {
-        title: `Projet de rapport d'expertise — ${mission.title}`,
+      await api.saveReportDraft(mission.id, {
         section_facts: reportFacts,
         section_observations: reportObs,
         section_analysis: reportAnalysis,
         section_conclusions: reportConc,
         raw_field_notes: rawFieldNotes,
       });
-      setReportSaved(true);
-      showToast("Rapport technique sauvegardé !");
-      setTimeout(() => setReportSaved(false), 2500);
+      showToast('Notes et trame de rapport sauvegardées.');
       loadData();
     } catch (err: any) {
-      showToast("Erreur lors de la sauvegarde du rapport : " + err.message, 'error');
-    }
-  };
-
-  const handleBatchAttendees = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!batchText.trim()) return;
-    setBatchSubmitting(true);
-    try {
-      // Split by line or comma
-      const lines = batchText
-        .split(/[\n,]+/)
-        .map(l => l.trim().replace(/^[-•*]\s*/, ''))
-        .filter(l => l.length > 0);
-
-      for (const line of lines) {
-        // Match patterns like "Jean Dupont (SNCF)", "Jean Dupont - SNCF", or just "Jean Dupont"
-        const match = line.match(/^([^(—\-]+?)(?:\s*[\(\[—\-]\s*([^\)\]]+)[\)\]]?)?$/);
-        const name = match ? match[1].trim() : line;
-        const org = (match && match[2]) ? match[2].trim() : (mission.client_contact || mission.insurance_client || 'Partie prenante');
-        
-        if (name) {
-          await api.addAttendee({
-            mission_id: mission.id,
-            name,
-            organization: org,
-            role: 'Participant',
-            present_on_site: batchPresence === 'site',
-            present_remote: batchPresence === 'visio',
-          });
-        }
-      }
-
-      setBatchText('');
-      setShowBatchAttendees(false);
-      showToast("Participants enregistrés avec succès !");
-      loadData();
-    } catch (err: any) {
-      showToast("Erreur lors de l'ajout groupé : " + err.message, 'error');
+      showToast(err.message, 'error');
     } finally {
-      setBatchSubmitting(false);
+      setSavingNotes(false);
     }
   };
 
-  const handleAddAttendee = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!attName || !attOrg) return;
-    try {
-      await api.addAttendee({
-        mission_id: mission.id,
-        name: attName,
-        organization: attOrg,
-        role: attRole,
-        present_on_site: attPresence === 'site',
-        present_remote: attPresence === 'visio',
-      });
-      setAttName('');
-      setAttOrg('');
-      setAttRole('');
-      setShowAddAttendee(false);
-      showToast("Participant ajouté.");
-      loadData();
-    } catch (err: any) {
-      showToast(err.message, 'error');
+  // Totals for Volet 1 & Volet 5
+  const totalUnbilledHT = mission.total_unbilled_ht || 0;
+  const totalBilledHT = mission.total_billed_ht || 0;
+  const stakeAmount = mission.stake_amount || 0;
+  const stakeHistory = Array.isArray(mission.stake_history) ? mission.stake_history : [];
+  const nextInvoiceSubjectDate = (mission.last_invoice_date || mission.reception_date || '')
+    .split('-')
+    .reverse()
+    .join('/');
+
+  const totalClaimedHT = damageLines.reduce((acc, l) => acc + (Number(l.claimed_amount_ht) || 0), 0);
+  const totalRetainedHT = damageLines.reduce((acc, l) => acc + (Number(l.retained_amount_ht) || 0), 0);
+
+  const currentVoletMeta = VOLETS_CONFIG.find((v) => v.key === activeVolet) || VOLETS_CONFIG[0];
+
+  // Reusable Piece List Table component for Volets 2, 3, 4, 5, 6
+  const renderPieceTable = (docs: MissionDocument[], emptyText: string) => {
+    if (docs.length === 0) {
+      return (
+        <div className="p-6 text-center bg-slate-50/70 rounded-xl border border-dashed border-slate-200 text-xs text-slate-500">
+          {emptyText}
+        </div>
+      );
     }
+    return (
+      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
+              <th className="py-2.5 px-3 font-bold w-24">N° Pièce</th>
+              <th className="py-2.5 px-3 font-semibold">Nom du document / Fichier</th>
+              <th className="py-2.5 px-3 font-semibold">Note / Observation (optionnel)</th>
+              <th className="py-2.5 px-3 font-semibold w-28">Date d'ajout</th>
+              <th className="py-2.5 px-3 font-semibold text-right w-32">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {docs.map((doc) => (
+              <tr key={doc.id} className="hover:bg-slate-50/80">
+                <td className="py-2.5 px-3">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-[#0f3854] text-white font-mono">
+                    Pièce n°{doc.piece_number || '—'}
+                  </span>
+                </td>
+                <td className="py-2.5 px-3 font-semibold text-slate-900">
+                  <a
+                    href={`/uploads/${doc.filename}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-[#0f3854] hover:underline inline-flex items-center space-x-1.5"
+                  >
+                    <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{doc.original_name}</span>
+                  </a>
+                </td>
+                <td className="py-2.5 px-3 text-slate-600">
+                  {doc.caption && doc.caption !== doc.original_name ? doc.caption : <span className="text-slate-400">—</span>}
+                </td>
+                <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap">
+                  {(doc.created_at || '').slice(0, 10).split('-').reverse().join('/')}
+                </td>
+                <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1.5">
+                  <a
+                    href={`/uploads/${doc.filename}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
+                  >
+                    <Eye className="w-3 h-3" />
+                    <span>Ouvrir</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await api.deleteMissionDocument(doc.id);
+                      showToast('Pièce retirée du dossier.');
+                      loadData();
+                    }}
+                    className="p-1 text-slate-400 hover:text-rose-600"
+                    title="Supprimer cette pièce"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   };
 
-  const handleAddComm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!commSender || !commSubject || !commBody) return;
-    try {
-      await api.addCommunication({
-        mission_id: mission.id,
-        sender: commSender,
-        subject: commSubject,
-        body: commBody,
-        urgency: commUrgency,
-      });
-      setCommSender('');
-      setCommSubject('');
-      setCommBody('');
-      setShowAddComm(false);
-      showToast("Message rattaché au dossier.");
-      loadData();
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    }
-  };
+  // Reusable Dropzone for Volets 2, 3, 4, 5
+  const renderVoletDropzone = (voletKey: DossierVoletKey, helperLabel: string, subSec?: string) => {
+    const macFolder = VOLET_TO_MAC_FOLDER[voletKey];
+    return (
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDraggingOver(true);
+        }}
+        onDragLeave={() => setIsDraggingOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingOver(false);
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleUploadFilesToVolet(e.dataTransfer.files, voletKey, subSec);
+          }
+        }}
+        className={`p-4 rounded-xl border-2 border-dashed transition-all ${
+          isDraggingOver
+            ? 'border-[#0f3854] bg-sky-50/70'
+            : 'border-slate-300 bg-slate-50/60 hover:bg-slate-50'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start space-x-3">
+            <div className="w-9 h-9 rounded-lg bg-[#0f3854]/10 text-[#0f3854] flex items-center justify-center shrink-0 mt-0.5">
+              <UploadCloud className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-900">
+                Glissez-déposez vos fichiers ici en vrac ({helperLabel})
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Numérotation séquentielle automatique (<strong className="text-slate-700">Pièce n°{(allDocuments.length || 0) + 1}</strong>) • Aucune légende obligatoire • Copie Mac :{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 text-[10px] font-mono text-[#0f3854]">
+                  Dossiers/{mission.code}/{macFolder}/
+                </code>
+              </p>
+            </div>
+          </div>
 
-  const handleCopyDraftReply = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="text"
+              value={docOptionalNote}
+              onChange={(e) => setDocOptionalNote(e.target.value)}
+              placeholder="Note facultative..."
+              className="text-xs rounded-lg border-slate-300 bg-white px-2.5 py-1.5 border w-44"
+            />
+            <label className="px-3.5 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center space-x-1.5 shadow-2xs">
+              <Plus className="w-3.5 h-3.5" />
+              <span>{uploadingDocs ? 'Dépôt...' : 'Choisir des fichiers'}</span>
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    handleUploadFilesToVolet(e.target.files, voletKey, subSec);
+                    e.target.value = '';
+                  }
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
   };
-
-  const missionThreshold = mission.custom_billing_threshold || 3500;
-  const hasHighUnbilled = (mission.total_unbilled_ht || 0) >= missionThreshold;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Top navigation & back button */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 max-w-7xl mx-auto pb-12">
+      {/* Feedback Toast */}
+      {feedback && (
+        <div
+          className={`fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg border text-xs font-semibold flex items-center space-x-2 animate-in fade-in ${
+            feedback.type === 'success'
+              ? 'bg-emerald-900 text-white border-emerald-700'
+              : 'bg-rose-900 text-white border-rose-700'
+          }`}
+        >
+          {feedback.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-rose-300 shrink-0" />
+          )}
+          <span>{feedback.message}</span>
+        </div>
+      )}
+
+      {/* TOP BAR : Back button + Mac Sync Status + Status Archive Toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           onClick={onBack}
-          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors cursor-pointer"
+          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-[#0f3854] bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>
             {sourceTab === 'today'
               ? "Retour à Aujourd'hui"
               : sourceTab === 'billing'
-              ? "Retour aux honoraires"
-              : "Retour aux dossiers"}
+              ? 'Retour aux Factures'
+              : 'Retour aux Dossiers'}
           </span>
         </button>
 
-        {loading && (
-          <div className="flex items-center space-x-1.5 text-slate-400 text-xs">
-            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#0f3854]"></div>
-            <span>Actualisation...</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] text-slate-600">
+            <FolderOpen className="w-3.5 h-3.5 text-[#0f3854]" />
+            <span>
+              Arborescence Mac :{' '}
+              <strong className="font-mono text-slate-800">
+                {isLocalSyncConnected() ? `${getLocalSyncFolderName()}/` : ''}Dossiers/{mission.code}/{currentVoletMeta.macFolder}
+              </strong>
+            </span>
           </div>
-        )}
 
-        <div className="flex items-center space-x-2">
           <button
+            type="button"
             onClick={handleToggleMissionStatus}
-            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors cursor-pointer border ${
+            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
               mission.status === 'cloture'
-                ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
             }`}
-            title={
-              mission.status === 'cloture'
-                ? 'Réouvrir ce dossier si le client revient plusieurs mois après'
-                : 'Clôturer / archiver ce dossier pour ne plus le voir dans les recherches par défaut'
-            }
           >
             {mission.status === 'cloture' ? (
               <>
-                <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-                <span>Réouvrir le dossier</span>
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Réouvrir ce dossier</span>
               </>
             ) : (
               <>
-                <Archive className="w-3.5 h-3.5 text-slate-500" />
-                <span>Clôturer le dossier</span>
+                <Archive className="w-3.5 h-3.5" />
+                <span>Clôturer / Archiver</span>
               </>
             )}
-          </button>
-          <button
-            onClick={() => onOpenQuickAdd(mission.id)}
-            className="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5 text-[#0f3854]" />
-            <span>+ Temps / Frais</span>
-          </button>
-          <button
-            onClick={() => onPrepareBilling(mission.id)}
-            className="inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors"
-          >
-            <Receipt className="w-3.5 h-3.5" />
-            <span>Facturer ce dossier</span>
           </button>
         </div>
       </div>
 
-      {feedback && (
-        <div className={`p-3 rounded-xl text-xs flex items-center space-x-2 transition-all ${
-          feedback.type === 'success'
-            ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-            : 'bg-rose-50 border border-rose-200 text-rose-700'
-        }`}>
-          {feedback.type === 'success' ? (
-            <Check className="w-4 h-4 shrink-0 text-emerald-600" />
-          ) : (
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-          )}
-          <span className="font-medium">{feedback.message}</span>
-        </div>
-      )}
-
-      {/* Mission Header Card */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-          <div>
-            <div className="flex items-center space-x-2 mb-1 flex-wrap gap-y-1">
-              <span className="text-base font-bold text-[#0f3854] bg-[#0f3854]/10 px-2.5 py-0.5 rounded-md">
-                {mission.code}
+      {/* STICKY DOSSIER HEADER BANNER */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-1 rounded-md text-xs font-extrabold bg-[#0f3854] text-white font-mono">
+                N/Réf : {mission.code}
               </span>
-              <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                Réf : {mission.case_reference}
+              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-sky-50 text-[#0f3854] border border-sky-200">
+                Client : {mission.insurance_client}
               </span>
-              <span className="text-xs font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                Reçu le {mission.reception_date ? mission.reception_date.split('-').reverse().join('/') : '—'}
+              {mission.case_reference && (
+                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 font-mono">
+                  Réf. Client : {mission.case_reference}
+                </span>
+              )}
+              <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-800">
+                Assuré : {mission.insured_party}
               </span>
-              {loading && (
-                <span className="text-[11px] text-slate-400 inline-flex items-center space-x-1 ml-1 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
-                  <span>Synchronisation...</span>
+              {stakeAmount > 0 && (
+                <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                  Enjeu : {stakeAmount.toLocaleString('fr-FR')} € HT
                 </span>
               )}
             </div>
-            <h1 className="text-xl font-bold text-slate-900 leading-snug">{mission.title}</h1>
-            
-            {/* Tariff strip with quick edit */}
-            <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-slate-500">
-              <span className="font-medium text-slate-700">Taux appliqués :</span>
-              <span className="tabular-nums font-semibold text-slate-800">{mission.custom_hourly_rate || 190} €/h</span>
-              <span>(expert)</span>
-              <span>·</span>
-              <span className="tabular-nums font-semibold text-slate-800">{mission.custom_travel_rate || 135} €/h</span>
-              <span>(trajet)</span>
-              <span>·</span>
-              <span className="tabular-nums font-semibold text-slate-800">{mission.custom_km_rate || 0.95} €/km</span>
-              <span>·</span>
-              <span className="text-slate-500">Palier de facturation :</span>
-              <span className="tabular-nums font-semibold text-slate-800">{missionThreshold.toLocaleString('fr-FR')} € HT</span>
-              <button
-                onClick={() => setActiveTab('rates')}
-                className="ml-1 text-[11px] text-[#0f3854] hover:underline font-semibold"
-              >
-                (Modifier les taux)
-              </button>
-            </div>
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900">{mission.title}</h1>
           </div>
 
-          {/* Quick unbilled badge */}
-          <div className="text-right shrink-0 bg-slate-50 p-3 rounded-xl border border-slate-200">
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-              En attente de facturation
-            </span>
-            <div className="flex items-baseline justify-end space-x-1 mt-0.5">
-              <span className="text-lg font-bold text-slate-900">
-                {(mission.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} €
-              </span>
-              <span className="text-xs text-slate-500">HT</span>
-            </div>
-            <span className="text-[11px] text-slate-500 block">
-              {(mission.unbilled_hours || 0).toFixed(1).replace('.', ',')} h à facturer
-            </span>
-          </div>
-        </div>
-
-        {/* Next action banner */}
-        {mission.next_action && (
-          <div className="mt-4 p-3 bg-sky-50/70 border border-sky-100 rounded-xl flex items-center justify-between text-xs text-sky-900">
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 text-sky-600 shrink-0" />
-              <span>
-                <span className="font-semibold">Prochaine action : </span>
-                {mission.next_action}
-              </span>
-            </div>
-            {mission.next_deadline && (
-              <span className="font-medium bg-white px-2.5 py-0.5 rounded-full border border-sky-200 text-sky-800">
-                Échéance : {mission.next_deadline.split('-').reverse().join('/')}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* High billing alert */}
-        {hasHighUnbilled && (
-          <div className="mt-3 p-3 bg-sky-50/80 border border-sky-200/80 rounded-xl flex items-center justify-between text-xs text-sky-950">
-            <div className="flex items-center space-x-2">
-              <Receipt className="w-4 h-4 text-[#0f3854] shrink-0" />
-              <span>
-                <span className="font-semibold">Palier de facturation atteint : </span>
-                {(mission.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT prêts pour facturation (palier de référence : {missionThreshold.toLocaleString('fr-FR')} €).
-              </span>
-            </div>
+          {/* 3 Primary Dossier Actions */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
+              type="button"
+              onClick={() => onOpenQuickAdd(mission.id)}
+              className="px-3.5 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-xl text-xs font-bold shadow-2xs flex items-center space-x-1.5 cursor-pointer"
+            >
+              <Clock className="w-4 h-4" />
+              <span>Pointer Temps / Frais</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => onPrepareBilling(mission.id)}
-              className="px-3 py-1 bg-[#0f3854] hover:bg-[#1a4a6e] text-white font-medium rounded-lg shadow-2xs transition-colors shrink-0"
+              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-2xs flex items-center space-x-1.5 cursor-pointer"
             >
-              Préparer la note d'honoraires
-            </button>
-          </div>
-        )}
-
-        {/* Mode Terrain Mobile Banner & Quick Actions */}
-        <div className="md:hidden mt-4 p-3 bg-gradient-to-r from-sky-50 to-indigo-50/70 border border-sky-200/90 rounded-xl space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="text-xs font-bold text-[#0f3854] flex items-center space-x-1">
-                <Smartphone className="w-3.5 h-3.5 text-[#0f3854]" />
-                <span>Mode Terrain — Collecte immédiate</span>
+              <Receipt className="w-4 h-4" />
+              <span>
+                Facturer ({totalUnbilledHT.toFixed(0)} € HT à facturer)
               </span>
-            </div>
-            <span className="text-[10px] text-sky-800 bg-white px-2 py-0.5 rounded-full border border-sky-200 font-semibold shadow-2xs">
-              ☁️ Synchro MacBook
-            </span>
-          </div>
-
-          {/* Quick Action Buttons Grid for Field */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setActiveTab('evidences')}
-              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
-            >
-              <Camera className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="truncate">Photo constat</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('report');
-                setTimeout(() => {
-                  const el = document.getElementById('field-notes-area');
-                  el?.scrollIntoView({ behavior: 'smooth' });
-                  el?.focus();
-                }, 100);
-              }}
-              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
-            >
-              <Mic className="w-4 h-4 text-sky-600 shrink-0" />
-              <span className="truncate">Note / Dictée</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onOpenQuickAdd(mission.id)}
-              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
-            >
-              <Clock className="w-4 h-4 text-[#0f3854] shrink-0" />
-              <span className="truncate">Pointage temps</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onOpenQuickAdd(mission.id)}
-              className="p-2.5 bg-white rounded-lg border border-sky-200 font-semibold text-slate-800 hover:border-[#0f3854] flex items-center space-x-2 shadow-2xs active:scale-98 transition-all"
-            >
-              <Receipt className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="truncate">Note de frais</span>
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Mobile Tab Selector (Fin du défilement horizontal) */}
-        <div className="md:hidden mt-4 pt-3 border-t border-slate-100">
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Section active
-            </label>
-            <span className="text-[11px] font-bold text-[#0f3854]">
-              {[
-                { id: 'evidences', label: 'Photos terrain & Émargements' },
-                { id: 'report', label: 'Notes techniques & Rapport' },
-                { id: 'time', label: 'Temps & Frais' },
-                { id: 'overview', label: 'Synthèse & Parties' },
-                { id: 'docs', label: 'Pièces & Documents' },
-                { id: 'comms', label: 'Dires, Convocations & Courriers' },
-                { id: 'travel', label: 'Visites sur site & Logistique' },
-                { id: 'rates', label: 'Tarifs & Palier' },
-              ].find(t => t.id === activeTab)?.label}
+      {/* MAIN LAYOUT : 6 VOLETS SIDEBAR (LEFT) + ACTIVE VOLET CONTENT (RIGHT) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT NAVIGATION : Les 6 Volets du Dossier (Structure Finder de Valentine) */}
+        <aside className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-2xs p-3 space-y-1.5 lg:sticky lg:top-20">
+          <div className="px-2.5 py-1.5 border-b border-slate-100 flex items-center justify-between">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+              Structure du dossier (6 volets)
             </span>
+            <span className="text-[10px] font-mono text-slate-400">{allDocuments.length} pièce(s)</span>
           </div>
 
-          <div className="relative">
-            <select
-              value={activeTab}
-              onChange={(e) => setActiveTab(e.target.value as any)}
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl py-2.5 px-3 pr-8 text-xs font-bold text-slate-800 shadow-2xs focus:ring-2 focus:ring-[#0f3854] appearance-none"
-            >
-              <option value="evidences">📸 Photos terrain & Émargements</option>
-              <option value="report">📝 Notes techniques & Rapport</option>
-              <option value="time">⏱️ Temps & Frais</option>
-              <option value="overview">📋 Synthèse & Parties</option>
-              <option value="docs">📁 Pièces & Documents</option>
-              <option value="comms">✉️ Dires, Convocations & Courriers</option>
-              <option value="travel">🚆 Visites sur site & Logistique</option>
-              <option value="rates">⚙️ Tarifs & Palier</option>
-            </select>
-            <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3 top-3 pointer-events-none" />
-          </div>
-
-          {/* Quick Segmented 3 Field Pillars */}
-          <div className="grid grid-cols-3 gap-1.5 mt-2 bg-slate-100 p-1 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setActiveTab('evidences')}
-              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
-                activeTab === 'evidences'
-                  ? 'bg-white text-[#0f3854] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📸 Photos
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('report')}
-              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
-                activeTab === 'report'
-                  ? 'bg-white text-[#0f3854] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📝 Notes
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('time')}
-              className={`py-1.5 px-1 text-xs font-bold rounded-lg text-center transition-all ${
-                activeTab === 'time'
-                  ? 'bg-white text-[#0f3854] shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ⏱️ Temps
-            </button>
-          </div>
-        </div>
-
-        {/* Tab Navigation (Desktop) */}
-        <div className="hidden md:flex space-x-2 mt-6 border-b border-slate-200 overflow-x-auto pb-px">
-          {[
-            { id: 'time', label: 'Temps & Frais', icon: Clock, count: (mission.activities?.length || 0) + (mission.expenses?.length || 0) },
-            { id: 'evidences', label: 'Photos terrain & Émargements', icon: Camera },
-            { id: 'rates', label: 'Tarifs & Palier', icon: Sliders },
-            { id: 'docs', label: 'Pièces & Documents', icon: FolderOpen, count: mission.documents?.length || 0 },
-            { id: 'report', label: 'Notes techniques & Rapport', icon: FileText, count: mission.photos?.length || 0 },
-            { id: 'comms', label: 'Dires, Convocations & Courriers', icon: Mail, count: mission.communications?.length || 0 },
-            { id: 'travel', label: 'Visites sur site & Logistique', icon: Train, count: (mission.travels?.length || 0) + (mission.registered_mails?.length || 0) },
-            { id: 'overview', label: 'Synthèse & Parties', icon: Calendar },
-          ].map((t) => {
-            const Icon = t.icon;
-            const isActive = activeTab === t.id;
+          {VOLETS_CONFIG.map((v) => {
+            const isActive = activeVolet === v.key;
+            const count = voletCounts[v.key];
             return (
               <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id as any)}
-                className={`flex items-center space-x-1.5 py-2.5 px-3 border-b-2 font-medium text-xs whitespace-nowrap transition-colors ${
+                key={v.key}
+                type="button"
+                onClick={() => setActiveVolet(v.key)}
+                className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start justify-between gap-2 cursor-pointer ${
                   isActive
-                    ? 'border-[#0f3854] text-[#0f3854]'
-                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                    ? 'bg-[#0f3854] text-white shadow-xs'
+                    : 'hover:bg-slate-50 text-slate-700'
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                <span>{t.label}</span>
-                {t.count !== undefined && t.count > 0 && (
-                  <span className="ml-1 text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded-full font-semibold">
-                    {t.count}
+                <div className="flex items-start space-x-2.5 min-w-0">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono shrink-0 mt-0.5 ${
+                      isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-[#0f3854]'
+                    }`}
+                  >
+                    {v.num}
+                  </span>
+                  <div className="min-w-0">
+                    <p className={`text-xs font-bold truncate ${isActive ? 'text-white' : 'text-slate-900'}`}>
+                      {v.label}
+                    </p>
+                    <p
+                      className={`text-[10px] line-clamp-1 mt-0.5 ${
+                        isActive ? 'text-sky-100' : 'text-slate-500'
+                      }`}
+                    >
+                      {v.shortDesc}
+                    </p>
+                  </div>
+                </div>
+                {count > 0 && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                      isActive ? 'bg-sky-400/30 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {count}
                   </span>
                 )}
               </button>
             );
           })}
-        </div>
-      </div>
+        </aside>
 
-      {/* Tab: PHOTOS TERRAIN & ÉMARGEMENTS */}
-      {activeTab === 'evidences' && (
-        <FirebaseEvidenceManager
-          missionId={mission.id}
-          missionCode={mission.code}
-          onRefreshLocal={loadData}
-        />
-      )}
+        {/* RIGHT PANE : Active Volet Content */}
+        <section className="lg:col-span-9 space-y-6">
+          {/* =====================================================================
+              VOLET 1 : 01. PAGE DE GARDE (Ancien File Register Excel)
+             ===================================================================== */}
+          {activeVolet === 'garde' && (
+            <div className="space-y-6">
+              {/* BLOC A : PARTIES, RÉFÉRENCES & CONFRÈRES */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                      Volet 01 • Page de garde (File Register)
+                    </span>
+                    <h2 className="text-sm font-bold text-slate-900">
+                      Parties au dossier, Références croisées & Confrères adverses
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingParties(!editingParties)}
+                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>{editingParties ? 'Fermer l’édition' : 'Modifier les parties / réf.'}</span>
+                  </button>
+                </div>
 
-      {/* Tab: TARIFS & SEUIL DOSSIER */}
-      {activeTab === 'rates' && (
-        <MissionRatesSettings
-          mission={mission}
-          onUpdated={loadData}
-        />
-      )}
+                {editingParties ? (
+                  <form onSubmit={handleSavePartiesAndRefs} className="space-y-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">N/Réf. (Code VP Expertise) *</label>
+                        <input
+                          type="text"
+                          value={missionCodeEdit}
+                          onChange={(e) => setMissionCodeEdit(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono font-bold"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block font-bold text-slate-700 mb-1">Intitulé du sinistre / Affaire *</label>
+                        <input
+                          type="text"
+                          value={missionTitleEdit}
+                          onChange={(e) => setMissionTitleEdit(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        />
+                      </div>
+                    </div>
 
-      {/* Tab 1: TEMPS & FRAIS */}
-      {activeTab === 'time' && (
-        <div className="space-y-6">
-          {/* Activities list */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                <Clock className="w-4 h-4 text-[#0f3854]" />
-                <span>Pointages de temps ({mission.activities?.length || 0})</span>
-              </h2>
-              <button
-                onClick={() => onOpenQuickAdd(mission.id)}
-                className="inline-flex items-center space-x-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Ajouter du temps</span>
-              </button>
-            </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <label className="block font-bold text-[#0f3854] mb-1">Client (qui vous mandate & paie) *</label>
+                        <input
+                          type="text"
+                          value={clientName}
+                          onChange={(e) => setClientName(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-[#0f3854] mb-1">Réf. Client (V/Réf. sur facture)</label>
+                        <input
+                          type="text"
+                          value={clientRef}
+                          onChange={(e) => setClientRef(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Interlocuteur / Gestionnaire Client</label>
+                        <input
+                          type="text"
+                          value={clientContact}
+                          onChange={(e) => setClientContact(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
 
-            {loading && !mission.activities ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des pointages...</span>
-              </div>
-            ) : (mission.activities || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucun temps pointé sur ce dossier.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
-                      <th className="py-2.5 px-3 font-semibold">Date</th>
-                      <th className="py-2.5 px-3 font-semibold">Catégorie</th>
-                      <th className="py-2.5 px-3 font-semibold">Libellé</th>
-                      <th className="py-2.5 px-3 font-semibold text-center">Heures</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Taux HT</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Total HT</th>
-                      <th className="py-2.5 px-3 font-semibold text-center">Statut</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(mission.activities || []).map((act: any) => (
-                      <tr key={act.id} className="hover:bg-slate-50/50">
-                        <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
-                          {act.date.split('-').reverse().join('/')}
-                        </td>
-                        <td className="py-2 px-3 text-slate-600 font-medium">
-                          {ACTIVITY_CATEGORY_LABELS[act.category as keyof typeof ACTIVITY_CATEGORY_LABELS] || act.category.replace('_', ' ')}
-                        </td>
-                        <td className="py-2 px-3 text-slate-900 font-medium">
-                          {act.label}
-                          {act.notes && <span className="block text-[11px] text-slate-400">{act.notes}</span>}
-                        </td>
-                        <td className="py-2 px-3 text-center font-bold text-slate-800">
-                          {editingActId === act.id ? (
-                            <div className="inline-flex items-center space-x-1">
-                              <input
-                                type="number"
-                                step="0.25"
-                                min="0.25"
-                                value={editActHours}
-                                onChange={(e) => setEditActHours(e.target.value)}
-                                className="w-16 rounded border border-[#0f3854] px-1.5 py-0.5 text-center text-xs font-bold"
-                                autoFocus
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveActivityHours(act.id)}
-                                className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
-                                title="Valider"
-                              >
-                                <Check className="w-3 h-3" />
-                              </button>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">Adresse de facturation du Client (pour en-tête Word)</label>
+                      <input
+                        type="text"
+                        value={billingAddress}
+                        onChange={(e) => setBillingAddress(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Assuré *</label>
+                        <input
+                          type="text"
+                          value={insuredParty}
+                          onChange={(e) => setInsuredParty(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Réf. Assuré</label>
+                        <input
+                          type="text"
+                          value={insuredRef}
+                          onChange={(e) => setInsuredRef(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Courtier (facultatif)</label>
+                        <input
+                          type="text"
+                          value={brokerName}
+                          onChange={(e) => setBrokerName(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Réf. Courtier</label>
+                        <input
+                          type="text"
+                          value={brokerRef}
+                          onChange={(e) => setBrokerRef(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Adverse Parties & Confrères editor */}
+                    <div className="pt-3 border-t border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-800">
+                          Parties adverses & Confrères (Cabinets d'expertise & noms des confrères)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAdverseParties([
+                              ...adverseParties,
+                              { party_name: '', expert_firm: '', expert_name: '', lawyer_name: '' },
+                            ])
+                          }
+                          className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[11px] font-semibold text-[#0f3854] hover:bg-slate-100"
+                        >
+                          + Ajouter une partie adverse / confrère
+                        </button>
+                      </div>
+
+                      {adverseParties.map((ap, idx) => (
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                          <input
+                            type="text"
+                            placeholder="Partie adverse (ex: Alstom)"
+                            value={ap.party_name}
+                            onChange={(e) => {
+                              const next = [...adverseParties];
+                              next[idx] = { ...next[idx], party_name: e.target.value };
+                              setAdverseParties(next);
+                            }}
+                            className="rounded border-slate-300 p-1.5 border text-xs"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Cabinet confrère (ex: Saretec)"
+                            value={ap.expert_firm}
+                            onChange={(e) => {
+                              const next = [...adverseParties];
+                              next[idx] = { ...next[idx], expert_firm: e.target.value };
+                              setAdverseParties(next);
+                            }}
+                            className="rounded border-slate-300 p-1.5 border text-xs"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Nom confrère (ex: M. Pechereau)"
+                            value={ap.expert_name}
+                            onChange={(e) => {
+                              const next = [...adverseParties];
+                              next[idx] = { ...next[idx], expert_name: e.target.value };
+                              setAdverseParties(next);
+                            }}
+                            className="rounded border-slate-300 p-1.5 border text-xs font-semibold"
+                          />
+                          <div className="flex items-center space-x-1">
+                            <input
+                              type="text"
+                              placeholder="Avocat / Conseil (facultatif)"
+                              value={ap.lawyer_name || ''}
+                              onChange={(e) => {
+                                const next = [...adverseParties];
+                                next[idx] = { ...next[idx], lawyer_name: e.target.value };
+                                setAdverseParties(next);
+                              }}
+                              className="flex-1 rounded border-slate-300 p-1.5 border text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setAdverseParties(adverseParties.filter((_, i) => i !== idx))}
+                              className="p-1 text-slate-400 hover:text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex justify-end space-x-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingParties(false)}
+                        className="px-3 py-1.5 border border-slate-300 rounded-lg text-slate-600 bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold"
+                      >
+                        Enregistrer
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                    {/* Col 1 : Client */}
+                    <div className="p-3.5 rounded-xl bg-sky-50/50 border border-sky-100 space-y-1.5">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854]">
+                        1. Client (Facturé)
+                      </span>
+                      <p className="text-sm font-bold text-slate-900">{mission.insurance_client}</p>
+                      <p className="text-slate-600">
+                        <span className="font-semibold">Réf. Client (V/Réf.) :</span>{' '}
+                        <span className="font-mono font-bold text-slate-800">{mission.case_reference || 'Non renseignée'}</span>
+                      </p>
+                      {mission.insurer_contact && (
+                        <p className="text-slate-600">
+                          <span className="font-semibold">Interlocuteur :</span> {mission.insurer_contact}
+                        </p>
+                      )}
+                      {mission.billing_address && (
+                        <p className="text-[11px] text-slate-500 pt-1 border-t border-sky-100">
+                          {mission.billing_address}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Col 2 : Assuré & Courtier */}
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                        2. Assuré & Courtier
+                      </span>
+                      <p className="text-sm font-bold text-slate-900">{mission.insured_party}</p>
+                      {mission.insured_reference && (
+                        <p className="text-slate-600">
+                          <span className="font-semibold">Réf. Assuré :</span>{' '}
+                          <span className="font-mono">{mission.insured_reference}</span>
+                        </p>
+                      )}
+                      <div className="pt-1.5 mt-1.5 border-t border-slate-200/80">
+                        <p className="text-slate-700">
+                          <span className="font-semibold">Courtier :</span>{' '}
+                          {mission.broker_name || <span className="text-slate-400">Aucun courtier</span>}
+                        </p>
+                        {mission.broker_reference && (
+                          <p className="text-slate-600">
+                            <span className="font-semibold">Réf. Courtier :</span>{' '}
+                            <span className="font-mono">{mission.broker_reference}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Col 3 : Parties adverses & Confrères */}
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                        3. Parties adverses & Confrères ({adverseParties.length})
+                      </span>
+                      {adverseParties.length === 0 ? (
+                        <p className="text-slate-400 italic">
+                          Aucune partie adverse ou confrère renseigné. Cliquez sur « Modifier les parties » pour en ajouter.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {adverseParties.map((ap, i) => (
+                            <div key={i} className="p-2 bg-white rounded-lg border border-slate-200 text-[11px]">
+                              <p className="font-bold text-slate-900">{ap.party_name || 'Partie adverse'}</p>
+                              <p className="text-[#0f3854] font-semibold">
+                                Confrère : {ap.expert_name || '—'}{' '}
+                                {ap.expert_firm ? `(${ap.expert_firm})` : ''}
+                              </p>
+                              {ap.lawyer_name && (
+                                <p className="text-slate-500">Conseil : {ap.lawyer_name}</p>
+                              )}
                             </div>
-                          ) : (
-                            <div className="inline-flex items-center space-x-1">
-                              <span>{act.hours.toString().replace('.', ',')} h</span>
-                              {act.status !== 'facture' && (
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* BLOC B : ENJEU DU DOSSIER (ÉVOLUTIF) & RATIO HONORAIRES FACTURÉS */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <TrendingUp className="w-4 h-4 text-amber-600" />
+                      <h3 className="text-sm font-bold text-slate-900">Enjeu financier du dossier (Préjudice estimé)</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowUpdateStake(!showUpdateStake)}
+                      className="text-xs font-semibold text-[#0f3854] hover:underline cursor-pointer"
+                    >
+                      {showUpdateStake ? 'Fermer' : 'Actualiser l’enjeu'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-baseline justify-between bg-amber-50/60 border border-amber-200/80 rounded-xl p-3.5">
+                    <div>
+                      <span className="text-[11px] font-semibold text-amber-900 block">Enjeu actuel estimé</span>
+                      <span className="text-2xl font-extrabold text-slate-900">
+                        {stakeAmount > 0 ? `${stakeAmount.toLocaleString('fr-FR')} € HT` : 'Non chiffré'}
+                      </span>
+                    </div>
+                    <div className="text-right text-xs">
+                      <span className="text-slate-500 block">Déjà facturé sur ce dossier :</span>
+                      <span className="font-bold text-[#0f3854]">
+                        {totalBilledHT.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € HT
+                      </span>
+                      {stakeAmount > 0 && (
+                        <span className="block text-[11px] text-emerald-700 font-semibold">
+                          Ratio honoraires / enjeu : {((totalBilledHT / stakeAmount) * 100).toFixed(2).replace('.', ',')}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {showUpdateStake && (
+                    <form onSubmit={handleUpdateStake} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Nouvel enjeu (€ HT) *</label>
+                          <input
+                            type="text"
+                            value={newStakeAmount}
+                            onChange={(e) => setNewStakeAmount(e.target.value)}
+                            placeholder="ex: 450000"
+                            required
+                            className="w-full rounded border-slate-300 p-1.5 border bg-white font-bold"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Motif / Étape</label>
+                          <input
+                            type="text"
+                            value={newStakeNote}
+                            onChange={(e) => setNewStakeNote(e.target.value)}
+                            placeholder="ex: Chiffrage après devis réparation"
+                            className="w-full rounded border-slate-300 p-1.5 border bg-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <button type="submit" className="px-3 py-1.5 bg-[#0f3854] text-white rounded font-semibold">
+                          Enregistrer dans l'historique de l'enjeu
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {stakeHistory.length > 0 && (
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                        Historique d'évolution de l'enjeu (Début ➔ Aujourd'hui)
+                      </span>
+                      <div className="divide-y divide-slate-100 text-xs max-h-28 overflow-y-auto">
+                        {stakeHistory.map((sh: any, i: number) => (
+                          <div key={i} className="py-1 flex items-center justify-between text-[11px]">
+                            <span className="text-slate-600">
+                              <strong className="font-mono text-slate-700">
+                                {(sh.date || '').split('-').reverse().join('/')}
+                              </strong>{' '}
+                              — {sh.note || 'Estimation'}
+                            </span>
+                            <span className="font-bold text-slate-900">
+                              {Number(sh.amount).toLocaleString('fr-FR')} € HT
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* HISTORIQUE DES FACTURES ÉMISES SUR CE DOSSIER */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Receipt className="w-4 h-4 text-[#0f3854]" />
+                        <h3 className="text-sm font-bold text-slate-900">
+                          Factures d'honoraires du dossier ({missionInvoices.length})
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onPrepareBilling(mission.id)}
+                        className="text-xs font-bold text-[#0f3854] hover:underline cursor-pointer"
+                      >
+                        + Préparer une facture →
+                      </button>
+                    </div>
+
+                    {missionInvoices.length === 0 ? (
+                      <div className="p-4 bg-slate-50 rounded-xl text-xs text-slate-500 text-center">
+                        Aucune facture émise sur ce dossier pour le moment.
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
+                              <th className="py-2 px-2.5 font-semibold">N° Facture</th>
+                              <th className="py-2 px-2.5 font-semibold">Date</th>
+                              <th className="py-2 px-2.5 font-semibold text-right">Montant HT</th>
+                              <th className="py-2 px-2.5 font-semibold text-center">Statut</th>
+                              <th className="py-2 px-2.5 font-semibold text-right">Word</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {missionInvoices.map((inv: any) => (
+                              <tr key={inv.id} className="hover:bg-slate-50">
+                                <td className="py-2 px-2.5 font-bold text-[#0f3854]">{inv.invoice_number}</td>
+                                <td className="py-2 px-2.5 text-slate-600">
+                                  {(inv.date || '').split('-').reverse().join('/')}
+                                </td>
+                                <td className="py-2 px-2.5 text-right font-semibold">
+                                  {Number(inv.total_ht).toFixed(2).replace('.', ',')} €
+                                </td>
+                                <td className="py-2 px-2.5 text-center">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      inv.status === 'regle'
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : inv.status === 'brouillon'
+                                        ? 'bg-amber-50 text-amber-800'
+                                        : 'bg-sky-50 text-sky-800'
+                                    }`}
+                                  >
+                                    {inv.status === 'regle' ? 'Réglée' : inv.status === 'brouillon' ? 'Brouillon' : 'Émise'}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadInvoiceDocx(inv)}
+                                    className="text-[#0f3854] hover:underline font-semibold inline-flex items-center space-x-1"
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    <span>.docx</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-2.5 bg-sky-50/70 border border-sky-200/80 rounded-xl text-[11px] text-slate-700 flex items-center justify-between">
+                    <span>
+                      Objet auto de la prochaine facture :{' '}
+                      <strong className="text-[#0f3854]">
+                        « Mission d’expertise depuis le {nextInvoiceSubjectDate} »
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* BLOC C : POINTAGE DU DOSSIER (TEMPS & FRAIS) + TARIFS & VISITES */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Pointage du dossier : Temps passés ({mission.activities?.length || 0}) & Frais de mission ({mission.expenses?.length || 0})
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Les justificatifs de frais de déplacement sont automatiquement classés à part dans votre dossier Mac{' '}
+                      <code className="font-mono text-[#0f3854]">Compta/&lt;Mois&gt;/Justificatifs/</code>.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRatesDrawer(!showRatesDrawer)}
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center space-x-1.5"
+                    >
+                      <Sliders className="w-3.5 h-3.5 text-[#0f3854]" />
+                      <span>Tarifs ({mission.custom_hourly_rate || 190} €/h) & Visites</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenQuickAdd(mission.id)}
+                      className="px-3 py-1.5 rounded-lg bg-[#0f3854] text-white text-xs font-semibold hover:bg-[#16496d] inline-flex items-center space-x-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Ajouter un pointage / frais</span>
+                    </button>
+                  </div>
+                </div>
+
+                {showRatesDrawer && (
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
+                    <MissionRatesSettings mission={mission} onUpdated={loadData} />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Table des temps */}
+                  <div className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+                      Temps pointés sur ce dossier
+                    </span>
+                    {(mission.activities || []).length === 0 ? (
+                      <p className="text-xs text-slate-400 p-4 bg-slate-50 rounded-xl text-center">
+                        Aucun temps pointé.
+                      </p>
+                    ) : (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 text-xs">
+                        {(mission.activities || []).map((act: any) => (
+                          <div key={act.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50">
+                            <div>
+                              <span className="font-semibold text-slate-900 block">
+                                {ACTIVITY_CATEGORY_LABELS[act.category as keyof typeof ACTIVITY_CATEGORY_LABELS] || act.label}
+                              </span>
+                              <span className="text-[11px] text-slate-500">
+                                {(act.date || '').split('-').reverse().join('/')}
+                                {act.notes ? ` • ${act.notes}` : ''}
+                              </span>
+                            </div>
+                            <div className="text-right flex items-center space-x-2">
+                              {editingActId === act.id ? (
+                                <div className="flex items-center space-x-1">
+                                  <input
+                                    type="text"
+                                    value={editActHours}
+                                    onChange={(e) => setEditActHours(e.target.value)}
+                                    className="w-14 border border-[#0f3854] rounded px-1.5 py-0.5 text-right font-bold"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveActivityHours(act.id)}
+                                    className="px-2 py-0.5 bg-[#0f3854] text-white rounded text-[10px]"
+                                  >
+                                    OK
+                                  </button>
+                                </div>
+                              ) : (
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setEditingActId(act.id);
                                     setEditActHours(String(act.hours));
                                   }}
-                                  className="text-slate-400 hover:text-[#0f3854] p-0.5 rounded"
-                                  title="Modifier le nombre d'heures"
+                                  className="text-right hover:underline"
                                 >
-                                  <Edit3 className="w-3 h-3" />
+                                  <span className="font-bold text-slate-900 block">
+                                    {Number(act.total_ht).toFixed(2).replace('.', ',')} € HT
+                                  </span>
+                                  <span className="text-[11px] text-[#0f3854]">
+                                    {act.hours}h × {act.hourly_rate} € ({act.status === 'facture' ? 'Facturé' : 'À facturer'})
+                                  </span>
                                 </button>
                               )}
                             </div>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-right text-slate-600">
-                          {act.hourly_rate} €
-                        </td>
-                        <td className="py-2 px-3 text-right font-bold text-slate-900">
-                          {act.total_ht.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          {act.status === 'facture' ? (
-                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">Facturé</span>
-                          ) : act.status === 'reserve' ? (
-                            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">Réservé brouillon</span>
-                          ) : (
-                            <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">À facturer</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-          {/* Expenses list */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                <Receipt className="w-4 h-4 text-emerald-600" />
-                <span>Notes de frais & Déplacements ({mission.expenses?.length || 0})</span>
-              </h2>
-              <button
-                onClick={() => onOpenQuickAdd(mission.id)}
-                className="inline-flex items-center space-x-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Ajouter un frais</span>
-              </button>
+                  {/* Table des frais */}
+                  <div className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+                      Frais & Déplacements liés au dossier
+                    </span>
+                    {(mission.expenses || []).length === 0 ? (
+                      <p className="text-xs text-slate-400 p-4 bg-slate-50 rounded-xl text-center">
+                        Aucun frais enregistré.
+                      </p>
+                    ) : (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 text-xs">
+                        {(mission.expenses || []).map((exp: any) => (
+                          <div key={exp.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50">
+                            <div>
+                              <span className="font-semibold text-slate-900 block">{exp.label}</span>
+                              <span className="text-[11px] text-slate-500">
+                                {(exp.date || '').split('-').reverse().join('/')} • {exp.quantity} × {Number(exp.unit_price).toFixed(2)} €
+                              </span>
+                            </div>
+                            <div className="text-right flex items-center space-x-2">
+                              {exp.receipt_filename && (
+                                <a
+                                  href={`/uploads/${exp.receipt_filename}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold"
+                                >
+                                  📎 Justif
+                                </a>
+                              )}
+                              <div>
+                                <span className="font-bold text-slate-900 block">
+                                  {Number(exp.total_ht).toFixed(2).replace('.', ',')} € HT
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  {exp.status === 'facture' ? 'Facturé' : 'À facturer'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
+          )}
 
-            {loading && !mission.expenses ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-600"></div>
-                <span>Chargement des notes de frais...</span>
-              </div>
-            ) : (mission.expenses || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucun frais rattaché à ce dossier.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
-                      <th className="py-2.5 px-3 font-semibold">Date</th>
-                      <th className="py-2.5 px-3 font-semibold">Nature</th>
-                      <th className="py-2.5 px-3 font-semibold">Libellé</th>
-                      <th className="py-2.5 px-3 font-semibold text-center">Qté</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">P.U. HT</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Total HT</th>
-                      <th className="py-2.5 px-3 font-semibold text-right">Total TTC</th>
-                      <th className="py-2.5 px-3 font-semibold text-center">Statut</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(mission.expenses || []).map((exp: any) => (
-                      <tr key={exp.id} className="hover:bg-slate-50/50">
-                        <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
-                          {exp.date.split('-').reverse().join('/')}
-                        </td>
-                        <td className="py-2 px-3 text-slate-600 font-medium">
-                          {EXPENSE_CATEGORY_LABELS[exp.category as keyof typeof EXPENSE_CATEGORY_LABELS] || (exp.category === 'km' ? 'Kilomètres' : exp.category)}
-                        </td>
-                        <td className="py-2 px-3 text-slate-900 font-medium">
-                          {exp.label}
-                        </td>
-                        <td className="py-2 px-3 text-center font-bold text-slate-800">
-                          {exp.quantity}
-                        </td>
-                        <td className="py-2 px-3 text-right text-slate-600">
-                          {exp.unit_price.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="py-2 px-3 text-right text-slate-700">
-                          {exp.total_ht.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="py-2 px-3 text-right font-bold text-emerald-800">
-                          {exp.total_ttc.toFixed(2).replace('.', ',')} €
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          {exp.status === 'facture' ? (
-                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">Facturé</span>
-                          ) : exp.status === 'reserve' ? (
-                            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">Réservé</span>
-                          ) : (
-                            <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">À facturer</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: PIÈCES & DOCUMENTS DU DOSSIER */}
-      {activeTab === 'docs' && (
-        <div className="space-y-6">
-          {/* Universal Dropzone Card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          {/* =====================================================================
+              VOLET 2 : 02. CONTRATS
+             ===================================================================== */}
+          {activeVolet === 'contrats' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                  <FolderOpen className="w-4 h-4 text-[#0f3854]" />
-                  <span>Dépôt de documents & pièces justificatives</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Injectez vos photos de terrain, captures d'écran, rapports PDF, dires d'avocats, feuilles d'émargement ou justificatifs.
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                  Volet 02 • Dossiers/{mission.code}/02_Contrats
+                </span>
+                <h2 className="text-base font-bold text-slate-900">
+                  Contrats du Client & de l'Assuré (Environnement contractuel du sinistre)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Polices d'assurance, conditions générales et particulières, contrats de maintenance ou d'exploitation ferroviaire utiles à l'analyse des responsabilités.
                 </p>
               </div>
+
+              {renderVoletDropzone('contrats', 'Polices, contrats, conventions')}
+              {renderPieceTable(
+                docsContrats,
+                "Aucun contrat déposé dans ce volet pour l'instant. Glissez-déposez vos PDF ou Word ci-dessus."
+              )}
             </div>
+          )}
 
-            {/* Drag and Drop Container */}
-            <div
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                  handleUploadDocuments(e.dataTransfer.files);
-                }
-              }}
-              className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
-                isDragging
-                  ? 'border-[#0f3854] bg-sky-50/60 scale-[1.01]'
-                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50'
-              }`}
-            >
-              <UploadCloud className="w-10 h-10 text-[#0f3854] mx-auto mb-2 opacity-80" />
-              <p className="text-sm font-semibold text-slate-800">
-                Glissez-déposez vos fichiers ici (Photos, Captures, PDF, Word, Excel...)
-              </p>
-              <p className="text-xs text-slate-400 mt-1 mb-3">
-                ou sélectionnez des fichiers depuis votre ordinateur ou smartphone
-              </p>
+          {/* =====================================================================
+              VOLET 3 : 03. CONSTATATIONS IMMÉDIATES
+             ===================================================================== */}
+          {activeVolet === 'constatations' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                      Volet 03 • Dossiers/{mission.code}/03_Constatations_immediates
+                    </span>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Constatations immédiates : Jour J, Visites terrain & Extractions techniques
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Déposez vos photos de visite, feuilles de présence, témoignages et extractions (Durandal, boîte noire) en vrac sans légende obligatoire.
+                    </p>
+                  </div>
 
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-lg mx-auto">
-                <select
-                  value={docCategory}
-                  onChange={(e) => setDocCategory(e.target.value)}
-                  className="text-xs rounded-lg border-slate-300 bg-white py-1.5 px-2.5 border text-slate-700 w-full sm:w-auto"
-                >
-                  <option value="photo_terrain">Photo / Cliché terrain</option>
-                  <option value="capture_ecran">Capture d'écran (visio, note)</option>
-                  <option value="procedure_dires">Pièce de procédure / Dires</option>
-                  <option value="emargement_pv">Feuille d'émargement / PV</option>
-                  <option value="note_technique">Note technique / Rapport</option>
-                  <option value="justificatif_frais">Justificatif de frais</option>
-                  <option value="autre">Autre document</option>
-                </select>
-
-                <input
-                  type="text"
-                  value={docCaption}
-                  onChange={(e) => setDocCaption(e.target.value)}
-                  placeholder="Légende ou description (facultatif)"
-                  className="text-xs rounded-lg border-slate-300 bg-white py-1.5 px-2.5 border text-slate-700 w-full sm:flex-1"
-                />
-
-                <label className="cursor-pointer px-4 py-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors shrink-0 flex items-center space-x-1">
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{uploadingDocs ? "Envoi..." : "Parcourir"}</span>
-                  <input
-                    type="file"
-                    multiple
-                    disabled={uploadingDocs}
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files.length > 0) {
-                        handleUploadDocuments(e.target.files);
-                      }
-                    }}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Documents Gallery & Filter */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h3 className="text-sm font-bold text-slate-900">
-                Documents rattachés au dossier ({mission.documents?.length || 0})
-              </h3>
-
-              {/* Filter pills */}
-              <div className="flex items-center space-x-1 overflow-x-auto pb-1 sm:pb-0 text-xs">
-                {[
-                  { id: 'all', label: 'Tous' },
-                  { id: 'photo_terrain', label: 'Photos' },
-                  { id: 'capture_ecran', label: 'Captures' },
-                  { id: 'procedure_dires', label: 'Dires & Procédure' },
-                  { id: 'emargement_pv', label: 'Émargement & PV' },
-                  { id: 'note_technique', label: 'Notes & Rapports' },
-                ].map(f => (
-                  <button
-                    key={f.id}
-                    onClick={() => setDocFilter(f.id)}
-                    className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap transition-colors ${
-                      docFilter === f.id
-                        ? 'bg-[#0f3854] text-white'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {loading && !mission.documents ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des documents...</span>
-              </div>
-            ) : (mission.documents || []).length === 0 ? (
-              <div className="p-8 text-center border border-slate-100 rounded-xl bg-slate-50/50 text-slate-400 text-xs space-y-1">
-                <Paperclip className="w-8 h-8 mx-auto text-slate-300 mb-1" />
-                <p className="font-semibold text-slate-600">Aucun document rattaché pour le moment</p>
-                <p>Déposez des photos, des captures ou des PDF ci-dessus pour les centraliser dans ce dossier.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {mission.documents
-                  ?.filter((d: any) => docFilter === 'all' || d.category === docFilter)
-                  .map((doc: any) => {
-                    const isImg = doc.mime_type?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(doc.filename);
-                    const isPdf = doc.mime_type?.includes('pdf') || /\.pdf$/i.test(doc.filename);
-                    const isDocx = /\.docx?$/i.test(doc.filename);
-                    const isXlsx = /\.xlsx?$/i.test(doc.filename);
-                    const formattedSize = doc.file_size ? `${Math.round(doc.file_size / 1024)} Ko` : '';
-
-                    return (
-                      <div
-                        key={doc.id}
-                        className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col justify-between text-xs space-y-2 hover:border-slate-300 transition-all group"
+                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                    {[
+                      { id: 'jour_j', label: 'Jour J & Ouverture' },
+                      { id: 'visite_terrain', label: 'Visites terrain & Photos' },
+                      { id: 'extractions', label: 'Extractions (Durandal...)' },
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setConstatSubSection(st.id as any)}
+                        className={`px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                          constatSubSection === st.id
+                            ? 'bg-white text-[#0f3854] shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
                       >
-                        {/* Preview / Icon thumbnail */}
-                        <div className="aspect-video bg-white rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center relative">
-                          {isImg ? (
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {renderVoletDropzone(
+                  'constatations',
+                  constatSubSection === 'jour_j'
+                    ? 'Signalement Jour J, premiers constats, témoignages'
+                    : constatSubSection === 'extractions'
+                    ? 'Relevés Durandal, boîte noire, télémétrie'
+                    : 'Photos terrain en vrac, feuilles d’émargement',
+                  constatSubSection
+                )}
+
+                {/* Pièces numérotées de constatations */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Pièces de constatations enregistrées ({docsConstatations.length})
+                  </h3>
+                  {renderPieceTable(
+                    docsConstatations,
+                    'Aucune pièce de constatation déposée. Glissez vos photos ou documents en vrac ci-dessus.'
+                  )}
+                </div>
+
+                {/* Galerie visuelle rapide des photos terrain */}
+                {allPhotos.length > 0 && (
+                  <div className="space-y-2 pt-3 border-t border-slate-100">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Aperçu visuel des photos terrain ({allPhotos.length})
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {allPhotos.map((ph: any) => (
+                        <div key={ph.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-2 space-y-1.5 text-xs">
+                          <a href={`/uploads/${ph.filename}`} target="_blank" rel="noreferrer">
                             <img
-                              src={`/uploads/${doc.filename}`}
-                              alt={doc.caption}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              src={`/uploads/${ph.filename}`}
+                              alt={ph.caption || 'Photo terrain'}
+                              className="w-full h-28 object-cover rounded-lg"
                             />
-                          ) : isPdf ? (
-                            <div className="text-center p-2">
-                              <span className="text-rose-600 font-extrabold text-xs block uppercase bg-rose-50 px-2 py-1 rounded border border-rose-200">PDF</span>
-                              <span className="text-[10px] text-slate-500 mt-1 block truncate max-w-[140px]">{doc.original_name}</span>
-                            </div>
-                          ) : isDocx ? (
-                            <div className="text-center p-2">
-                              <span className="text-sky-600 font-extrabold text-xs block uppercase bg-sky-50 px-2 py-1 rounded border border-sky-200">DOCX</span>
-                              <span className="text-[10px] text-slate-500 mt-1 block truncate max-w-[140px]">{doc.original_name}</span>
-                            </div>
-                          ) : isXlsx ? (
-                            <div className="text-center p-2">
-                              <span className="text-emerald-600 font-extrabold text-xs block uppercase bg-emerald-50 px-2 py-1 rounded border border-emerald-200">EXCEL</span>
-                              <span className="text-[10px] text-slate-500 mt-1 block truncate max-w-[140px]">{doc.original_name}</span>
-                            </div>
-                          ) : (
-                            <div className="text-center p-2">
-                              <Paperclip className="w-6 h-6 text-slate-400 mx-auto mb-1" />
-                              <span className="text-[10px] text-slate-500 block truncate max-w-[140px]">{doc.original_name}</span>
-                            </div>
-                          )}
-
-                          {/* Quick preview overlay */}
-                          <a
-                            href={`/uploads/${doc.filename}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"
-                            title="Ouvrir le fichier"
-                          >
-                            <Eye className="w-5 h-5 drop-shadow" />
                           </a>
-                        </div>
-
-                        {/* Title and metadata */}
-                        <div>
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-semibold text-slate-900 truncate" title={doc.caption || doc.original_name}>
-                              {doc.caption || doc.original_name}
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-slate-700 truncate">
+                              {ph.caption || ph.filename}
                             </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await api.deletePhoto(ph.id);
+                                loadData();
+                              }}
+                              className="text-slate-400 hover:text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-0.5">
-                            <span className="capitalize">{doc.category.replace('_', ' ')}</span>
-                            <span>{formattedSize}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Participants aux réunions & Sas de notes terrain */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+                      <Users className="w-4 h-4 text-[#0f3854]" />
+                      <span>Participants / Émargement visite ({mission.attendees?.length || 0})</span>
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddAttendee(!showAddAttendee)}
+                      className="text-xs font-semibold text-[#0f3854] hover:underline"
+                    >
+                      + Ajouter participant
+                    </button>
+                  </div>
+
+                  {showAddAttendee && (
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (!attName.trim()) return;
+                        await api.addAttendee(mission.id, {
+                          name: attName.trim(),
+                          organization: attOrg.trim(),
+                          role: attRole.trim(),
+                          presence_type: attPresence,
+                        });
+                        setAttName('');
+                        setAttOrg('');
+                        setAttRole('');
+                        setShowAddAttendee(false);
+                        loadData();
+                      }}
+                      className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs"
+                    >
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Nom & Prénom *"
+                          value={attName}
+                          onChange={(e) => setAttName(e.target.value)}
+                          required
+                          className="rounded border-slate-300 p-1.5 border bg-white"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Société / Cabinet"
+                          value={attOrg}
+                          onChange={(e) => setAttOrg(e.target.value)}
+                          className="rounded border-slate-300 p-1.5 border bg-white"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button type="submit" className="px-3 py-1 bg-[#0f3854] text-white rounded font-semibold">
+                          Ajouter
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  <div className="divide-y divide-slate-100 text-xs">
+                    {(mission.attendees || []).map((att: any) => (
+                      <div key={att.id} className="py-2 flex items-center justify-between">
+                        <div>
+                          <span className="font-bold text-slate-900">{att.name}</span>{' '}
+                          <span className="text-slate-500">({att.organization})</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await api.deleteAttendee(att.id);
+                            loadData();
+                          }}
+                          className="text-slate-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sas de notes brutes terrain */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-900">Notes brutes de visite terrain</h3>
+                    <button
+                      type="button"
+                      onClick={handleSaveReportDraft}
+                      disabled={savingNotes}
+                      className="px-3 py-1 bg-[#0f3854] text-white rounded-lg text-xs font-semibold"
+                    >
+                      {savingNotes ? 'Sauvegarde...' : 'Enregistrer les notes'}
+                    </button>
+                  </div>
+                  <textarea
+                    rows={5}
+                    value={rawFieldNotes}
+                    onChange={(e) => setRawFieldNotes(e.target.value)}
+                    placeholder="Saisissez ou dictez vos relevés bruts sur site (cotes, numéros de série, observations immédiates)..."
+                    className="w-full text-xs rounded-xl border-slate-300 p-3 border bg-slate-50 focus:bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =====================================================================
+              VOLET 4 : 04. CONTRADICTOIRE
+             ===================================================================== */}
+          {activeVolet === 'contradictoire' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                      Volet 04 • Dossiers/{mission.code}/04_Contradictoire
+                    </span>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Contradictoire : Mises en cause, Convocations, Dires & Courriers LRAR
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Centralisez toutes les pièces du contradictoire et suivez les échanges avec les confrères et conseils.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddComm(!showAddComm)}
+                    className="px-3.5 py-2 bg-[#0f3854] text-white rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    + Noter un dire / courrier / convocation
+                  </button>
+                </div>
+
+                {showAddComm && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!commSubject.trim()) return;
+                      await api.addCommunication(mission.id, {
+                        sender: commSender.trim() || 'Confrère / Partie',
+                        subject: commSubject.trim(),
+                        body_Summary: commBody.trim(),
+                        urgency: commUrgency,
+                      });
+                      setCommSender('');
+                      setCommSubject('');
+                      setCommBody('');
+                      setShowAddComm(false);
+                      showToast('Échange contradictoire enregistré.');
+                      loadData();
+                    }}
+                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        placeholder="Émetteur / Destinataire (ex: Saretec - M. Pechereau)"
+                        value={commSender}
+                        onChange={(e) => setCommSender(e.target.value)}
+                        className="rounded-lg border-slate-300 p-2 border bg-white"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Objet (ex: Convocation expertise contradictoire LRAR) *"
+                        value={commSubject}
+                        onChange={(e) => setCommSubject(e.target.value)}
+                        required
+                        className="sm:col-span-2 rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      placeholder="Synthèse ou points clés du dire / courrier..."
+                      value={commBody}
+                      onChange={(e) => setCommBody(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                    />
+                    <div className="flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddComm(false)}
+                        className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button type="submit" className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold">
+                        Enregistrer
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {renderVoletDropzone('contradictoire', 'Convocations, mises en cause, dires, accusés LRAR')}
+
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Pièces du contradictoire numérotées ({docsContradictoire.length})
+                  </h3>
+                  {renderPieceTable(
+                    docsContradictoire,
+                    'Aucune pièce contradictoire déposée dans ce volet.'
+                  )}
+                </div>
+
+                {(mission.communications || []).length > 0 && (
+                  <div className="space-y-2 pt-3 border-t border-slate-100">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Journal des échanges, mises en cause & dires ({mission.communications.length})
+                    </h3>
+                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+                      {mission.communications.map((c: any) => (
+                        <div key={c.id} className="p-3 flex items-start justify-between hover:bg-slate-50">
+                          <div>
+                            <p className="font-bold text-slate-900">
+                              {c.subject}{' '}
+                              <span className="font-normal text-slate-500">
+                                — {c.sender} ({(c.received_date || '').split('-').reverse().join('/')})
+                              </span>
+                            </p>
+                            {c.body_Summary && <p className="text-slate-600 mt-0.5">{c.body_Summary}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await api. toggleCommunicationReplied(c.id, !c.replied);
+                              loadData();
+                            }}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
+                              c.replied
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {c.replied ? 'Traité / Répondu' : 'À traiter'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* =====================================================================
+              VOLET 5 : 05. COMPTES DU PRÉJUDICE
+             ===================================================================== */}
+          {activeVolet === 'prejudice' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                      Volet 05 • Dossiers/{mission.code}/05_Comptes_du_prejudice
+                    </span>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Comptes du préjudice : Tableau de chiffrage & Devis / Factures liés
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Ventilez les montants réclamés et retenus par poste et reliez chaque ligne aux pièces numérotées du dossier.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {totalRetainedHT > 0 && totalRetainedHT !== stakeAmount && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await api.updateMission(mission.id, {
+                            stake_amount: totalRetainedHT,
+                            stake_note: 'Alignement sur le total retenu des Comptes du préjudice',
+                          });
+                          showToast(`Enjeu du dossier mis à jour à ${totalRetainedHT.toLocaleString('fr-FR')} € HT !`);
+                          loadData();
+                        }}
+                        className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        Reporter {totalRetainedHT.toLocaleString('fr-FR')} € comme nouvel Enjeu
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingDamageId(null);
+                        setDmgLabel('');
+                        setDmgClaimed('');
+                        setDmgRetained('');
+                        setDmgNotes('');
+                        setDmgSelectedPieces([]);
+                        setShowAddDamageLine(!showAddDamageLine);
+                      }}
+                      className="px-3.5 py-2 bg-[#0f3854] text-white rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      + Ajouter un poste de préjudice
+                    </button>
+                  </div>
+                </div>
+
+                {showAddDamageLine && (
+                  <form onSubmit={handleSaveDamageLine} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Catégorie</label>
+                        <select
+                          value={dmgCategory}
+                          onChange={(e: any) => setDmgCategory(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        >
+                          <option value="materiel">Dommages matériels / Remise en état</option>
+                          <option value="exploitation">Pertes d'exploitation / Immobilisation</option>
+                          <option value="frais_annexes">Frais annexes / Relevage / Acheminement</option>
+                          <option value="autre">Autre poste</option>
+                        </select>
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label className="block font-semibold text-slate-700 mb-1">Désignation du poste *</label>
+                        <input
+                          type="text"
+                          value={dmgLabel}
+                          onChange={(e) => setDmgLabel(e.target.value)}
+                          placeholder="ex: Remise en état bogie moteur et remplacement essieux (Devis Alstom)"
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Montant réclamé (€ HT) *</label>
+                        <input
+                          type="text"
+                          value={dmgClaimed}
+                          onChange={(e) => setDmgClaimed(e.target.value)}
+                          placeholder="ex: 245000"
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Montant retenu Expert (€ HT)</label>
+                        <input
+                          type="text"
+                          value={dmgRetained}
+                          onChange={(e) => setDmgRetained(e.target.value)}
+                          placeholder="Laisser vide si identique au réclamé"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-bold text-[#0f3854]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Observation / Vétusté / Réfaction</label>
+                        <input
+                          type="text"
+                          value={dmgNotes}
+                          onChange={(e) => setDmgNotes(e.target.value)}
+                          placeholder="ex: Abattement vétusté 15% sur pièces d'usure"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {allDocuments.length > 0 && (
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">
+                          Pièces justificatives rattachées à ce poste (cliquez pour cocher) :
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {allDocuments.map((d) => {
+                            const pNum = d.piece_number || 0;
+                            if (!pNum) return null;
+                            const active = dmgSelectedPieces.includes(pNum);
+                            return (
+                              <button
+                                key={d.id}
+                                type="button"
+                                onClick={() =>
+                                  setDmgSelectedPieces((prev) =>
+                                    prev.includes(pNum) ? prev.filter((x) => x !== pNum) : [...prev, pNum]
+                                  )
+                                }
+                                className={`px-2 py-1 rounded-md text-[11px] font-semibold border transition-colors ${
+                                  active
+                                    ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                }`}
+                              >
+                                Pièce n°{pNum} — {d.original_name.slice(0, 28)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddDamageLine(false)}
+                        className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button type="submit" className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold">
+                        Enregistrer le poste
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Tableau de chiffrage des Comptes du préjudice */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                        <th className="py-2.5 px-3 font-semibold">Poste / Désignation</th>
+                        <th className="py-2.5 px-3 font-semibold">Catégorie</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Réclamé HT</th>
+                        <th className="py-2.5 px-3 font-semibold text-right text-[#0f3854]">Retenu Expert HT</th>
+                        <th className="py-2.5 px-3 font-semibold">Pièces liées</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {damageLines.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-6 text-center text-slate-400">
+                            Aucun poste de préjudice saisi. Cliquez sur « + Ajouter un poste de préjudice ».
+                          </td>
+                        </tr>
+                      ) : (
+                        damageLines.map((line) => (
+                          <tr key={line.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3">
+                              <span className="font-bold text-slate-900 block">{line.label}</span>
+                              {line.notes && <span className="text-[11px] text-slate-500">{line.notes}</span>}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 capitalize">{line.category.replace('_', ' ')}</td>
+                            <td className="py-2.5 px-3 text-right font-semibold text-slate-700">
+                              {Number(line.claimed_amount_ht).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-extrabold text-[#0f3854]">
+                              {Number(line.retained_amount_ht).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex flex-wrap gap-1">
+                                {(line.piece_numbers || []).map((num) => (
+                                  <span
+                                    key={num}
+                                    className="px-1.5 py-0.5 rounded bg-sky-50 text-[#0f3854] border border-sky-200 font-mono text-[10px] font-bold"
+                                  >
+                                    Pièce n°{num}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingDamageId(line.id);
+                                  setDmgCategory(line.category);
+                                  setDmgLabel(line.label);
+                                  setDmgClaimed(String(line.claimed_amount_ht));
+                                  setDmgRetained(String(line.retained_amount_ht));
+                                  setDmgNotes(line.notes || '');
+                                  setDmgSelectedPieces(line.piece_numbers || []);
+                                  setShowAddDamageLine(true);
+                                }}
+                                className="p-1 text-slate-500 hover:text-[#0f3854]"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await api.deleteDamageLine(line.id);
+                                  loadData();
+                                }}
+                                className="p-1 text-slate-400 hover:text-rose-600"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {damageLines.length > 0 && (
+                      <tfoot>
+                        <tr className="bg-slate-50 border-t-2 border-slate-200 font-extrabold text-xs">
+                          <td colSpan={2} className="py-2.5 px-3 text-slate-900">
+                            TOTAL DES COMPTES DU PRÉJUDICE
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-slate-800">
+                            {totalClaimedHT.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € HT
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-[#0f3854] text-sm">
+                            {totalRetainedHT.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € HT
+                          </td>
+                          <td colSpan={2}></td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+
+                {renderVoletDropzone('prejudice', 'Devis, factures de réparation, justificatifs d’immobilisation')}
+
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Pièces justificatives du préjudice ({docsPrejudice.length})
+                  </h3>
+                  {renderPieceTable(
+                    docsPrejudice,
+                    'Aucun devis ou facture de préjudice déposé dans ce volet.'
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =====================================================================
+              VOLET 6 : 06. RAPPORTS ÉMIS (Packages datés + .zip Avocats + Rédaction)
+             ===================================================================== */}
+          {activeVolet === 'rapports' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0f3854] block">
+                      Volet 06 • Dossiers/{mission.code}/06_Rapports_emis
+                    </span>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Rapports émis & Packages de Pièces Jointes (Traçabilité Avocats / Juridique)
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Chaque rapport envoyé conserve la liste exacte des pièces numérotées qui l'accompagnaient : en 1 clic (même 3 ans plus tard), téléchargez le package complet <code>.zip</code> pour les avocats.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowDraftEditor(!showDraftEditor)}
+                      className="px-3 py-2 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                    >
+                      {showDraftEditor ? 'Masquer l’éditeur Word' : 'Éditeur de projet de rapport'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddIssuedReport(!showAddIssuedReport)}
+                      className="px-3.5 py-2 bg-[#0f3854] text-white rounded-xl text-xs font-bold cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <Package className="w-4 h-4" />
+                      <span>+ Archiver un rapport émis & ses PJ</span>
+                    </button>
+                  </div>
+                </div>
+
+                {showAddIssuedReport && (
+                  <form
+                    onSubmit={handleCreateIssuedReport}
+                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 text-xs"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Type de rapport *</label>
+                        <select
+                          value={repType}
+                          onChange={(e: any) => setRepType(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        >
+                          <option value="preliminaire">Rapport préliminaire</option>
+                          <option value="intermediaire">Rapport d'étape / intermédiaire</option>
+                          <option value="final">Rapport définitif / clôture</option>
+                          <option value="note_synthese">Note technique / Synthèse</option>
+                        </select>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block font-semibold text-slate-700 mb-1">Intitulé du rapport diffusé *</label>
+                        <input
+                          type="text"
+                          value={repTitle}
+                          onChange={(e) => setRepTitle(e.target.value)}
+                          placeholder="ex: Rapport préliminaire n°1 suite à visite sur site"
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Date d'envoi *</label>
+                        <input
+                          type="date"
+                          value={repDate}
+                          onChange={(e) => setRepDate(e.target.value)}
+                          required
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Destinataires (Client, Courtier, Avocat...)</label>
+                        <input
+                          type="text"
+                          value={repRecipient}
+                          onChange={(e) => setRepRecipient(e.target.value)}
+                          placeholder={`ex: ${mission.insurance_client}${mission.broker_name ? ` + ${mission.broker_name}` : ''}`}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Fichier du rapport (Word ou PDF)</label>
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx"
+                          onChange={(e) => setRepFile(e.target.files ? e.target.files[0] : null)}
+                          className="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-white file:text-[#0f3854]"
+                        />
+                      </div>
+                    </div>
+
+                    {allDocuments.length > 0 && (
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">
+                          Cochez les Pièces numérotées annexées à cet envoi (pour constituer le package avocats) :
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {allDocuments.map((d) => {
+                            const pNum = d.piece_number || 0;
+                            if (!pNum) return null;
+                            const selected = repSelectedPieces.includes(pNum);
+                            return (
+                              <button
+                                key={d.id}
+                                type="button"
+                                onClick={() =>
+                                  setRepSelectedPieces((prev) =>
+                                    prev.includes(pNum) ? prev.filter((x) => x !== pNum) : [...prev, pNum]
+                                  )
+                                }
+                                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ${
+                                  selected
+                                    ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                                }`}
+                              >
+                                Pièce n°{pNum} — {d.original_name.slice(0, 30)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddIssuedReport(false)}
+                        className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={submittingReportPkg}
+                        className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold"
+                      >
+                        {submittingReportPkg ? 'Enregistrement...' : 'Archiver ce package de rapport'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Liste des packages de rapports diffusés */}
+                {issuedReports.length === 0 ? (
+                  <div className="p-6 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                    Aucun rapport diffusé enregistré pour le moment.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {issuedReports.map((rep) => (
+                      <div
+                        key={rep.id}
+                        className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-[#0f3854] text-white">
+                              {rep.report_type}
+                            </span>
+                            <span className="text-xs font-mono font-bold text-slate-600">
+                              Envoyé le {(rep.issued_date || '').split('-').reverse().join('/')}
+                            </span>
+                            {rep.recipient && (
+                              <span className="text-xs text-slate-500">• Destinataire : {rep.recipient}</span>
+                            )}
+                          </div>
+                          <h3 className="text-sm font-bold text-slate-900">{rep.title}</h3>
+                          {rep.notes && <p className="text-xs text-slate-600">{rep.notes}</p>}
+
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <span className="text-[11px] font-semibold text-slate-500">Pièces jointes à cet envoi :</span>
+                            {(rep.attached_piece_numbers || []).length === 0 ? (
+                              <span className="text-[11px] text-slate-400 italic">Aucune pièce numérotée listée</span>
+                            ) : (
+                              rep.attached_piece_numbers.map((num) => {
+                                const docObj = allDocuments.find((d) => d.piece_number === num);
+                                return (
+                                  <span
+                                    key={num}
+                                    className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-semibold text-[#0f3854]"
+                                  >
+                                    Pièce n°{num}
+                                    {docObj ? ` (${docObj.original_name.slice(0, 22)})` : ''}
+                                  </span>
+                                );
+                              })
+                            )}
                           </div>
                         </div>
 
-                        {/* Toggle for Report inclusion if image */}
-                        {isImg && (
-                          <label className="flex items-center space-x-1.5 cursor-pointer pt-1 border-t border-slate-200 text-slate-600">
-                            <input
-                              type="checkbox"
-                              checked={doc.is_selected_for_report === 1 || doc.is_selected_for_report === true}
-                              onChange={() => handleToggleDocReport(doc)}
-                              className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854]"
-                            />
-                            <span className="text-[10px] font-medium">Inclure au rapport Word</span>
-                          </label>
-                        )}
-
-                        {/* Actions footer */}
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-200 text-[11px]">
+                        <div className="flex items-center gap-2 shrink-0">
                           <a
-                            href={`/uploads/${doc.filename}`}
-                            download={doc.original_name}
-                            className="text-[#0f3854] hover:underline font-medium inline-flex items-center space-x-0.5"
+                            href={`/api/issued-reports/${rep.id}/package-zip`}
+                            download
+                            className="px-3.5 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs"
+                            title="Télécharger une archive .zip contenant le rapport + toutes ses pièces numérotées + le bordereau"
                           >
-                            <Download className="w-3 h-3" />
-                            <span>Télécharger</span>
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Package Avocat (.zip)</span>
                           </a>
-
                           <button
-                            onClick={() => handleDeleteDocument(doc.id)}
-                            className="text-slate-400 hover:text-rose-600 p-0.5 transition-colors"
-                            title="Supprimer la pièce"
+                            type="button"
+                            onClick={async () => {
+                              await api.deleteIssuedReport(rep.id);
+                              loadData();
+                            }}
+                            className="p-2 text-slate-400 hover:text-rose-600"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
-                    );
-                  })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Tab 3: NOTES, PHOTOS & RAPPORT */}
-      {activeTab === 'report' && (
-        <div className="space-y-6">
-          {/* Attendees section */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Participants aux réunions & opérations ({mission.attendees?.length || 0})</h3>
-                <p className="text-xs text-slate-500">Réutilisés automatiquement dans le rapport d'expertise pour éviter les ressaisies.</p>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowBatchAttendees(!showBatchAttendees); setShowAddAttendee(false); }}
-                  className="inline-flex items-center space-x-1 bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                >
-                  <span>+ Coller liste (Visio / Émargement)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowAddAttendee(!showAddAttendee); setShowBatchAttendees(false); }}
-                  className="inline-flex items-center space-x-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Ajouter un par un</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Batch Attendees Form (From visio screenshot or attendance sheet) */}
-            {showBatchAttendees && (
-              <form onSubmit={handleBatchAttendees} className="p-4 bg-sky-50/60 border border-sky-200 rounded-xl space-y-3 text-xs animate-in fade-in">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-slate-700 font-semibold">
-                      Collez la liste des participants (un par ligne ou séparés par des virgules) :
-                    </label>
-                    <span className="text-[11px] text-slate-500">Formats reconnus : Nom (Société) ou Nom - Société</span>
+                    ))}
                   </div>
-                  <textarea
-                    rows={4}
-                    value={batchText}
-                    onChange={(e) => setBatchText(e.target.value)}
-                    placeholder={`Exemple :\nPhilippe Robert (SNCF Voyageurs)\nMarc Dupuis - Regiorail\nAntoine Chenu (Europorte)\nSophie Blanc (Bessé)`}
-                    required
-                    className="w-full rounded-md border-slate-300 text-xs py-2 px-2.5 bg-white border font-mono"
-                  />
-                </div>
+                )}
 
-                <div className="flex items-center justify-between pt-1">
-                  <div className="flex items-center space-x-4">
-                    <label className="flex items-center space-x-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={batchPresence === 'visio'}
-                        onChange={() => setBatchPresence('visio')}
-                        className="text-[#0f3854]"
-                      />
-                      <span className="font-medium text-slate-700">En visio-conférence (Écran de visio)</span>
-                    </label>
-                    <label className="flex items-center space-x-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={batchPresence === 'site'}
-                        onChange={() => setBatchPresence('site')}
-                        className="text-[#0f3854]"
-                      />
-                      <span className="font-medium text-slate-700">Présents sur site (Feuille d'émargement)</span>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowBatchAttendees(false)}
-                      disabled={batchSubmitting}
-                      className="px-3 py-1.5 border border-slate-300 rounded text-slate-600 bg-white hover:bg-slate-50"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={batchSubmitting || !batchText.trim()}
-                      className="px-4 py-1.5 bg-[#0f3854] text-white rounded font-medium disabled:bg-slate-300"
-                    >
-                      {batchSubmitting ? "Import en cours..." : "Importer les participants"}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
-
-            {showAddAttendee && (
-              <form onSubmit={handleAddAttendee} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-slate-600 mb-1">Nom & Prénom *</label>
-                    <input
-                      type="text"
-                      value={attName}
-                      onChange={(e) => setAttName(e.target.value)}
-                      placeholder="ex: Jean Dupont"
-                      required
-                      className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-600 mb-1">Organisme / Partie *</label>
-                    <input
-                      type="text"
-                      value={attOrg}
-                      onChange={(e) => setAttOrg(e.target.value)}
-                      placeholder="ex: SNCF Réseau / Alstom"
-                      required
-                      className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-600 mb-1">Qualité / Rôle</label>
-                    <input
-                      type="text"
-                      value={attRole}
-                      onChange={(e) => setAttRole(e.target.value)}
-                      placeholder="ex: Expert technique"
-                      className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <div className="flex items-center space-x-4">
-                    <label className="flex items-center space-x-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={attPresence === 'site'}
-                        onChange={() => setAttPresence('site')}
-                        className="text-[#0f3854]"
-                      />
-                      <span>Présent sur site</span>
-                    </label>
-                    <label className="flex items-center space-x-1.5 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={attPresence === 'visio'}
-                        onChange={() => setAttPresence('visio')}
-                        className="text-[#0f3854]"
-                      />
-                      <span>En visio-conférence</span>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddAttendee(false)}
-                      className="px-3 py-1 border border-slate-300 rounded text-slate-600"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-3 py-1 bg-[#0f3854] text-white rounded font-medium"
-                    >
-                      Enregistrer
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
-
-            {loading && !mission.attendees ? (
-              <div className="py-4 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des participants...</span>
-              </div>
-            ) : (mission.attendees || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-3 text-center">Aucun participant enregistré.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {(mission.attendees || []).map((att: any) => (
-                  <div key={att.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+                {/* Éditeur de trame de rapport Word (pliable) */}
+                {showDraftEditor && (
+                  <div className="pt-4 border-t border-slate-200 space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900">{att.name}</span>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                        att.present_on_site ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
-                      }`}>
-                        {att.present_on_site ? 'Sur site' : 'Visio'}
-                      </span>
-                    </div>
-                    <p className="text-slate-600 font-medium">{att.organization}</p>
-                    {att.role && <p className="text-slate-400">{att.role}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Photo Gallery & Field Clichés */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Photographies & Clichés de terrain ({mission.photos?.length || 0})</h3>
-                <p className="text-xs text-slate-500">Sélectionnez et légendez les photographies à incorporer au rapport Word.</p>
-              </div>
-              <button
-                onClick={() => setShowAddPhoto(!showAddPhoto)}
-                className="inline-flex items-center space-x-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Ajouter une photo</span>
-              </button>
-            </div>
-
-            {showAddPhoto && (
-              <form onSubmit={handleUploadPhoto} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-600 mb-1">Fichier image (JPG, PNG) *</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setPhotoFile(e.target.files ? e.target.files[0] : null)}
-                      required
-                      className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-white file:text-slate-700 file:border file:border-slate-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-600 mb-1">Légende du cliché *</label>
-                    <input
-                      type="text"
-                      value={photoCaption}
-                      onChange={(e) => setPhotoCaption(e.target.value)}
-                      placeholder="ex: Vue générale du bogie avant gauche"
-                      className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end space-x-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddPhoto(false)}
-                    className="px-3 py-1 border border-slate-300 rounded text-slate-600"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={uploadingPhoto || !photoFile}
-                    className="px-4 py-1 bg-[#0f3854] text-white rounded font-medium disabled:bg-slate-300"
-                  >
-                    {uploadingPhoto ? "Téléversement..." : "Ajouter la photo"}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {loading && !mission.photos ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des clichés...</span>
-              </div>
-            ) : (mission.photos || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucune photo enregistrée pour ce dossier.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {(mission.photos || []).map((photo: any) => (
-                  <div key={photo.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
-                    <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden relative">
-                      <img
-                        src={`/uploads/${photo.filename}`}
-                        alt={photo.caption}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          // Fallback icon placeholder if image file not on disk
-                          (e.target as any).style.display = 'none';
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex items-start justify-between gap-1">
-                      <p className="font-medium text-slate-800 line-clamp-2">{photo.caption}</p>
-                      <button
-                        onClick={() => handleDeletePhoto(photo.id)}
-                        className="text-slate-400 hover:text-rose-600 p-1"
-                        title="Supprimer la photo"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <label className="flex items-center space-x-1.5 cursor-pointer pt-1 border-t border-slate-200 text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={photo.is_selected_for_report === 1 || photo.is_selected_for_report === true}
-                        onChange={() => handleTogglePhotoReport(photo)}
-                        className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854]"
-                      />
-                      <span className="text-[11px] font-medium">Intégrer au rapport Word</span>
-                    </label>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Sas Apple Notes (Notes brutes de terrain) */}
-          <div className="bg-amber-50/70 p-5 rounded-2xl border border-amber-200/90 shadow-2xs space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                  <h3 className="text-sm font-bold text-slate-900">Sas de notes brutes de terrain (Apple Notes / Dictée vocale)</h3>
-                </div>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Collez vos notes prises sur le pouce sur iPhone en vrac. Conservez-les ici comme mémoire vive ou injectez-les directement dans les constatations du rapport.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!rawFieldNotes.trim()) return;
-                    setReportObs((prev: string) => prev ? `${prev}\n\n--- Extrait Notes Terrain ---\n${rawFieldNotes}` : rawFieldNotes);
-                    showToast("Notes insérées dans le paragraphe 2 (Constatations matérielles) !");
-                  }}
-                  disabled={!rawFieldNotes.trim()}
-                  className="inline-flex items-center space-x-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50"
-                  title="Copie le texte des notes brutes dans la section 2 du rapport ci-dessous"
-                >
-                  <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Insérer dans Constatations</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSaveReport}
-                  className="inline-flex items-center space-x-1 bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>Sauvegarder</span>
-                </button>
-              </div>
-            </div>
-
-            <textarea
-              id="field-notes-area"
-              rows={4}
-              value={rawFieldNotes}
-              onChange={(e) => setRawFieldNotes(e.target.value)}
-              placeholder="Saisissez ou dictez vos observations sur le terrain (ex: 'Rendez-vous gare de triage 14h. Bogie avant droit fissuré au niveau de la crapaudine. Vitesse estimée 24 km/h lors du déraillement. Pièces saisies : boulon de fixation cisaillé. Voir photos 1 à 4...')"
-              className="w-full text-xs rounded-xl border border-amber-200 bg-white p-3 font-sans text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
-            />
-            <p className="text-[11px] text-amber-800 flex items-center space-x-1.5 font-medium">
-              <span>🎙️</span>
-              <span><strong>Astuce iPhone :</strong> Touchez le champ et utilisez la touche micro du clavier pour dicter vos observations. Elles sont synchronisées en direct et prêtes pour la rédaction de votre rapport sur MacBook.</span>
-            </p>
-          </div>
-
-          {/* Structured Draft Report Editor */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Éditeur du projet de rapport technique (Trame personnalisable)</h3>
-                <p className="text-xs text-slate-500">Exportable en document Word (.docx) avec vos participants et vos photos sélectionnées.</p>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleSaveReport}
-                  className="inline-flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                >
-                  {reportSaved ? <Check className="w-4 h-4 text-emerald-600" /> : <Save className="w-4 h-4" />}
-                  <span>{reportSaved ? "Enregistré !" : "Sauvegarder"}</span>
-                </button>
-
-                <a
-                  href={`/api/reports/${mission.id}/docx`}
-                  download
-                  className="inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Télécharger le DOCX</span>
-                </a>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1">
-                  1. Rappel des faits & Cadre contractuel
-                </label>
-                <textarea
-                  rows={3}
-                  value={reportFacts}
-                  onChange={(e) => setReportFacts(e.target.value)}
-                  placeholder="Date, lieu, convoi impliqué, circonstances du sinistre..."
-                  className="w-full text-xs rounded-lg border-slate-200 focus:border-[#0f3854] focus:ring-[#0f3854] p-2.5 bg-slate-50/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1">
-                  2. Constatations matérielles & Visite sur site
-                </label>
-                <textarea
-                  rows={4}
-                  value={reportObs}
-                  onChange={(e) => setReportObs(e.target.value)}
-                  placeholder="État des matériels, bogies, rails, organes de choc et de traction, mesures relevées..."
-                  className="w-full text-xs rounded-lg border-slate-200 focus:border-[#0f3854] focus:ring-[#0f3854] p-2.5 bg-slate-50/50"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-[#0f3854] uppercase tracking-wider">
-                    3. Analyse technique & Examen des responsabilités (Contrôle experte)
-                  </label>
-                  <span className="text-[10px] text-slate-400 italic">Section réservée au jugement de l'experte</span>
-                </div>
-                <textarea
-                  rows={5}
-                  value={reportAnalysis}
-                  onChange={(e) => setReportAnalysis(e.target.value)}
-                  placeholder="Analyse métallurgique, conformité aux référentiels SNCF / EPSF, examen des causes racines..."
-                  className="w-full text-xs rounded-lg border-sky-200 focus:border-[#0f3854] focus:ring-[#0f3854] p-2.5 bg-sky-50/20"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1">
-                  4. Conclusions provisoires & Recommandations
-                </label>
-                <textarea
-                  rows={3}
-                  value={reportConc}
-                  onChange={(e) => setReportConc(e.target.value)}
-                  placeholder="Propositions de dires, investigations complémentaires ou protocoles d'accord..."
-                  className="w-full text-xs rounded-lg border-slate-200 focus:border-[#0f3854] focus:ring-[#0f3854] p-2.5 bg-slate-50/50"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 3: COMMUNICATIONS */}
-      {activeTab === 'comms' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Espace d'échanges & Concentration</h3>
-              <p className="text-xs text-slate-500">Rattachez vos emails utiles au dossier et préparez vos réponses sans interruption.</p>
-            </div>
-            <button
-              onClick={() => setShowAddComm(!showAddComm)}
-              className="inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-2xs transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Rattacher un message</span>
-            </button>
-          </div>
-
-          {showAddComm && (
-            <form onSubmit={handleAddComm} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3 text-xs">
-              <h4 className="font-bold text-slate-800 text-sm">Nouveau message rattaché</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 mb-1">Expéditeur *</label>
-                  <input
-                    type="text"
-                    value={commSender}
-                    onChange={(e) => setCommSender(e.target.value)}
-                    placeholder="ex: Jean Dupont <j.dupont@alstom.com>"
-                    required
-                    className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 mb-1">Priorité</label>
-                  <select
-                    value={commUrgency}
-                    onChange={(e: any) => setCommUrgency(e.target.value)}
-                    className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                  >
-                    <option value="normale">Normale</option>
-                    <option value="urgente">Prioritaire (repère en tête de liste)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 mb-1">Objet *</label>
-                <input
-                  type="text"
-                  value={commSubject}
-                  onChange={(e) => setCommSubject(e.target.value)}
-                  placeholder="ex: Transmission note technique"
-                  required
-                  className="w-full rounded-md border-slate-300 text-xs py-1.5 px-2 bg-white border"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-600 mb-1">Contenu du message ou extrait .eml *</label>
-                <textarea
-                  rows={4}
-                  value={commBody}
-                  onChange={(e) => setCommBody(e.target.value)}
-                  placeholder="Copier-coller le texte du mail..."
-                  required
-                  className="w-full rounded-md border-slate-300 text-xs p-2 bg-white border"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddComm(false)}
-                  className="px-3 py-1.5 border border-slate-300 rounded text-slate-600"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-[#0f3854] text-white rounded font-medium"
-                >
-                  Enregistrer
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="space-y-3">
-            {loading && !mission.communications ? (
-              <div className="bg-white p-8 rounded-xl border border-slate-200 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des courriers et dires...</span>
-              </div>
-            ) : (mission.communications || []).length === 0 ? (
-              <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400 text-xs">
-                Aucun message rattaché à ce dossier.
-              </div>
-            ) : (
-              (mission.communications || []).map((comm: any) => (
-                <div key={comm.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-slate-900 text-sm">{comm.subject}</span>
-                        {comm.urgency === 'urgente' && (
-                          <span className="bg-sky-100 text-[#0f3854] text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                            Prioritaire
-                          </span>
-                        )}
-                        <span className="text-slate-400 text-xs">{comm.date}</span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5">De : {comm.sender}</p>
-                    </div>
-
-                    <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md capitalize">
-                      {comm.status.replace('_', ' ')}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-700 whitespace-pre-line bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    {comm.body}
-                  </p>
-
-                  {/* Draft Reply Assistant */}
-                  {comm.draft_reply && (
-                    <div className="p-3.5 bg-sky-50/60 border border-sky-200 rounded-xl space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-[#0f3854] flex items-center space-x-1.5">
-                          <span>Brouillon de réponse suggéré (à relire et envoyer) :</span>
-                        </span>
+                      <h3 className="text-sm font-bold text-slate-900">
+                        Préparation / Trame de rapport Word (.docx)
+                      </h3>
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={() => handleCopyDraftReply(comm.id, comm.draft_reply)}
-                          className="inline-flex items-center space-x-1 text-xs text-[#0f3854] hover:text-[#174d71] font-semibold"
+                          type="button"
+                          onClick={handleSaveReportDraft}
+                          className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-semibold"
                         >
-                          {copiedId === comm.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedId === comm.id ? "Copié !" : "Copier le texte"}</span>
+                          Sauvegarder le brouillon
                         </button>
+                        <a
+                          href={`/api/missions/${mission.id}/report-docx`}
+                          download
+                          className="px-3.5 py-1.5 bg-[#0f3854] text-white rounded-lg text-xs font-bold inline-flex items-center space-x-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Générer le Word (.docx)</span>
+                        </a>
                       </div>
-                      <p className="text-xs text-slate-800 whitespace-pre-line bg-white p-2.5 rounded-lg border border-sky-100">
-                        {comm.draft_reply}
-                      </p>
                     </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Tab 4: VISITES SUR SITE & LRAR */}
-      {activeTab === 'travel' && (
-        <div className="space-y-6">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-              <Train className="w-4 h-4 text-indigo-600" />
-              <span>Visites de chantier & Interventions sur site ({mission.travels?.length || 0})</span>
-            </h3>
-
-            {loading && !mission.travels ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
-                <span>Chargement des interventions sur site...</span>
-              </div>
-            ) : (mission.travels || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucune visite sur site enregistrée pour ce dossier.</p>
-            ) : (
-              <div className="space-y-3">
-                {(mission.travels || []).map((travel: any) => (
-                  <div key={travel.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 text-sm">{travel.destination}</span>
-                      <span className="bg-indigo-100 text-indigo-800 font-semibold px-2 py-0.5 rounded-full text-[10px]">
-                        Du {travel.start_date.split('-').reverse().join('/')} au {travel.end_date.split('-').reverse().join('/')}
-                      </span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">1. Rappel des faits & Contexte</label>
+                        <textarea
+                          rows={4}
+                          value={reportFacts}
+                          onChange={(e) => setReportFacts(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2.5 border"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">2. Constatations techniques</label>
+                        <textarea
+                          rows={4}
+                          value={reportObs}
+                          onChange={(e) => setReportObs(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2.5 border"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">3. Analyse des causes & Responsabilités</label>
+                        <textarea
+                          rows={4}
+                          value={reportAnalysis}
+                          onChange={(e) => setReportAnalysis(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2.5 border"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">4. Chiffrage & Conclusions</label>
+                        <textarea
+                          rows={4}
+                          value={reportConc}
+                          onChange={(e) => setReportConc(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2.5 border"
+                        />
+                      </div>
                     </div>
-                    {travel.train_info && (
-                      <p className="text-slate-600">
-                        <span className="font-semibold text-slate-500">Trajet : </span>
-                        {travel.train_info}
-                      </p>
-                    )}
-                    {travel.notes && (
-                      <p className="text-slate-600">
-                        <span className="font-semibold text-slate-500">Consignes : </span>
-                        {travel.notes}
-                      </p>
-                    )}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-              <Mail className="w-4 h-4 text-slate-600" />
-              <span>Suivi des courriers recommandés (LRAR) ({mission.registered_mails?.length || 0})</span>
-            </h3>
-
-            {loading && !mission.registered_mails ? (
-              <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#0f3854]"></div>
-                <span>Chargement des recommandés...</span>
-              </div>
-            ) : (mission.registered_mails || []).length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">Aucun courrier recommandé enregistré.</p>
-            ) : (
-              <div className="divide-y divide-slate-100 text-xs">
-                {(mission.registered_mails || []).map((mail: any) => (
-                  <div key={mail.id} className="py-2.5 flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-slate-900">{mail.recipient}</p>
-                      <p className="text-slate-600">{mail.subject}</p>
-                      {mail.tracking_number && (
-                        <p className="text-slate-400 text-[11px] font-mono">N° suivi : {mail.tracking_number}</p>
-                      )}
-                    </div>
-                    <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold capitalize">
-                      {mail.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Tab 5: SYNTHÈSE & PARTIES */}
-      {activeTab === 'overview' && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-6">
-          <h3 className="text-sm font-bold text-slate-900">Fiche de Synthèse du Sinistre</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="space-y-3">
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Description du sinistre</span>
-                <p className="text-slate-800 font-medium mt-1">{mission.description || "—"}</p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Cadre judiciaire / Juridiction</span>
-                <p className="text-slate-800 font-medium mt-1">{mission.court_reference || "Cadre amiable"}</p>
+                )}
               </div>
             </div>
-
-            <div className="space-y-3">
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Adresse de facturation</span>
-                <p className="text-slate-800 font-medium mt-1 whitespace-pre-line">{mission.billing_address || "Non renseignée"}</p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 font-semibold block uppercase text-[10px]">Tarifs applicables au dossier</span>
-                <p className="text-slate-800 font-medium mt-1">
-                  Expertise & Rédaction : {mission.custom_hourly_rate || 190} €/h HT<br />
-                  Temps de déplacement : {mission.custom_travel_rate || 135} €/h HT<br />
-                  Frais kilométriques : {mission.custom_km_rate || 0.95} €/km
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
+        </section>
+      </div>
     </div>
   );
 };

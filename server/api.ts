@@ -27,7 +27,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Helper to calculate unbilled amounts for a mission
+// Helper to calculate unbilled and billed amounts for a mission
 function getMissionUnbilledStats(missionId: string) {
   const act = db.prepare(`
     SELECT COALESCE(SUM(hours), 0) as unbilled_hours, COALESCE(SUM(total_ht), 0) as act_ht
@@ -39,12 +39,37 @@ function getMissionUnbilledStats(missionId: string) {
     FROM expenses WHERE mission_id = ? AND status = 'a_facturer' AND is_refacturable = 1
   `).get(missionId) as { exp_ht: number };
 
+  const billed = db.prepare(`
+    SELECT COALESCE(SUM(total_ht), 0) as billed_ht, COUNT(*) as inv_count
+    FROM invoices WHERE mission_id = ? AND status != 'annule'
+  `).get(missionId) as { billed_ht: number; inv_count: number };
+
+  const lastInv = db.prepare(`
+    SELECT date, invoice_number FROM invoices
+    WHERE mission_id = ? AND status != 'annule'
+    ORDER BY date DESC, invoice_number DESC LIMIT 1
+  `).get(missionId) as { date: string; invoice_number: string } | undefined;
+
   const total_ht = Math.round((act.act_ht + exp.exp_ht) * 100) / 100;
   return {
     unbilled_hours: act.unbilled_hours,
     unbilled_expenses: exp.exp_ht,
     total_unbilled_ht: total_ht,
+    total_billed_ht: Math.round(billed.billed_ht * 100) / 100,
+    invoices_count: billed.inv_count,
+    last_invoice_date: lastInv?.date || null,
+    last_invoice_number: lastInv?.invoice_number || null,
   };
+}
+
+function parseJsonSafe<T>(val: any, fallback: T): T {
+  if (!val) return fallback;
+  if (typeof val !== 'string') return val as T;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return fallback;
+  }
 }
 
 // ---------------- DASHBOARD / AUJOURD'HUI ----------------
@@ -143,7 +168,7 @@ apiRouter.get('/dashboard', (_req, res) => {
   });
 });
 
-// ---------------- MISSIONS ----------------
+// ---------------- MISSIONS / DOSSIERS ----------------
 apiRouter.get('/missions', (req, res) => {
   const query = (req.query.q as string || '').toLowerCase().trim();
   const statusFilter = req.query.status as string;
@@ -156,24 +181,54 @@ apiRouter.get('/missions', (req, res) => {
     params.push(statusFilter);
   }
 
-  if (query) {
-    sql += ' AND (LOWER(code) LIKE ? OR LOWER(title) LIKE ? OR LOWER(case_reference) LIKE ? OR LOWER(insurance_client) LIKE ?)';
-    const p = `%${query}%`;
-    params.push(p, p, p, p);
-  }
-
   sql += ' ORDER BY created_at DESC';
-  const missions = db.prepare(sql).all(...params) as any[];
+  const allMissions = db.prepare(sql).all(...params) as any[];
 
-  const enriched = missions.map(m => {
-    const stats = getMissionUnbilledStats(m.id);
-    return {
-      ...m,
-      unbilled_hours: stats.unbilled_hours,
-      unbilled_expenses: stats.unbilled_expenses,
-      total_unbilled_ht: stats.total_unbilled_ht,
-    };
-  });
+  // Check if user searched for "pièce 27" or "piece 2" or a filename/caption
+  const pieceMatch = query.match(/pi[eè]ce\s*n?[°o]?\s*(\d+)/i);
+  const searchedPieceNum = pieceMatch ? Number(pieceMatch[1]) : null;
+
+  const enriched = allMissions
+    .map(m => {
+      const stats = getMissionUnbilledStats(m.id);
+      const adverse_parties = parseJsonSafe<any[]>(m.adverse_parties, []);
+      const stake_history = parseJsonSafe<any[]>(m.stake_history, []);
+      const docs = db.prepare('SELECT id, piece_number, section, original_name, caption, category FROM documents WHERE mission_id = ? ORDER BY piece_number ASC').all(m.id) as any[];
+
+      let matched_pieces: any[] = [];
+      if (query) {
+        matched_pieces = docs.filter(d => {
+          if (searchedPieceNum !== null && Number(d.piece_number) === searchedPieceNum) return true;
+          const hay = `pièce ${d.piece_number || ''} piece ${d.piece_number || ''} ${d.original_name || ''} ${d.caption || ''}`.toLowerCase();
+          return hay.includes(query);
+        });
+      }
+
+      return {
+        ...m,
+        adverse_parties,
+        stake_history,
+        unbilled_hours: stats.unbilled_hours,
+        unbilled_expenses: stats.unbilled_expenses,
+        total_unbilled_ht: stats.total_unbilled_ht,
+        total_billed_ht: stats.total_billed_ht,
+        invoices_count: stats.invoices_count,
+        last_invoice_date: stats.last_invoice_date,
+        last_invoice_number: stats.last_invoice_number,
+        documents_count: docs.length,
+        matched_pieces,
+      };
+    })
+    .filter(m => {
+      if (!query) return true;
+      if (m.matched_pieces && m.matched_pieces.length > 0) return true;
+      const advStr = (m.adverse_parties || [])
+        .map((p: any) => `${p.party_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''} ${p.lawyer_name || ''} ${p.reference || ''}`)
+        .join(' ')
+        .toLowerCase();
+      const hay = `${m.code || ''} ${m.title || ''} ${m.case_reference || ''} ${m.insurance_client || ''} ${m.client_contact || ''} ${m.insured_party || ''} ${m.insured_reference || ''} ${m.broker_name || ''} ${m.broker_reference || ''} ${m.third_parties || ''} ${advStr}`.toLowerCase();
+      return hay.includes(query);
+    });
 
   res.json(enriched);
 });
@@ -181,34 +236,61 @@ apiRouter.get('/missions', (req, res) => {
 apiRouter.post('/missions', (req, res) => {
   const {
     code, title, case_reference, status = 'en_cours', insurance_client, client_contact,
-    insured_party, third_parties, court_reference, incident_date, reception_date = new Date().toISOString().slice(0, 10),
+    insured_party, insured_reference, broker_name, broker_reference,
+    third_parties, adverse_parties, stake_amount,
+    court_reference, incident_date, reception_date = new Date().toISOString().slice(0, 10),
     description = '', current_step = '', next_action = '', next_deadline, billing_contact_name,
     billing_address, custom_hourly_rate = 190, custom_travel_rate = 135, custom_km_rate = 0.95
   } = req.body;
 
   if (!code || !title || !case_reference || !insurance_client) {
-    return res.status(400).json({ error: "Code, titre, référence et client assureur sont obligatoires" });
+    return res.status(400).json({ error: "N/Réf. (Code), titre, référence client et client sont obligatoires" });
   }
+
+  const parsedAdverse: any[] = Array.isArray(adverse_parties)
+    ? adverse_parties.filter(p => p && (p.party_name || p.expert_name || p.expert_firm))
+    : [];
+  const derivedThirdParties = parsedAdverse.length > 0
+    ? parsedAdverse.map(p => p.party_name).filter(Boolean).join(' / ')
+    : (third_parties || '');
+
+  const numericStake = stake_amount !== undefined && stake_amount !== null && stake_amount !== ''
+    ? Number(stake_amount)
+    : null;
+  const initialHistory = numericStake !== null && !isNaN(numericStake)
+    ? [{
+        id: `stk-${uuidv4().slice(0, 6)}`,
+        date: reception_date || new Date().toISOString().slice(0, 10),
+        amount: numericStake,
+        note: 'Estimation initiale à l’ouverture du dossier',
+      }]
+    : [];
 
   const id = `m-${uuidv4().slice(0, 8)}`;
   try {
     db.prepare(`
       INSERT INTO missions (
         id, code, title, case_reference, status, insurance_client, client_contact,
-        insured_party, third_parties, court_reference, incident_date, reception_date,
+        insured_party, insured_reference, broker_name, broker_reference,
+        third_parties, adverse_parties, stake_amount, initial_stake_amount, stake_history,
+        court_reference, incident_date, reception_date,
         description, current_step, next_action, next_deadline, billing_contact_name,
         billing_address, custom_hourly_rate, custom_travel_rate, custom_km_rate
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
+        ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?
       )
     `).run(
-      id, code, title, case_reference, status, insurance_client, client_contact,
-      insured_party, third_parties, court_reference, incident_date, reception_date,
-      description, current_step, next_action, next_deadline, billing_contact_name,
-      billing_address, custom_hourly_rate, custom_travel_rate, custom_km_rate
+      id, code, title, case_reference, status, insurance_client, client_contact || null,
+      insured_party || null, insured_reference || null, broker_name || null, broker_reference || null,
+      derivedThirdParties || null, JSON.stringify(parsedAdverse), numericStake, numericStake, JSON.stringify(initialHistory),
+      court_reference || null, incident_date || null, reception_date,
+      description, current_step, next_action, next_deadline || null, billing_contact_name || null,
+      billing_address || null, custom_hourly_rate, custom_travel_rate, custom_km_rate
     );
 
     // Create default report draft
@@ -217,7 +299,7 @@ apiRouter.post('/missions', (req, res) => {
       VALUES (?, ?, ?, ?, 1, '', '', '', '')
     `).run(`rd-${id}`, id, code, `Projet de rapport d'expertise — ${title}`);
 
-    res.json({ id, message: "Mission créée avec succès" });
+    res.json({ id, message: "Dossier créé avec succès" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -226,16 +308,31 @@ apiRouter.post('/missions', (req, res) => {
 apiRouter.get('/missions/:id', (req, res) => {
   const mission = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.id) as any;
   if (!mission) {
-    return res.status(404).json({ error: "Mission non trouvée" });
+    return res.status(404).json({ error: "Dossier non trouvé" });
   }
 
   const stats = getMissionUnbilledStats(mission.id);
-  const activities = db.prepare('SELECT * FROM activities WHERE mission_id = ? ORDER BY date DESC').all(mission.id);
-  const expenses = db.prepare('SELECT * FROM expenses WHERE mission_id = ? ORDER BY date DESC').all(mission.id);
-  const invoices = db.prepare('SELECT * FROM invoices WHERE mission_id = ? ORDER BY date DESC').all(mission.id);
+  const activities = db.prepare('SELECT * FROM activities WHERE mission_id = ? ORDER BY date DESC, created_at DESC').all(mission.id);
+  const expenses = db.prepare('SELECT * FROM expenses WHERE mission_id = ? ORDER BY date DESC, created_at DESC').all(mission.id);
+  const rawInvoices = db.prepare('SELECT * FROM invoices WHERE mission_id = ? ORDER BY date DESC, invoice_number DESC').all(mission.id) as any[];
+  const invoices = rawInvoices.map(inv => ({
+    ...inv,
+    split_details: inv.split_details ? parseJsonSafe(inv.split_details, null) : null,
+    lines: db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id),
+  }));
   const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id);
   const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id);
-  const documents = db.prepare('SELECT * FROM documents WHERE mission_id = ? ORDER BY created_at DESC').all(mission.id);
+  const documents = db.prepare('SELECT * FROM documents WHERE mission_id = ? ORDER BY COALESCE(piece_number, 9999) ASC, created_at ASC').all(mission.id);
+  const rawDamageLines = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC, created_at ASC').all(mission.id) as any[];
+  const damage_lines = rawDamageLines.map(d => ({
+    ...d,
+    piece_numbers: parseJsonSafe<number[]>(d.piece_numbers, []),
+  }));
+  const rawIssuedReports = db.prepare('SELECT * FROM issued_reports WHERE mission_id = ? ORDER BY sent_date DESC, created_at DESC').all(mission.id) as any[];
+  const issued_reports = rawIssuedReports.map(r => ({
+    ...r,
+    attached_piece_numbers: parseJsonSafe<number[]>(r.attached_piece_numbers, []),
+  }));
   const draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id);
   const communications = db.prepare('SELECT * FROM communications WHERE mission_id = ? ORDER BY date DESC').all(mission.id);
   const travels = db.prepare('SELECT * FROM travel_orders WHERE mission_id = ? ORDER BY start_date DESC').all(mission.id) as any[];
@@ -243,42 +340,120 @@ apiRouter.get('/missions/:id', (req, res) => {
 
   res.json({
     ...mission,
+    adverse_parties: parseJsonSafe<any[]>(mission.adverse_parties, []),
+    stake_history: parseJsonSafe<any[]>(mission.stake_history, []),
     unbilled_hours: stats.unbilled_hours,
     unbilled_expenses: stats.unbilled_expenses,
     total_unbilled_ht: stats.total_unbilled_ht,
+    total_billed_ht: stats.total_billed_ht,
+    invoices_count: stats.invoices_count,
+    last_invoice_date: stats.last_invoice_date,
+    last_invoice_number: stats.last_invoice_number,
     activities,
     expenses,
     invoices,
     attendees,
     photos,
     documents,
+    damage_lines,
+    issued_reports,
     report_draft: draft,
     communications,
-    travels: travels.map(t => ({ ...t, checklist: JSON.parse(t.checklist || '[]') })),
+    travels: travels.map(t => ({ ...t, checklist: parseJsonSafe(t.checklist, []) })),
     registered_mails: lrar,
   });
 });
 
 apiRouter.put('/missions/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Dossier introuvable" });
+
   const m = req.body;
   try {
+    const parsedAdverse = m.adverse_parties !== undefined
+      ? (Array.isArray(m.adverse_parties) ? m.adverse_parties : parseJsonSafe<any[]>(m.adverse_parties, []))
+      : parseJsonSafe<any[]>(existing.adverse_parties, []);
+
+    const derivedThirdParties = m.adverse_parties !== undefined
+      ? parsedAdverse.map((p: any) => p.party_name).filter(Boolean).join(' / ')
+      : (m.third_parties ?? existing.third_parties);
+
+    let stakeAmount = m.stake_amount !== undefined
+      ? (m.stake_amount === null || m.stake_amount === '' ? null : Number(m.stake_amount))
+      : existing.stake_amount;
+    let initialStake = m.initial_stake_amount !== undefined
+      ? (m.initial_stake_amount === null || m.initial_stake_amount === '' ? null : Number(m.initial_stake_amount))
+      : existing.initial_stake_amount;
+    let stakeHistory = m.stake_history !== undefined
+      ? (Array.isArray(m.stake_history) ? m.stake_history : parseJsonSafe<any[]>(m.stake_history, []))
+      : parseJsonSafe<any[]>(existing.stake_history, []);
+
+    // If stake_amount changed and caller didn't pass full stake_history, append a new StakeEntry automatically
+    if (
+      m.stake_amount !== undefined &&
+      stakeAmount !== null &&
+      !isNaN(stakeAmount) &&
+      (existing.stake_amount !== stakeAmount || m.stake_note)
+    ) {
+      if (initialStake === null || initialStake === undefined) {
+        initialStake = stakeAmount;
+      }
+      if (!m.stake_history) {
+        stakeHistory = [
+          ...stakeHistory,
+          {
+            id: `stk-${uuidv4().slice(0, 6)}`,
+            date: m.stake_date || new Date().toISOString().slice(0, 10),
+            amount: stakeAmount,
+            note: m.stake_note || (stakeHistory.length === 0 ? 'Estimation initiale' : 'Actualisation de l’enjeu'),
+          },
+        ];
+      }
+    }
+
     db.prepare(`
       UPDATE missions SET
         title = ?, case_reference = ?, status = ?, insurance_client = ?, client_contact = ?,
-        insured_party = ?, third_parties = ?, court_reference = ?, incident_date = ?, reception_date = ?,
+        insured_party = ?, insured_reference = ?, broker_name = ?, broker_reference = ?,
+        third_parties = ?, adverse_parties = ?,
+        stake_amount = ?, initial_stake_amount = ?, stake_history = ?,
+        court_reference = ?, incident_date = ?, reception_date = ?,
         description = ?, current_step = ?, next_action = ?, next_deadline = ?, billing_contact_name = ?,
         billing_address = ?, custom_hourly_rate = ?, custom_travel_rate = ?, custom_km_rate = ?,
         custom_billing_threshold = ?, custom_vat_rate = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(
-      m.title, m.case_reference, m.status, m.insurance_client, m.client_contact,
-      m.insured_party, m.third_parties, m.court_reference, m.incident_date, m.reception_date,
-      m.description, m.current_step, m.next_action, m.next_deadline, m.billing_contact_name,
-      m.billing_address, m.custom_hourly_rate, m.custom_travel_rate, m.custom_km_rate,
-      m.custom_billing_threshold, m.custom_vat_rate,
+      m.title ?? existing.title,
+      m.case_reference ?? existing.case_reference,
+      m.status ?? existing.status,
+      m.insurance_client ?? existing.insurance_client,
+      m.client_contact !== undefined ? m.client_contact : existing.client_contact,
+      m.insured_party !== undefined ? m.insured_party : existing.insured_party,
+      m.insured_reference !== undefined ? m.insured_reference : existing.insured_reference,
+      m.broker_name !== undefined ? m.broker_name : existing.broker_name,
+      m.broker_reference !== undefined ? m.broker_reference : existing.broker_reference,
+      derivedThirdParties,
+      JSON.stringify(parsedAdverse),
+      stakeAmount,
+      initialStake,
+      JSON.stringify(stakeHistory),
+      m.court_reference !== undefined ? m.court_reference : existing.court_reference,
+      m.incident_date !== undefined ? m.incident_date : existing.incident_date,
+      m.reception_date ?? existing.reception_date,
+      m.description !== undefined ? m.description : existing.description,
+      m.current_step !== undefined ? m.current_step : existing.current_step,
+      m.next_action !== undefined ? m.next_action : existing.next_action,
+      m.next_deadline !== undefined ? m.next_deadline : existing.next_deadline,
+      m.billing_contact_name !== undefined ? m.billing_contact_name : existing.billing_contact_name,
+      m.billing_address !== undefined ? m.billing_address : existing.billing_address,
+      m.custom_hourly_rate ?? existing.custom_hourly_rate,
+      m.custom_travel_rate ?? existing.custom_travel_rate,
+      m.custom_km_rate ?? existing.custom_km_rate,
+      m.custom_billing_threshold ?? existing.custom_billing_threshold,
+      m.custom_vat_rate ?? existing.custom_vat_rate,
       req.params.id
     );
-    res.json({ message: "Mission mise à jour avec succès" });
+    res.json({ message: "Dossier mis à jour avec succès", stake_history: stakeHistory, adverse_parties: parsedAdverse });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -384,13 +559,14 @@ apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
 
   const id = `exp-${uuidv4().slice(0, 8)}`;
   const receipt_filename = req.file ? req.file.filename : null;
+  const receipt_original_name = req.file ? req.file.originalname : null;
 
   db.prepare(`
-    INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, status, is_refacturable)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
-  `).run(id, mission_id, mission.code, date, category, resolvedLabel, qty, up, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, is_refacturable ? 1 : 0);
+    INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, status, is_refacturable)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
+  `).run(id, mission_id, mission.code, date, category, resolvedLabel, qty, up, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, is_refacturable ? 1 : 0);
 
-  res.json({ id, total_ht, vat_amount, total_ttc, message: "Frais enregistré" });
+  res.json({ id, total_ht, vat_amount, total_ttc, receipt_filename, receipt_original_name, message: "Frais enregistré" });
 });
 
 apiRouter.put('/expenses/:id', (req, res) => {
@@ -551,7 +727,7 @@ apiRouter.post('/invoices/prepare', (req, res) => {
         totalHT += lineHT;
       };
 
-      addGroupedActLine(etudeActs, 'Étude de documents, gestion du dossier');
+      addGroupedActLine(etudeActs, 'Étude de documents, analyse, gestion du dossier');
       if (expertiseActs.length > 0) {
         const lastDate = expertiseActs[expertiseActs.length - 1].date ? expertiseActs[expertiseActs.length - 1].date.split('-').reverse().join('/') : '';
         const expLabel = lastDate ? `Expertise du ${lastDate}` : 'Expertise';
@@ -665,7 +841,11 @@ apiRouter.post('/invoices/prepare', (req, res) => {
     const advance = Number(advance_amount) || 0;
     const netPayable = Math.round((totalTTC - advance) * 100) / 100;
 
-    const invoiceSubject = subject || `Mission d’expertise depuis le ${mission.reception_date.split('-').reverse().join('/')}`;
+    const prevInvoice = db.prepare(`
+      SELECT date FROM invoices WHERE mission_id = ? AND status != 'annule' ORDER BY date DESC, invoice_number DESC LIMIT 1
+    `).get(mission.id) as { date: string } | undefined;
+    const sinceDate = (prevInvoice?.date || mission.reception_date || '').split('-').reverse().join('/');
+    const invoiceSubject = subject || `Mission d’expertise depuis le ${sinceDate}`;
 
     db.prepare(`
       INSERT INTO invoices (
@@ -1008,15 +1188,31 @@ apiRouter.delete('/photos/:id', (req, res) => {
   res.json({ message: "Photo supprimée" });
 });
 
-// ---------------- DOCUMENTS & PIÈCES DU DOSSIER ----------------
+// ---------------- DOCUMENTS & PIÈCES NUMÉROTÉES DU DOSSIER ----------------
+function getNextPieceNumber(missionId: string): number {
+  const row = db.prepare('SELECT COALESCE(MAX(piece_number), 0) as max_num FROM documents WHERE mission_id = ?').get(missionId) as { max_num: number };
+  return (row?.max_num || 0) + 1;
+}
+
+function inferSectionFromCategory(category: string, explicitSection?: string): string {
+  if (explicitSection && ['contrats', 'constatations', 'contradictoire', 'prejudice', 'rapports'].includes(explicitSection)) {
+    return explicitSection;
+  }
+  if (category === 'contrat_client') return 'contrats';
+  if (category === 'procedure_dires') return 'contradictoire';
+  if (category === 'justificatif_prejudice') return 'prejudice';
+  if (category === 'rapport_emis') return 'rapports';
+  return 'constatations';
+}
+
 apiRouter.get('/missions/:id/documents', (req, res) => {
-  const docs = db.prepare('SELECT * FROM documents WHERE mission_id = ? ORDER BY created_at DESC').all(req.params.id);
+  const docs = db.prepare('SELECT * FROM documents WHERE mission_id = ? ORDER BY COALESCE(piece_number, 9999) ASC, created_at ASC').all(req.params.id);
   res.json(docs);
 });
 
-apiRouter.post('/missions/:id/documents', upload.array('files', 15), (req, res) => {
+apiRouter.post('/missions/:id/documents', upload.array('files', 25), (req, res) => {
   const mission = db.prepare('SELECT code FROM missions WHERE id = ?').get(req.params.id) as any;
-  if (!mission) return res.status(404).json({ error: "Mission non trouvée" });
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
 
   const files = (req.files as Express.Multer.File[]) || [];
   if (files.length === 0) {
@@ -1024,60 +1220,85 @@ apiRouter.post('/missions/:id/documents', upload.array('files', 15), (req, res) 
   }
 
   const category = (req.body.category as string) || 'autre';
-  const customCaption = (req.body.caption as string) || '';
+  const section = inferSectionFromCategory(category, req.body.section as string);
+  const subSection = (req.body.sub_section as string) || '';
+  const customCaption = (req.body.caption as string || '').trim();
 
   const insertStmt = db.prepare(`
-    INSERT INTO documents (id, mission_id, mission_code, filename, original_name, mime_type, file_size, category, caption, is_selected_for_report)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO documents (id, mission_id, mission_code, piece_number, section, sub_section, filename, original_name, mime_type, file_size, category, caption, is_selected_for_report)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  let nextPiece = getNextPieceNumber(req.params.id);
   const createdDocs: any[] = [];
   for (const f of files) {
     const docId = `doc-${uuidv4().slice(0, 8)}`;
     const isImage = f.mimetype.startsWith('image/');
+    const pieceNum = nextPiece++;
+    // Caption is never mandatory ("sur le terrain, sous la pluie, pas un titre à chaque photo")
+    const captionToStore = customCaption || '';
+
     insertStmt.run(
       docId,
       req.params.id,
       mission.code,
+      pieceNum,
+      section,
+      subSection,
       f.filename,
       f.originalname,
       f.mimetype,
       f.size,
       category,
-      customCaption || f.originalname,
+      captionToStore,
       isImage ? 1 : 0
     );
 
-    // If it's an image, also create photo entry so report generator can pick it up
-    if (isImage) {
+    // If it's an image in constatations, also create photo entry so report generator can pick it up
+    if (isImage && section === 'constatations') {
       const count = db.prepare('SELECT COUNT(*) as c FROM photos WHERE mission_id = ?').get(req.params.id) as { c: number };
       db.prepare(`
-        INSERT INTO photos (id, mission_id, filename, original_name, caption, order_index, is_selected_for_report)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-      `).run(`photo-${uuidv4().slice(0, 8)}`, req.params.id, f.filename, f.originalname, customCaption || f.originalname, count.c);
+        INSERT INTO photos (id, mission_id, filename, original_name, caption, order_index, piece_number, sub_section, is_selected_for_report)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `).run(`photo-${uuidv4().slice(0, 8)}`, req.params.id, f.filename, f.originalname, captionToStore, count.c, pieceNum, subSection || 'terrain');
     }
 
-    createdDocs.push({ id: docId, filename: f.filename, original_name: f.originalname });
+    createdDocs.push({
+      id: docId,
+      piece_number: pieceNum,
+      section,
+      sub_section: subSection,
+      category,
+      filename: f.filename,
+      original_name: f.originalname,
+      caption: captionToStore,
+    });
   }
 
-  res.json({ message: `${createdDocs.length} document(s) rattaché(s) au dossier`, documents: createdDocs });
+  res.json({ message: `${createdDocs.length} pièce(s) déposée(s) et numérotée(s)`, documents: createdDocs });
 });
 
 apiRouter.put('/documents/:id', (req, res) => {
-  const { caption, category, is_selected_for_report } = req.body;
+  const { caption, category, section, sub_section, piece_number, is_selected_for_report } = req.body;
   db.prepare(`
     UPDATE documents SET
       caption = COALESCE(?, caption),
       category = COALESCE(?, category),
+      section = COALESCE(?, section),
+      sub_section = COALESCE(?, sub_section),
+      piece_number = COALESCE(?, piece_number),
       is_selected_for_report = COALESCE(?, is_selected_for_report)
     WHERE id = ?
   `).run(
-    caption,
-    category,
+    caption !== undefined ? caption : null,
+    category !== undefined ? category : null,
+    section !== undefined ? section : null,
+    sub_section !== undefined ? sub_section : null,
+    piece_number !== undefined ? Number(piece_number) : null,
     is_selected_for_report !== undefined ? (is_selected_for_report ? 1 : 0) : null,
     req.params.id
   );
-  res.json({ message: "Document mis à jour" });
+  res.json({ message: "Pièce mise à jour" });
 });
 
 apiRouter.delete('/documents/:id', (req, res) => {
@@ -1087,7 +1308,230 @@ apiRouter.delete('/documents/:id', (req, res) => {
     if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
     db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
   }
-  res.json({ message: "Document supprimé" });
+  res.json({ message: "Pièce supprimée" });
+});
+
+// ---------------- VOLET 5 : COMPTES DU PRÉJUDICE ----------------
+apiRouter.get('/missions/:id/damage-lines', (req, res) => {
+  const rows = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC, created_at ASC').all(req.params.id) as any[];
+  res.json(rows.map(r => ({ ...r, piece_numbers: parseJsonSafe<number[]>(r.piece_numbers, []) })));
+});
+
+apiRouter.post('/missions/:id/damage-lines', (req, res) => {
+  const mission = db.prepare('SELECT code FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
+
+  const { category = 'Matériel & Équipements', label, claimed_amount = 0, retained_amount = 0, comment = '', piece_numbers = [] } = req.body;
+  if (!label || !String(label).trim()) {
+    return res.status(400).json({ error: "Veuillez indiquer le poste de préjudice" });
+  }
+
+  const count = db.prepare('SELECT COUNT(*) as c FROM damage_lines WHERE mission_id = ?').get(req.params.id) as { c: number };
+  const id = `dmg-${uuidv4().slice(0, 8)}`;
+  const pieces = Array.isArray(piece_numbers) ? piece_numbers.map(Number).filter(n => !isNaN(n) && n > 0) : [];
+
+  db.prepare(`
+    INSERT INTO damage_lines (id, mission_id, mission_code, category, label, claimed_amount, retained_amount, comment, piece_numbers, order_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    req.params.id,
+    mission.code,
+    category,
+    String(label).trim(),
+    Number(claimed_amount) || 0,
+    Number(retained_amount) || 0,
+    comment || '',
+    JSON.stringify(pieces),
+    count.c + 1
+  );
+
+  res.json({ id, message: "Ligne de préjudice ajoutée" });
+});
+
+apiRouter.put('/damage-lines/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM damage_lines WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Ligne introuvable" });
+
+  const category = req.body.category ?? existing.category;
+  const label = req.body.label !== undefined ? String(req.body.label).trim() : existing.label;
+  const claimed_amount = req.body.claimed_amount !== undefined ? Number(req.body.claimed_amount) : existing.claimed_amount;
+  const retained_amount = req.body.retained_amount !== undefined ? Number(req.body.retained_amount) : existing.retained_amount;
+  const comment = req.body.comment !== undefined ? req.body.comment : existing.comment;
+  const pieces = req.body.piece_numbers !== undefined
+    ? (Array.isArray(req.body.piece_numbers) ? req.body.piece_numbers.map(Number).filter((n: number) => !isNaN(n) && n > 0) : [])
+    : parseJsonSafe<number[]>(existing.piece_numbers, []);
+
+  db.prepare(`
+    UPDATE damage_lines
+    SET category = ?, label = ?, claimed_amount = ?, retained_amount = ?, comment = ?, piece_numbers = ?
+    WHERE id = ?
+  `).run(category, label, claimed_amount, retained_amount, comment, JSON.stringify(pieces), req.params.id);
+
+  res.json({ message: "Ligne de préjudice mise à jour" });
+});
+
+apiRouter.delete('/damage-lines/:id', (req, res) => {
+  db.prepare('DELETE FROM damage_lines WHERE id = ?').run(req.params.id);
+  res.json({ message: "Ligne de préjudice supprimée" });
+});
+
+// ---------------- VOLET 6 : RAPPORTS ÉMIS (PACKAGES DATÉS + PJ NUMÉROTÉES) ----------------
+apiRouter.get('/missions/:id/issued-reports', (req, res) => {
+  const rows = db.prepare('SELECT * FROM issued_reports WHERE mission_id = ? ORDER BY sent_date DESC, created_at DESC').all(req.params.id) as any[];
+  res.json(rows.map(r => ({ ...r, attached_piece_numbers: parseJsonSafe<number[]>(r.attached_piece_numbers, []) })));
+});
+
+apiRouter.post('/missions/:id/issued-reports', upload.single('file'), (req, res) => {
+  const mission = db.prepare('SELECT code, insurance_client, client_contact FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
+
+  const {
+    report_type = "Rapport d’étape",
+    title,
+    sent_date = new Date().toISOString().slice(0, 10),
+    recipient,
+    attached_piece_numbers,
+    notes = '',
+  } = req.body;
+
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: "Veuillez indiquer l'intitulé du rapport émis" });
+  }
+
+  let pieces: number[] = [];
+  if (Array.isArray(attached_piece_numbers)) {
+    pieces = attached_piece_numbers.map(Number).filter(n => !isNaN(n) && n > 0);
+  } else if (typeof attached_piece_numbers === 'string') {
+    pieces = parseJsonSafe<number[]>(attached_piece_numbers, []);
+  }
+
+  const id = `irep-${uuidv4().slice(0, 8)}`;
+  const filename = req.file ? req.file.filename : null;
+  const original_name = req.file ? req.file.originalname : null;
+  const resolvedRecipient = recipient || `${mission.insurance_client}${mission.client_contact ? ` (${mission.client_contact})` : ''}`;
+
+  db.prepare(`
+    INSERT INTO issued_reports (id, mission_id, mission_code, report_type, title, sent_date, recipient, filename, original_name, attached_piece_numbers, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    req.params.id,
+    mission.code,
+    report_type,
+    String(title).trim(),
+    sent_date,
+    resolvedRecipient,
+    filename,
+    original_name,
+    JSON.stringify(pieces),
+    notes
+  );
+
+  res.json({ id, filename, original_name, message: "Package de rapport émis enregistré" });
+});
+
+apiRouter.put('/issued-reports/:id', upload.single('file'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM issued_reports WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Rapport émis introuvable" });
+
+  const report_type = req.body.report_type ?? existing.report_type;
+  const title = req.body.title !== undefined ? String(req.body.title).trim() : existing.title;
+  const sent_date = req.body.sent_date ?? existing.sent_date;
+  const recipient = req.body.recipient ?? existing.recipient;
+  const notes = req.body.notes !== undefined ? req.body.notes : existing.notes;
+  let pieces = parseJsonSafe<number[]>(existing.attached_piece_numbers, []);
+  if (req.body.attached_piece_numbers !== undefined) {
+    pieces = Array.isArray(req.body.attached_piece_numbers)
+      ? req.body.attached_piece_numbers.map(Number).filter((n: number) => !isNaN(n) && n > 0)
+      : parseJsonSafe<number[]>(req.body.attached_piece_numbers, []);
+  }
+
+  const filename = req.file ? req.file.filename : existing.filename;
+  const original_name = req.file ? req.file.originalname : existing.original_name;
+
+  db.prepare(`
+    UPDATE issued_reports
+    SET report_type = ?, title = ?, sent_date = ?, recipient = ?, filename = ?, original_name = ?, attached_piece_numbers = ?, notes = ?
+    WHERE id = ?
+  `).run(report_type, title, sent_date, recipient, filename, original_name, JSON.stringify(pieces), notes, req.params.id);
+
+  res.json({ message: "Package de rapport mis à jour" });
+});
+
+apiRouter.delete('/issued-reports/:id', (req, res) => {
+  db.prepare('DELETE FROM issued_reports WHERE id = ?').run(req.params.id);
+  res.json({ message: "Rapport émis supprimé" });
+});
+
+apiRouter.get('/issued-reports/:id/package-zip', async (req, res) => {
+  try {
+    const rep = db.prepare('SELECT * FROM issued_reports WHERE id = ?').get(req.params.id) as any;
+    if (!rep) return res.status(404).json({ error: "Rapport introuvable" });
+
+    const mission = db.prepare('SELECT * FROM missions WHERE id = ?').get(rep.mission_id) as any;
+    const zip = new JSZip();
+    const safeTitle = `${rep.mission_code}_Rapport_${rep.sent_date}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const pkgFolder = zip.folder(safeTitle)!;
+
+    // 1. Add report file (or generated Word draft if no file was uploaded)
+    if (rep.filename && fs.existsSync(path.join(uploadsDir, rep.filename))) {
+      pkgFolder.file(rep.original_name || rep.filename, fs.readFileSync(path.join(uploadsDir, rep.filename)));
+    } else if (mission) {
+      const draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id) as any || {
+        id: 'default',
+        mission_id: mission.id,
+        mission_code: mission.code,
+        title: rep.title,
+        version: 1,
+        section_facts: '',
+        section_observations: '',
+        section_analysis: '',
+        section_conclusions: '',
+      };
+      const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id) as Attendee[];
+      const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ? AND is_selected_for_report = 1 ORDER BY order_index ASC').all(mission.id) as Photo[];
+      const buffer = await generateReportDocx(draft, mission.title, mission.case_reference, attendees, photos);
+      pkgFolder.file(rep.original_name || `${safeTitle}.docx`, buffer);
+    }
+
+    // 2. Add attached numbered pieces
+    const pieceNums = parseJsonSafe<number[]>(rep.attached_piece_numbers, []);
+    const allDocs = db.prepare('SELECT * FROM documents WHERE mission_id = ?').all(rep.mission_id) as any[];
+    const pjFolder = pkgFolder.folder('Pieces_Jointes')!;
+    const manifestLines: string[] = [
+      `PACKAGE RAPPORT ÉMIS — DOSSIER ${rep.mission_code}`,
+      `Intitulé : ${rep.title}`,
+      `Type : ${rep.report_type}`,
+      `Date d'envoi : ${rep.sent_date.split('-').reverse().join('/')}`,
+      `Destinataire : ${rep.recipient}`,
+      `Notes : ${rep.notes || '—'}`,
+      ``,
+      `PIÈCES JOINTES TRANSMISES (${pieceNums.length}) :`,
+    ];
+
+    for (const num of pieceNums) {
+      const doc = allDocs.find(d => Number(d.piece_number) === Number(num));
+      if (doc) {
+        const prefix = `Piece_${String(num).padStart(2, '0')}`;
+        manifestLines.push(`- Pièce n°${num} : ${doc.original_name}${doc.caption ? ` (${doc.caption})` : ''}`);
+        const fPath = path.join(uploadsDir, doc.filename);
+        if (fs.existsSync(fPath)) {
+          pjFolder.file(`${prefix}_${doc.original_name}`, fs.readFileSync(fPath));
+        }
+      } else {
+        manifestLines.push(`- Pièce n°${num} (référencée)`);
+      }
+    }
+
+    pkgFolder.file('Bordereau_Envoi_et_Pieces.txt', manifestLines.join('\n'));
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}.zip"`);
+    res.send(zipBuffer);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Erreur lors de la création du package" });
+  }
 });
 
 // ---------------- ATTENDEES / PRÉSENTS ----------------
@@ -1384,7 +1828,7 @@ apiRouter.get('/compta/entries', (req, res) => {
   });
 });
 
-apiRouter.post('/compta/entries', (req, res) => {
+apiRouter.post('/compta/entries', upload.single('receipt'), (req, res) => {
   const {
     month,
     type,
@@ -1410,6 +1854,8 @@ apiRouter.post('/compta/entries', (req, res) => {
   const vat = Math.round(Number(vat_amount) * 100) / 100;
   const ttc = amount_ttc !== undefined ? Math.round(Number(amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
   const id = `acc-${uuidv4().slice(0, 8)}`;
+  const receipt_filename = req.file ? req.file.filename : (req.body.receipt_filename || null);
+  const receipt_original_name = req.file ? req.file.originalname : (req.body.receipt_original_name || null);
 
   let recurringId: string | null = null;
   if (type === 'depense' && frequency && frequency !== 'ponctuel') {
@@ -1422,8 +1868,11 @@ apiRouter.post('/compta/entries', (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO accounting_entries (id, month, type, piece_number, date, invoice_number, mission_code, object, party, amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id, comment)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO accounting_entries (
+      id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+      amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id,
+      receipt_filename, receipt_original_name, comment
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     month,
@@ -1440,11 +1889,15 @@ apiRouter.post('/compta/entries', (req, res) => {
     ttc,
     frequency || 'ponctuel',
     recurringId,
+    receipt_filename,
+    receipt_original_name,
     comment || null
   );
 
   res.json({
     id,
+    receipt_filename,
+    receipt_original_name,
     recurring_expense_id: recurringId,
     message: recurringId
       ? `Écriture enregistrée et abonnement récurrent (${frequency}) créé pour les mois suivants`
@@ -1452,7 +1905,7 @@ apiRouter.post('/compta/entries', (req, res) => {
   });
 });
 
-apiRouter.put('/compta/entries/:id', (req, res) => {
+apiRouter.put('/compta/entries/:id', upload.single('receipt'), (req, res) => {
   const existing = db.prepare('SELECT * FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: "Écriture introuvable" });
 
@@ -1464,15 +1917,18 @@ apiRouter.put('/compta/entries/:id', (req, res) => {
   const vat = req.body.vat_amount !== undefined ? Math.round(Number(req.body.vat_amount) * 100) / 100 : existing.vat_amount;
   const ttc = req.body.amount_ttc !== undefined ? Math.round(Number(req.body.amount_ttc) * 100) / 100 : Math.round((ht + vat) * 100) / 100;
   const comment = req.body.comment !== undefined ? req.body.comment : existing.comment;
+  const receipt_filename = req.file ? req.file.filename : (req.body.receipt_filename !== undefined ? req.body.receipt_filename : existing.receipt_filename);
+  const receipt_original_name = req.file ? req.file.originalname : (req.body.receipt_original_name !== undefined ? req.body.receipt_original_name : existing.receipt_original_name);
 
   db.prepare(`
     UPDATE accounting_entries
-    SET date = ?, object = ?, party = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, comment = ?
+    SET date = ?, object = ?, party = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, comment = ?,
+        receipt_filename = ?, receipt_original_name = ?
     WHERE id = ?
-  `).run(date, object, party, ht, vatRate, vat, ttc, comment, req.params.id);
+  `).run(date, object, party, ht, vatRate, vat, ttc, comment, receipt_filename, receipt_original_name, req.params.id);
 
   // If update_recurring_template is true and this entry is linked to a recurring expense, update the template too
-  if (req.body.update_recurring_template && existing.recurring_expense_id) {
+  if ((req.body.update_recurring_template === true || req.body.update_recurring_template === 'true') && existing.recurring_expense_id) {
     db.prepare(`
       UPDATE recurring_expenses
       SET object = ?, party = ?, amount_ht = ?, vat_rate = ?, vat_amount = ?, amount_ttc = ?, comment = ?
@@ -1480,7 +1936,34 @@ apiRouter.put('/compta/entries/:id', (req, res) => {
     `).run(object, party, ht, vatRate, vat, ttc, comment, existing.recurring_expense_id);
   }
 
-  res.json({ message: "Écriture comptable mise à jour" });
+  res.json({ message: "Écriture comptable mise à jour", receipt_filename, receipt_original_name });
+});
+
+apiRouter.post('/compta/entries/:id/receipt', upload.single('receipt'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Écriture introuvable" });
+  if (!req.file) return res.status(400).json({ error: "Aucun fichier justificatif reçu" });
+
+  db.prepare(`
+    UPDATE accounting_entries SET receipt_filename = ?, receipt_original_name = ? WHERE id = ?
+  `).run(req.file.filename, req.file.originalname, req.params.id);
+
+  res.json({
+    receipt_filename: req.file.filename,
+    receipt_original_name: req.file.originalname,
+    message: "Justificatif rattaché à l'écriture comptable",
+  });
+});
+
+apiRouter.delete('/compta/entries/:id/receipt', (req, res) => {
+  const existing = db.prepare('SELECT * FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Écriture introuvable" });
+
+  db.prepare(`
+    UPDATE accounting_entries SET receipt_filename = NULL, receipt_original_name = NULL WHERE id = ?
+  `).run(req.params.id);
+
+  res.json({ message: "Justificatif retiré" });
 });
 
 apiRouter.delete('/compta/entries/:id', (req, res) => {
@@ -2924,8 +3407,24 @@ apiRouter.post('/assistant/commit-action', (req, res) => {
 apiRouter.get('/sync/export-zip', async (_req, res) => {
   try {
     const zip = new JSZip();
-    const rootFolder = zip.folder('VP_Expertise_iCloud')!;
+    const rootFolder = zip.folder('Rocco_VP_Expertise')!;
+    const dossiersFolder = rootFolder.folder('Dossiers')!;
+    const comptaFolder = rootFolder.folder('Compta')!;
 
+    // 1. Créer les 6 volets pour tous les dossiers
+    const allMissions = db.prepare('SELECT * FROM missions').all() as any[];
+    for (const m of allMissions) {
+      const safeCode = (m.code || 'Dossier').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const mFolder = dossiersFolder.folder(safeCode)!;
+      mFolder.folder('01_Page_de_garde');
+      mFolder.folder('02_Contrats');
+      mFolder.folder('03_Constatations_immediates');
+      mFolder.folder('04_Contradictoire');
+      mFolder.folder('05_Comptes_du_prejudice');
+      mFolder.folder('06_Rapports_emis');
+    }
+
+    // 2. Factures : dans Dossiers/<Code>/01_Page_de_garde/ ET dans Compta/<AAAA-MM>/Factures_emises/
     const invoices = db.prepare('SELECT * FROM invoices ORDER BY date DESC').all() as any[];
     for (const inv of invoices) {
       const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id) as InvoiceLine[];
@@ -2936,46 +3435,70 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
       };
       const docxBuffer = await generateInvoiceDocx(fullInv);
       const safeCode = (inv.our_ref || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
-      rootFolder.file(`${safeCode}/Factures/Facture_${inv.invoice_number}.docx`, docxBuffer);
+      dossiersFolder.file(`${safeCode}/01_Page_de_garde/Facture_${inv.invoice_number}.docx`, docxBuffer);
+      const month = (inv.date || '2026-10').slice(0, 7);
+      comptaFolder.file(`${month}/Factures_emises/Facture_${inv.invoice_number}.docx`, docxBuffer);
     }
+
+    // 3. Pièces numérotées du dossier dans leur volet respectif (02..06)
+    const sectionToFolder: Record<string, string> = {
+      contrats: '02_Contrats',
+      constatations: '03_Constatations_immediates',
+      contradictoire: '04_Contradictoire',
+      prejudice: '05_Comptes_du_prejudice',
+      rapports: '06_Rapports_emis',
+    };
 
     const documents = db.prepare('SELECT * FROM documents').all() as any[];
     for (const doc of documents) {
       const filePath = path.join(uploadsDir, doc.filename);
       if (fs.existsSync(filePath)) {
         const safeCode = (doc.mission_code || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
-        const subFolder = doc.category === 'photo_terrain'
-          ? 'Photos_Terrain'
-          : doc.category === 'justificatif_frais'
-          ? 'Justificatifs_Frais'
-          : 'Documents_Pieces';
-        rootFolder.file(`${safeCode}/${subFolder}/${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
+        if (doc.category === 'justificatif_frais') {
+          const month = (doc.created_at || '2026-10').slice(0, 7);
+          comptaFolder.file(`${month}/Justificatifs/${safeCode}_${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
+        } else {
+          const subFolder = sectionToFolder[doc.section || ''] || '03_Constatations_immediates';
+          const prefix = doc.piece_number ? `Piece_${String(doc.piece_number).padStart(2, '0')}_` : '';
+          dossiersFolder.file(`${safeCode}/${subFolder}/${prefix}${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
+        }
       }
     }
 
-    const photos = db.prepare('SELECT * FROM photos').all() as any[];
-    for (const photo of photos) {
-      const filePath = path.join(uploadsDir, photo.filename);
+    // 4. Justificatifs Compta (dépenses comptables + frais de déplacement) dans Compta/<AAAA-MM>/Justificatifs/
+    const accEntries = db.prepare('SELECT * FROM accounting_entries WHERE receipt_filename IS NOT NULL').all() as any[];
+    for (const entry of accEntries) {
+      const filePath = path.join(uploadsDir, entry.receipt_filename);
       if (fs.existsSync(filePath)) {
-        const safeCode = (photo.mission_code || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
-        rootFolder.file(`${safeCode}/Photos_Terrain/${photo.filename}`, fs.readFileSync(filePath));
+        const month = entry.month || (entry.date || '2026-10').slice(0, 7);
+        const safeName = entry.receipt_original_name || entry.receipt_filename;
+        comptaFolder.file(`${month}/Justificatifs/${entry.date || month}_${entry.party || 'Depense'}_${safeName}`, fs.readFileSync(filePath));
       }
     }
 
-    // Inclure une sauvegarde intégrale de la base de données et des données de missions
+    const expReceipts = db.prepare('SELECT * FROM expenses WHERE receipt_filename IS NOT NULL').all() as any[];
+    for (const exp of expReceipts) {
+      const filePath = path.join(uploadsDir, exp.receipt_filename);
+      if (fs.existsSync(filePath)) {
+        const month = (exp.date || '2026-10').slice(0, 7);
+        const safeName = exp.receipt_original_name || exp.receipt_filename;
+        comptaFolder.file(`${month}/Justificatifs/${exp.date}_${exp.mission_code}_${safeName}`, fs.readFileSync(filePath));
+      }
+    }
+
+    // 5. Sauvegarde de sécurité
     const dbFile = process.env.DB_PATH || path.resolve(process.cwd(), 'data/vp_expertise.db');
     if (fs.existsSync(dbFile)) {
       rootFolder.file('_Sauvegarde_Securisee/vp_expertise.db', fs.readFileSync(dbFile));
     }
-    const allMissions = db.prepare('SELECT * FROM missions').all();
     rootFolder.file('_Sauvegarde_Securisee/export_dossiers.json', JSON.stringify(allMissions, null, 2));
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="VP_Expertise_iCloud_Dossiers.zip"');
+    res.setHeader('Content-Disposition', 'attachment; filename="Rocco_VP_Expertise_Mac.zip"');
     res.send(zipBuffer);
   } catch (err: any) {
-    console.error('[Export ZIP iCloud Error]:', err);
-    res.status(500).json({ error: err.message || "Erreur lors de la génération de l'archive iCloud" });
+    console.error('[Export ZIP Mac Error]:', err);
+    res.status(500).json({ error: err.message || "Erreur lors de la génération de l'archive Mac" });
   }
 });

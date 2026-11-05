@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Receipt, Check, Download, AlertCircle, Plus, X, CornerDownRight, ShieldCheck, Search, Edit3, Layers } from 'lucide-react';
 import { Invoice, Mission } from '@shared/types.js';
 import { api } from '../api.js';
-import { syncFileToLocalMacFolder } from '../utils/localFolderSync.js';
+import { syncFileToLocalMacFolder, syncComptaFileToMac } from '../utils/localFolderSync.js';
 
 interface BillingViewProps {
   missions: Mission[];
@@ -89,7 +89,11 @@ export const BillingView: React.FC<BillingViewProps> = ({
       const unbilledExpIds = detail.expenses?.filter((e: any) => e.status === 'a_facturer').map((e: any) => e.id) || [];
       setSelectedActivities(unbilledActIds);
       setSelectedExpenses(unbilledExpIds);
-      setSubject(`Mission d’expertise depuis le ${detail.reception_date.split('-').reverse().join('/')}`);
+      const lastInvDate =
+        detail.last_invoice_date ||
+        (detail.invoices && detail.invoices.length > 0 ? detail.invoices[0].date : null);
+      const refDate = lastInvDate || detail.reception_date;
+      setSubject(`Mission d’expertise depuis le ${refDate.split('-').reverse().join('/')}`);
     } catch (err) {
       console.error(err);
     }
@@ -164,8 +168,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
     const depActs = selectedActItems.filter((a: any) => a.category === 'deplacement');
     const redActs = selectedActItems.filter((a: any) => a.category === 'redaction');
 
-    // 1. Étude de documents, gestion du dossier
-    pushActGroup(etudeActs, 'Étude de documents, gestion du dossier');
+    // 1. Étude de documents, analyse, gestion du dossier
+    pushActGroup(etudeActs, 'Étude de documents, analyse, gestion du dossier');
 
     // 2. Expertise
     if (expActs.length > 0) {
@@ -285,10 +289,16 @@ export const BillingView: React.FC<BillingViewProps> = ({
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-      // Also sync to local Mac / iCloud Drive folder if connected
+      // Also sync to local Mac / iCloud Drive folder if connected (both Dossier Page de garde & Compta)
       await syncFileToLocalMacFolder({
         missionCode: inv.mission_code,
-        subFolder: 'Factures',
+        subFolder: '01_Page_de_garde',
+        fileName,
+        data: blob,
+      });
+      await syncComptaFileToMac({
+        month: (inv.date || '').slice(0, 7),
+        subFolder: 'Factures_emises',
         fileName,
         data: blob,
       });
@@ -659,17 +669,44 @@ export const BillingView: React.FC<BillingViewProps> = ({
           <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4 flex flex-col justify-between">
             <div className="space-y-3">
               <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
-                Synthèse de la Note d'Honoraires
+                Objet & Totaux de la Facture
               </span>
 
+              {/* Historique des factures déjà émises sur ce dossier */}
+              {missionDetail?.invoices && missionDetail.invoices.length > 0 && (
+                <div className="p-2.5 bg-sky-50/80 border border-sky-200 rounded-lg text-[11px] space-y-1">
+                  <span className="font-bold text-[#0f3854] block">
+                    Facture(s) déjà émise(s) sur {missionDetail.code} ({missionDetail.invoices.length}) :
+                  </span>
+                  {missionDetail.invoices.slice(0, 3).map((prevInv: any) => (
+                    <div key={prevInv.id} className="flex items-center justify-between text-slate-700">
+                      <span>
+                        N° <strong>{prevInv.invoice_number}</strong> du{' '}
+                        {(prevInv.date || '').split('-').reverse().join('/')}
+                      </span>
+                      <span className="font-semibold">
+                        {Number(prevInv.total_ht).toFixed(2).replace('.', ',')} € HT
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">OBJET (affiché sur la facture Word)</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  OBJET DE LA FACTURE (imprimé sur le Word)
+                </label>
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  className="w-full text-xs rounded-lg border-slate-300 bg-white p-2 border"
+                  className="w-full text-xs rounded-lg border-slate-300 bg-white p-2 border font-semibold text-slate-900"
                 />
+                <span className="block text-[10px] text-slate-500 mt-1">
+                  {missionDetail?.last_invoice_date
+                    ? `✓ Pré-rempli automatiquement depuis la dernière facture du ${missionDetail.last_invoice_date.split('-').reverse().join('/')}`
+                    : `✓ 1ère facture sur ce dossier : pré-rempli depuis la date d'ouverture`}
+                </span>
               </div>
 
               <div>
