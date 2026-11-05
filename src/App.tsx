@@ -182,6 +182,7 @@ export function App() {
       <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-28 md:pb-8">
         {activeTab === 'today' && (
           <TodayView
+            missions={missions}
             summary={summary}
             loading={loading}
             onNavigateToMission={(code) => handleNavigateToMission(code, 'today')}
@@ -189,6 +190,7 @@ export function App() {
             onOpenQuickAdd={() => handleOpenQuickAdd()}
             onNavigateToMissions={() => handleTabChange('missions')}
             onNavigateToCompta={() => handleTabChange('compta')}
+            onOpenCreateMission={() => setIsCreateMissionOpen(true)}
           />
         )}
 
