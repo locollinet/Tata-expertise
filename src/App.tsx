@@ -308,7 +308,7 @@ export function App() {
           }`}
         >
           <Sparkles className="w-5 h-5 text-cyan-600 animate-pulse" />
-          <span className="mt-0.5">Assistant</span>
+          <span className="mt-0.5">Rocco</span>
         </button>
       </nav>
 
@@ -322,10 +322,10 @@ export function App() {
         type="button"
         onClick={() => setIsAssistantOpen(true)}
         className="hidden md:flex fixed bottom-6 right-6 z-30 bg-slate-900 hover:bg-slate-800 text-cyan-400 p-3 sm:p-3.5 rounded-full shadow-xl border border-cyan-500/30 hover:scale-105 active:scale-95 transition-all items-center space-x-2 group cursor-pointer"
-        title="Assistant IA VP Expertise (Gemini Flash)"
+        title="Rocco — Votre Assistant IA dévoué (Gemini Flash)"
       >
         <Sparkles className="w-5 h-5 animate-pulse text-cyan-400 group-hover:rotate-12 transition-transform" />
-        <span className="hidden lg:inline text-xs font-bold text-white pr-1">Assistant IA</span>
+        <span className="hidden lg:inline text-xs font-bold text-white pr-1">Rocco IA</span>
       </button>
 
       {/* AI Assistant Drawer */}

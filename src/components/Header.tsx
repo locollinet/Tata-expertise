@@ -217,10 +217,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenAssistant}
               className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-1.5 sm:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
-              title="Assistant IA Gemini"
+              title="Rocco — Votre Assistant IA dévoué (Gemini Flash)"
             >
               <Sparkles className="w-3.5 h-3.5 text-cyan-700 animate-pulse shrink-0" />
-              <span>Assistant IA</span>
+              <span>Rocco IA</span>
             </button>
 
             {/* Quick Add Button (Desktop / Tablet) */}

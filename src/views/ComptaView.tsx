@@ -926,7 +926,7 @@ export const ComptaView: React.FC = () => {
                           Rapprochement Bancaire IA — « Tout est carré »
                         </h2>
                         <p className="text-xs text-slate-500">
-                          Déposez votre relevé bancaire professionnel ({monthLabels[selectedMonth] || selectedMonth}). L'IA Gemini Flash pointe chaque ligne avec vos factures et votre tableau Excel de compta.
+                          Déposez votre relevé bancaire professionnel ({monthLabels[selectedMonth] || selectedMonth}). Rocco pointe chaque ligne avec vos factures et votre tableau Excel de compta pour vérifier que tout est bien carré.
                         </p>
                       </div>
                     </div>

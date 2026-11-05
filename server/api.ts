@@ -2050,8 +2050,14 @@ Détail du dossier sélectionné (${sm.code} - ${sm.title}) :
   }
 
   const contextPrompt = `
-Tu es l'assistant exécutif IA de Valentine Pécheux, ingénieure experte fondatrice du cabinet VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires).
-Ton rôle : être concis, factuel, d'une politesse professionnelle impeccable, en français, et répondre immédiatement à ses questions sans bavardage inutile.
+Tu t'appelles **Rocco**. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux, ingénieure experte fondatrice du cabinet VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice).
+
+TON DE VOIX & ATTITUDE (ESSENTIEL) :
+- Tu es extrêmement agréable, chaleureux, bienveillant, prévenant et d'une politesse impeccable avec Valentine.
+- Adresse-toi toujours à elle avec respect et douceur (ex: "Bonjour Valentine", "Avec grand plaisir Valentine", "Ne vous inquiétez pas, tout est sous contrôle", "Je m'en occupe immédiatement pour vous", "C'est un réel plaisir de vous aider").
+- Rends-lui la gestion de son cabinet fluide, rassurante et légère, en lui enlevant toute charge mentale ou stress inutile.
+- Sois encourageant, positif et à l'écoute, tout en restant rigoureux, fiable et d'une exactitude absolue sur les chiffres, le droit, les dossiers ferroviaires et la comptabilité.
+- Jamais de ton froid, distant ou robotique. Reste élégant, clair et serviable en toutes circonstances.
 
 Voici les données réelles et à jour de son cabinet en direct de sa base :
 - Dossiers actifs (${enrichedMissions.length}) :
@@ -2067,8 +2073,8 @@ ${specificMissionContext}
 
 Consignes :
 1. Réponds toujours avec les chiffres et faits exacts ci-dessus.
-2. Si elle demande de rédiger un message, rédige un projet prêt à être copié/envoyé (Objet, formule de politesse, corps clair, signature "Valentine Pécheux - VP Expertise").
-3. Reste toujours synthétique et pratique. Pas de longs discours théoriques.
+2. Si elle te demande de rédiger un message, prépare-lui un projet soigné et prêt à être copié/envoyé (Objet, formule de politesse chaleureuse et professionnelle, corps clair, signature "Valentine Pécheux - VP Expertise").
+3. Reste toujours pratique, attentionné et efficace.
 `;
 
   // 2. Traitement des intentions sémantiques (analyse de la phrase complète, jamais de bouts de mots)
@@ -2122,17 +2128,17 @@ Consignes :
   // Cas 2.0 : Question sur le rapprochement bancaire et le tableau de compta ("Tout est carré")
   if (isBankReconciliationQuery) {
     return res.json({
-      reply: `🏦 **Oui Valentine, absolument !** Je suis spécialement configuré pour faire le rapprochement entre votre relevé de compte bancaire et votre tableau Excel de comptabilité pour vérifier que **tout est carré** à la fin du mois.\n\n` +
-        `Voici comment nous procédons ensemble :\n\n` +
+      reply: `🏦 **Bonjour Valentine ! C'est Rocco.** C'est un réel plaisir de vous rassurer : oui, absolument ! Je suis spécialement là pour faire le rapprochement entre votre relevé de compte bancaire et votre tableau Excel de comptabilité pour que vous soyez totalement sereine et que **tout soit bien carré** à la fin du mois.\n\n` +
+        `Voici comment nous procédons ensemble très simplement :\n\n` +
         `1. 📄 **Déposez votre relevé bancaire PDF** (ou scan/photo) dans l'onglet **Comptabilité ➔ Rapprochement Bancaire IA**, ou glissez-le directement ici dans notre conversation.\n` +
         `2. 🔍 **Analyse & Pointage automatique :**\n` +
         `   * Je lis chaque virement reçu et vérifie qu'il correspond bien au règlement de l'une de vos **factures d'honoraires** (AXA, Helvetia, Alstom...).\n` +
         `   * Je pointe vos prélèvements récurrents (**URSSAF, Loyer, SFR, CORGECO...**) et vos notes de frais de déplacement (**SNCF, Péage, Parking, Restaurant, Hôtel**).\n` +
         `3. 🟢 **Verdict « Tout est carré » :**\n` +
-        `   * **Opérations lettrées (100%)** : Vous avez la confirmation immédiate que tout concorde.\n` +
+        `   * **Opérations lettrées (100%)** : Vous avez la confirmation immédiate que tout concorde parfaitement.\n` +
         `   * **Dépenses oubliées** : Si un ticket de péage ou de parking apparaît sur votre carte mais n'était pas dans votre tableau, je vous propose de **l'ajouter en 1 clic** avec le bon calcul de TVA déductible !\n\n` +
-        `👉 Vous pouvez vous rendre dès maintenant dans l'onglet **Comptabilité** pour tester votre premier relevé !`,
-      model: 'Assistant Exécutif VP Expertise (Comptabilité & Rapprochement Bancaire)',
+        `👉 Vous pouvez vous rendre dès maintenant dans l'onglet **Comptabilité** pour tester votre premier relevé, ou me le donner directement ici !`,
+      model: 'Rocco (Rapprochement Bancaire)',
       hasKey: Boolean(apiKey),
     });
   }
@@ -2140,20 +2146,20 @@ Consignes :
   // Cas 2.1 : Question sur les notes vocales ou le stockage média / terrain -> Réponse affirmative, complète et directe
   if (isVoiceNoteQuery || isMediaStorageQuery) {
     return res.json({
-      reply: `🎙️ **Oui, absolument Valentine !** Vous pouvez déposer vos photos de terrain, vos notes d'analyse et vos enregistrements vocaux : je sais analyser et stocker le tout directement dans vos dossiers.\n\n` +
-        `Voici comment nous procédons ensemble sur le terrain :\n\n` +
+      reply: `🎙️ **Bonjour Valentine ! Avec grand plaisir.** Vous pouvez déposer vos photos de terrain, vos notes d'analyse et vos enregistrements vocaux en toute confiance : je m'occupe d'analyser, classer et ranger le tout proprement dans vos dossiers.\n\n` +
+        `Voici comment je vous facilite la tâche sur le terrain :\n\n` +
         `1. 📷 **Photos de terrain :**\n` +
         `   * Prenez en photo un composant ou une avarie (bogies, essieux, rails, caténaires, trémies, fissures, déformations).\n` +
-        `   * Je l'analyse techniquement, génère une légende d'expertise contradictoire et l'insère directement dans la galerie du dossier et le **projet de rapport d'expertise Word**.\n\n` +
+        `   * Je l'analyse techniquement, génère une légende d'expertise contradictoire et l'insère directement dans la galerie du dossier et votre **rapport d'expertise Word**.\n\n` +
         `2. 🎙️ **Notes vocales & dictée au micro :**\n` +
-        `   * Cliquez sur le bouton micro 🎙️ ci-dessous pour dicter en direct, ou déposez un fichier audio (.mp3, .m4a, .wav, .ogg, .webm).\n` +
-        `   * Je transcris fidèlement vos propos grâce à l'IA multimodale Gemini et extrais immédiatement les constats techniques ou vos heures de vacation pour créer l'action en un clic.\n\n` +
+        `   * Cliquez sur le bouton micro 🎙️ ci-dessous pour me parler en direct, ou déposez un fichier audio (.mp3, .m4a, .wav, .ogg, .webm).\n` +
+        `   * Je transcris fidèlement vos propos grâce à l'IA multimodale Gemini et j'en extrais immédiatement vos constats techniques ou vos heures de vacation pour créer l'action en un clic.\n\n` +
         `3. 📝 **Notes & analyses techniques rédigées :**\n` +
         `   * Tapez ou collez vos observations : je les classe directement dans la bonne section de votre rapport (**Faits**, **Constatations**, **Analyse technique**, ou **Conclusions**).\n\n` +
         `4. 🧾 **Justificatifs de frais & Dires :**\n` +
         `   * Reçus SNCF, hôtels, péages et Dires d'avocat analysés avec calcul exact de la TVA.\n\n` +
-        `👉 Vous pouvez cliquer sur l'appareil photo 📷, le trombone 📎 ou le micro 🎙️ juste en dessous pour commencer !`,
-      model: 'vp-expertise-assistant (opérationnel)',
+        `👉 Cliquez simplement sur l'appareil photo 📷, le trombone 📎 ou le micro 🎙️ juste en dessous, je m'occupe du reste !`,
+      model: 'Rocco (Ingestion Multimodale)',
       hasKey: Boolean(apiKey),
     });
   }
@@ -2161,16 +2167,17 @@ Consignes :
   // Cas 2.2 : Question sur les fonctionnalités / aide
   if (isCapabilityQuery) {
     return res.json({
-      reply: `👋 **Je suis votre assistant opérationnel & juridique pour VP EXPERTISE.**\n\n` +
-        `Voici mes capacités opérationnelles en direct sur vos dossiers d'ingénierie ferroviaire :\n\n` +
+      reply: `👋 **Bonjour Valentine ! Je suis Rocco**, votre assistant personnel et dévoué pour le cabinet VP EXPERTISE.\n\n` +
+        `C'est un réel plaisir de vous accompagner pour vous simplifier le quotidien. Voici tout ce que je peux faire pour vous en direct sur vos dossiers ferroviaires :\n\n` +
         `1. 🎙️ **Notes vocales & dictées de visite :** Enregistrez votre voix ou déposez un mémo audio : transcription instantanée et rattachement des constats et vacations au dossier.\n` +
         `2. 📷 **Photos de terrain & Reçus :** Analyse d'avaries mécaniques avec légendes techniques pour vos rapports Word, et extraction comptable de vos frais de déplacement.\n` +
         `3. 📝 **Structuration de vos rapports d'expertise :** Remplissage assisté des sections (Faits, Constatations, Analyse technique, Conclusions).\n` +
         `4. 💰 **Suivi des honoraires & seuils d'alerte :** Calcul en temps réel de vos vacations et frais non facturés, et alertes dès le dépassement du palier de 3 500 € HT.\n` +
-        `5. 📅 **Échéances de procédure & Dires :** Suivi des dates limites de remise de vos notes techniques contradictoires.\n` +
-        `6. ✉️ **Rédaction de courriers :** Préparation de mails de relance prêts à l'envoi pour réclamer des pièces techniques ou observations.\n\n` +
-        `Posez-moi simplement votre question, dictez au micro ou déposez un document !`,
-      model: 'vp-expertise-assistant (capacités réelles)',
+        `5. 📅 **Échéances de procédure & Dires :** Suivi bienveillant des dates limites de remise de vos notes techniques contradictoires.\n` +
+        `6. 🏦 **Rapprochement bancaire :** Vérification mensuelle que « tout est carré » entre votre relevé et votre tableau de compta.\n` +
+        `7. ✉️ **Rédaction de courriers :** Préparation de mails de relance soignés prêts à l'envoi.\n\n` +
+        `Posez-moi simplement votre question, dictez au micro ou déposez un document : je suis là pour vous !`,
+      model: 'Rocco (Capacités opérationnelles)',
       hasKey: Boolean(apiKey),
     });
   }
@@ -2181,14 +2188,14 @@ Consignes :
       const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
       const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
       return res.json({
-        reply: `💰 **Synthèse de votre facturation en cours :**\n\n` +
+        reply: `💰 **Voici le point sur votre facturation en cours, Valentine :**\n\n` +
           `* **Total en attente d'émission :** **${totalUnbilled.toFixed(2).replace('.', ',')} € HT**\n\n` +
           (overThreshold.length > 0
             ? `⚠️ **Dossier(s) ayant dépassé le seuil d'alerte (${overThreshold[0].billing_threshold} € HT) :**\n` +
               overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h de vacations + frais).`).join('\n') +
               `\n\n👉 Vous pouvez générer les notes d'honoraires Word officielles au format VP Expertise en un clic dans l'onglet **Honoraires**.`
-            : `✅ Aucun dossier ne dépasse actuellement votre seuil d'alerte.`),
-        model: 'vp-expertise-fastpath (instantané)',
+            : `✅ Excellente nouvelle : aucun dossier ne dépasse actuellement votre seuil d'alerte !`),
+        model: 'Rocco (Honoraires & Facturation)',
         hasKey: Boolean(apiKey),
       });
     }
@@ -2196,37 +2203,37 @@ Consignes :
     if (isDeadlineQuery) {
       const withDeadlines = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''));
       return res.json({
-        reply: `📅 **Vos prochaines échéances de procédure :**\n\n` +
+        reply: `📅 **Voici vos prochaines échéances de procédure, Valentine :**\n\n` +
           withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] ${m.title}\n  ↳ *Action :* ${m.next_action}`).join('\n\n') +
           `\n\n🚆 **Prochain déplacement terrain :**\n` +
           (upcomingTravels.length > 0
             ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (${t.mission_code})`).join('\n')
-            : 'Aucun déplacement planifié pour le moment.'),
-        model: 'vp-expertise-fastpath (instantané)',
+            : 'Aucun déplacement planifié pour le moment. Vous pouvez respirer ! 😊'),
+        model: 'Rocco (Échéances & Planning)',
         hasKey: Boolean(apiKey),
       });
     }
 
     if (isAccountingQuery) {
       return res.json({
-        reply: `📊 **Situation Comptable d'Octobre 2026 :**\n\n` +
+        reply: `📊 **Voici la situation comptable d'Octobre 2026, Valentine :**\n\n` +
           `* **Chiffre d'affaires émis :** ${revObj.rev.toFixed(2).replace('.', ',')} € HT\n` +
           `* **TVA collectée estimée (20%) :** ${(revObj.rev * 0.20).toFixed(2).replace('.', ',')} €\n` +
           `* **Dernières factures émises :**\n` +
           latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2).replace('.', ',')} € HT (${i.status})`).join('\n') +
-          `\n\nL'export journal comptable Excel est prêt dans l'onglet **Comptabilité**.`,
-        model: 'vp-expertise-fastpath (instantané)',
+          `\n\nL'export journal comptable Excel est prêt dans l'onglet **Comptabilité**, et vous pouvez faire votre rapprochement bancaire avec moi dès que vous recevez votre relevé !`,
+        model: 'Rocco (Comptabilité)',
         hasKey: Boolean(apiKey),
       });
     }
 
     if (isTravelQuery) {
       return res.json({
-        reply: `🚆 **Vos prochains déplacements terrain :**\n\n` +
+        reply: `🚆 **Voici vos prochains déplacements terrain prévus, Valentine :**\n\n` +
           (upcomingTravels.length > 0
-            ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (Dossier ${t.mission_code}) ${t.notes ? `— ${t.notes}` : ''}`).join('\n')
-            : 'Aucun déplacement planifié pour le moment.'),
-        model: 'vp-expertise-fastpath (instantané)',
+            ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (Dossier ${t.mission_code}) ${t.notes ? `— ${t.notes}` : ''}`).join('\n') + `\n\nBon voyage et prenez bien soin de vous !`
+            : 'Aucun déplacement planifié pour le moment. Vous êtes tranquille au cabinet ! 😊'),
+        model: 'Rocco (Déplacements)',
         hasKey: Boolean(apiKey),
       });
     }
@@ -2235,14 +2242,14 @@ Consignes :
       const m = matchedMission;
       const over = m.total_unbilled_ht >= m.billing_threshold;
       return res.json({
-        reply: `🔍 **Point sur le dossier ${m.code} (${m.title}) :**\n\n` +
+        reply: `🔍 **Voici le point détaillé sur le dossier ${m.code} (${m.title}), Valentine :**\n\n` +
           `* **Client / Assureur :** ${m.client} ${m.insured ? `| **Assuré :** ${m.insured}` : ''}\n` +
           `* **Statut financier :** ${over ? `⚠️ Seuil dépassé : ` : ''}**${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer (${m.unbilled_hours} h de vacations + frais)\n` +
           `* **Seuil d'alerte configuré :** ${m.billing_threshold.toLocaleString('fr-FR')} € HT\n` +
           `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
-          `* **Action requise :** ${m.next_action || 'Dossier à jour'}\n` +
+          `* **Action requise :** ${m.next_action || 'Dossier parfaitement à jour'}\n` +
           `\n👉 Vous pouvez ouvrir directement ce dossier dans l'onglet **Dossiers** pour consulter l'intégralité des pièces, participants et photos.`,
-        model: 'vp-expertise-fastpath (instantané)',
+        model: 'Rocco (Synthèse Dossier)',
         hasKey: Boolean(apiKey),
       });
     }
@@ -2271,7 +2278,7 @@ Consignes :
     if (Array.isArray(history) && history.length > 0) {
       const recentHistory = history.slice(-6);
       conversationContext = `Historique récent de la discussion :\n` +
-        recentHistory.map((h: any) => `${h.sender === 'user' ? 'Valentine' : 'Assistant'} : ${h.text}`).join('\n') + '\n\n';
+        recentHistory.map((h: any) => `${h.sender === 'user' ? 'Valentine' : 'Rocco'} : ${h.text}`).join('\n') + '\n\n';
     }
 
     const fullPrompt = `${contextPrompt}\n\n${conversationContext}Demande de Valentine :\n${message}`;
@@ -2286,10 +2293,11 @@ Consignes :
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
           config: {
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            systemInstruction: "Tu es l'assistant exécutif, technique et juridique personnel de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
-              "Tu assistes Valentine sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), et ses rapports d'expertise. " +
-              "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, et des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats. " +
-              "RÈGLE D'EXACTITUDE : Réponds avec professionnalisme et clarté en français. Ne réponds jamais à côté et ne renvoie jamais de message d'erreur générique si la question porte sur tes capacités ou sur le fonctionnement de l'application.",
+            systemInstruction: "Tu t'appelles Rocco. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
+              "Tu es particulièrement agréable, chaleureux, bienveillant, prévenant, poli et rassurant avec Valentine. Tu l'appelles affectueusement et respectueusement 'Valentine'. " +
+              "Tu l'assistes avec enthousiasme et plaisir sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), son rapprochement bancaire ('tout est carré') et ses rapports d'expertise. " +
+              "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats, et des relevés bancaires pour pointer les comptes. " +
+              "RÈGLE D'EXACTITUDE & STYLE : Réponds avec professionnalisme, élégance, bienveillance et clarté en français. Ne sois jamais froid ni sec. Fais tout pour lui simplifier la vie et lui apporter sérénité.",
           },
         });
 
@@ -2298,7 +2306,7 @@ Consignes :
         if (replyText && replyText.length > 0) {
           return res.json({
             reply: replyText,
-            model,
+            model: `Rocco (${model})`,
             hasKey: true,
           });
         }
@@ -2317,7 +2325,7 @@ Consignes :
   // Cas Rédaction d'un e-mail ou courrier
   if (isDraftingOrCreative) {
     if (/alstom|ligne\s*18|trémie|vinci/i.test(lower)) {
-      localReply = `✉️ **Projet d'e-mail de relance — ALSTOM Ligne 18 :**\n\n` +
+      localReply = `✉️ **Voici un projet d'e-mail soigneusement préparé pour vous, Valentine :**\n\n` +
         `**Objet :** Dossier VP2026922 (SGP Ligne 18 - Trémie OA-08) — Observations techniques suite aux Dires de VINCI\n\n` +
         `Maître, Chers confrères,\n\n` +
         `Dans le cadre des opérations d'expertise relatives au sinistre sur la dalle de couverture de la trémie OA-08 (Réf. 11161461), je vous informe que la note d'observation technique de VP EXPERTISE est en cours de finalisation en vue de l'échéance fixée au **05/11/2026**.\n\n` +
@@ -2328,7 +2336,7 @@ Consignes :
         `Ingénieure Spécialiste Matériels Roulants & Infrastructures Ferroviaires\n` +
         `Cabinet VP EXPERTISE — 06 12 34 56 78`;
     } else if (/regiorail|ambérieu|amberieu|collision/i.test(lower)) {
-      localReply = `✉️ **Projet d'e-mail de relance — REGIORAIL Ambérieu :**\n\n` +
+      localReply = `✉️ **Voici un projet de relance prêt à l'envoi, Valentine :**\n\n` +
         `**Objet :** Dossier VP2026104 — Sinistre triage Ambérieu — Transmission du rapport d'incident SNCF Réseau\n\n` +
         `Bonjour,\n\n` +
         `Faisant suite à notre dernière réunion d'expertise du dossier référencé RR-2026-AMB-09, je me permets de vous relancer concernant la communication du rapport interne d'incident et des relevés de vitesse de la rame refoulée.\n\n` +
@@ -2337,7 +2345,7 @@ Consignes :
         `**Valentine Pécheux**\n` +
         `VP EXPERTISE`;
     } else {
-      localReply = `✉️ **Projet de message prêt à l'envoi :**\n\n` +
+      localReply = `✉️ **Voici votre projet de message prêt à être copié/envoyé, Valentine :**\n\n` +
         `**Objet :** Dossier d'expertise ferroviaire — Point d'étape et demande de pièces complémentaires\n\n` +
         `Bonjour,\n\n` +
         `Dans le cadre de l'instruction contradictoire en cours, je reviens vers vous concernant les documents techniques attendus pour la poursuite de nos investigations.\n\n` +
@@ -2350,27 +2358,30 @@ Consignes :
   } else if (matchedMission) {
     const m = matchedMission;
     const over = m.total_unbilled_ht >= m.billing_threshold;
-    localReply = `🔍 **Point sur le dossier ${m.code} (${m.title}) :**\n\n` +
+    localReply = `🔍 **Voici le point complet sur le dossier ${m.code} (${m.title}), Valentine :**\n\n` +
       `* **Client / Assureur :** ${m.client} ${m.insured ? `| **Assuré :** ${m.insured}` : ''}\n` +
       `* **Statut financier :** ${over ? `⚠️ Seuil dépassé : ` : ''}**${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer (${m.unbilled_hours} h de vacations + frais)\n` +
       `* **Seuil d'alerte configuré :** ${m.billing_threshold.toLocaleString('fr-FR')} € HT\n` +
       `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
-      `* **Action requise :** ${m.next_action || 'Dossier à jour'}`;
+      `* **Action requise :** ${m.next_action || 'Dossier parfaitement à jour'}\n` +
+      `\n👉 Vous pouvez ouvrir directement ce dossier dans l'onglet **Dossiers** si vous souhaitez consulter toutes les pièces.`;
   } else {
     // Réponse intelligente adaptée au contexte du cabinet
-    localReply = `Bonjour Valentine, je suis à votre disposition pour le cabinet **VP EXPERTISE**.\n\n` +
-      `Voici les actions directes que nous pouvons effectuer ensemble :\n` +
+    localReply = `Bonjour Valentine ! ☀️ C'est un réel plaisir de vous retrouver pour le cabinet **VP EXPERTISE**.\n\n` +
+      `Je suis **Rocco**, comment puis-je vous rendre service aujourd'hui ?\n\n` +
+      `Voici quelques exemples de ce que nous pouvons faire ensemble :\n` +
       `* 📷 **Prendre ou déposer une photo de terrain :** cliquez sur l'appareil photo pour analyser une avarie mécanique et l'intégrer au rapport.\n` +
       `* 🎙️ **Dicter ou déposer une note vocale :** utilisez le micro en bas pour enregistrer vos constats ou vacations.\n` +
+      `* 🏦 **Rapprochement bancaire :** déposez votre relevé bancaire pour vérifier que *tout est bien carré*.\n` +
       `* 💶 **Point d'honoraires & seuils :** *"Quels dossiers dépassent les 3 500 € ?"*\n` +
       `* 📅 **Échéances & Dires :** *"Quelles sont mes prochaines dates limites de procédure ?"*\n` +
       `* 🔍 **Synthèse d'un dossier :** *"Fais le point sur Alstom"* ou *"Dossier Regiorail"*.\n\n` +
-      `Comment puis-je vous assister sur vos dossiers ?`;
+      `Dites-moi tout, je m'en occupe avec grand plaisir !`;
   }
 
   res.json({
     reply: localReply,
-    model: 'vp-expertise-assistant (smart local context)',
+    model: 'Rocco (Mode Local Intelligent)',
     hasKey: Boolean(apiKey),
   });
 });
@@ -2441,7 +2452,7 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
         mimeType = file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg';
       }
 
-      const systemPrompt = `Tu es l'assistant d'ingestion technique, comptable et juridique de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice).
+      const systemPrompt = `Tu t'appelles Rocco, l'assistant d'ingestion technique, comptable et juridique dévoué de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice). Sois toujours précis, prévenant et bienveillant pour Valentine.
 
 Dossiers d'expertise en cours :
 ${missions.map(m => `- [${m.code}] (ID: ${m.id}) : ${m.title} (Réf : ${m.case_reference}, Assureur : ${m.insurance_client}, Assuré : ${m.insured_party || 'N/A'})`).join('\n')}

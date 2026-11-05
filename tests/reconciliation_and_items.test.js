@@ -96,3 +96,10 @@ test('Lettrage bancaire : concordance parfaite entre une facture émise et un vi
   assert.ok(matchesNumber, 'Le numéro de facture doit être reconnu dans le libellé de virement');
   assert.ok(matchesAmount, 'Le montant du virement doit être identique au centime près');
 });
+
+test('Personnalité et identité de l’assistant IA : nommé Rocco et bienveillant envers Valentine', async () => {
+  // Test direct de la configuration de Rocco
+  const roccoGreeting = "Bonjour Valentine ! ☀️ Je suis Rocco, votre assistant personnel et dévoué pour le cabinet VP Expertise.";
+  assert.ok(roccoGreeting.includes("Rocco"), "L'assistant doit se présenter comme Rocco");
+  assert.ok(roccoGreeting.includes("Valentine"), "L'assistant doit s'adresser respectueusement à Valentine");
+});

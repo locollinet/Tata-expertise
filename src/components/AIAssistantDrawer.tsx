@@ -96,7 +96,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
     {
       id: 'welcome',
       sender: 'assistant',
-      text: `Bonjour Valentine !\n\nJe suis votre **assistant opérationnel & terrain VP Expertise**.\n\nVous pouvez directement :\n* 🎙️ **Dicter ou enregistrer une note vocale** (au micro ou en déposant un fichier audio) pour créer vos constats techniques ou pointer vos vacations.\n* 📷 **Prendre en photo une avarie mécanique ou un reçu** (bogies, essieux, rails, billets SNCF, hôtels, péages) pour analyse et intégration immédiate.\n* 📝 **Déposer une note de visite ou un Dire d'avocat** pour enrichir automatiquement vos rapports Word.\n* 💬 **Me poser des questions libres** sur vos seuils d'honoraires, vacations et échéances de procédure.`,
+      text: `Bonjour Valentine ! ☀️\n\nJe suis **Rocco**, votre assistant personnel et dévoué pour le cabinet VP Expertise. C'est un réel plaisir de vous accompagner au quotidien !\n\nJe suis là pour vous faciliter la vie en toute sérénité :\n* 🎙️ **Vos notes vocales & dictées de visite** : parlez-moi au micro ou déposez un mémo audio, je m'occupe de transcrire vos constats et de pointer vos vacations.\n* 📷 **Vos photos d'expertise & justificatifs de frais** : déposez un cliché d'avarie (bogies, essieux, rails) ou un reçu (SNCF, hôtel, péage), je l'analyse et l'insère au bon endroit.\n* 🏦 **Votre comptabilité & rapprochement bancaire** : déposez votre relevé de compte et je vérifie pour vous que *tout est bien carré* avec vos factures.\n* 💬 **Toutes vos questions sur vos dossiers** : honoraires, vacations, dates limites de Dires et préparation de courriers.\n\nComment puis-je vous aider aujourd'hui ?`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -616,14 +616,16 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-sm tracking-tight">Assistant VP Expertise</h3>
+                <h3 className="font-bold text-sm tracking-tight text-white flex items-center space-x-1.5">
+                  <span>Rocco</span>
+                </h3>
                 <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-900/80 text-cyan-200 border border-cyan-700/50">
                   <Sparkles className="w-2.5 h-2.5" />
-                  <span>Gemini Flash</span>
+                  <span>Rocco • Gemini Flash</span>
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                {currentMission ? `Contexte : [${currentMission.code}]` : 'Connecté à vos dossiers & comptabilité'}
+                {currentMission ? `Contexte : [${currentMission.code}]` : 'Votre assistant dévoué • Connecté à vos dossiers & compta'}
               </p>
             </div>
           </div>
@@ -1299,8 +1301,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   selectedFile
-                    ? "Consigne (ex: 'Dossier Alstom') ou valider direct..."
-                    : "Question, consigne ou glisser un fichier/audio..."
+                    ? "Consigne pour Rocco (ex: 'Dossier Alstom')..."
+                    : "Demandez à Rocco, parlez au micro ou déposez un fichier..."
                 }
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:bg-white transition-all"
                 disabled={loading}

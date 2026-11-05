@@ -130,7 +130,7 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
         {initialValues && (
           <div className="mx-6 mt-4 p-2.5 bg-cyan-50 border border-cyan-200 text-cyan-900 rounded-lg flex items-center space-x-2 text-xs">
             <Sparkles className="w-4 h-4 text-cyan-600 shrink-0" />
-            <span>Champs pré-remplis automatiquement par l'Assistant IA depuis le document déposé. Vérifiez les informations avant validation.</span>
+            <span>Champs pré-remplis automatiquement par Rocco depuis le document déposé. Vérifiez les informations avant validation.</span>
           </div>
         )}
 
