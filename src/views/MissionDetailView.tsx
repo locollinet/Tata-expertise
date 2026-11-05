@@ -879,10 +879,19 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 </div>
 
                 {/* Déjà facturé */}
-                <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                <div
+                  onClick={() => {
+                    const el = document.getElementById('dossier-invoices-section');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                  className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col justify-between hover:border-[#0f3854]/40 hover:shadow-xs transition-all cursor-pointer group"
+                  title="Cliquer pour voir l'historique complet des factures de ce dossier"
+                >
                   <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
                     <span className="font-semibold text-slate-600">Déjà facturé</span>
-                    <span className="text-[11px] text-slate-400 font-mono">{missionInvoices.length} fact.</span>
+                    <span className="text-[11px] text-[#0f3854] font-semibold group-hover:underline">
+                      {missionInvoices.length} fact. ↓
+                    </span>
                   </div>
                   <div>
                     <span className="text-xl sm:text-2xl font-extrabold text-[#0f3854]">
@@ -892,8 +901,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </div>
                   <span className="text-[10px] text-emerald-700 font-semibold mt-1 block">
                     {stakeAmount > 0
-                      ? `${((totalBilledHT / stakeAmount) * 100).toFixed(1)}% de l'enjeu`
-                      : 'Facturation à jour'}
+                      ? `${((totalBilledHT / stakeAmount) * 100).toFixed(1)}% de l'enjeu • Voir les factures ↓`
+                      : 'Historique des factures ↓'}
                   </span>
                 </div>
 
@@ -1241,90 +1250,124 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 )}
               </div>
 
-              {/* FACTURES DU DOSSIER & POINTAGE */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* Factures du dossier */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Receipt className="w-4 h-4 text-[#0f3854]" />
-                        <h3 className="text-sm font-bold text-slate-900">
-                          Notes d'honoraires ({missionInvoices.length})
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => onPrepareBilling(mission.id)}
-                        className="text-xs font-bold text-[#0f3854] hover:underline"
-                      >
-                        + Préparer facture →
-                      </button>
+              {/* FACTURES DU DOSSIER (Section dédiée avec historique complet) */}
+              <div id="dossier-invoices-section" className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <Receipt className="w-4 h-4 text-[#0f3854]" />
+                      <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                        Historique des factures de ce dossier ({missionInvoices.length})
+                      </h3>
                     </div>
-
-                    {missionInvoices.length === 0 ? (
-                      <p className="py-6 text-center text-xs text-slate-400 bg-slate-50/50 rounded-xl">
-                        Aucune facture émise sur ce dossier.
-                      </p>
-                    ) : (
-                      <div className="border border-slate-200 rounded-xl overflow-hidden">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead>
-                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
-                              <th className="py-2 px-3 font-semibold">N°</th>
-                              <th className="py-2 px-3 font-semibold">Date</th>
-                              <th className="py-2 px-3 font-semibold text-right">Montant HT</th>
-                              <th className="py-2 px-3 font-semibold text-center">Statut</th>
-                              <th className="py-2 px-3 font-semibold text-right">Word</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {missionInvoices.map((inv: any) => (
-                              <tr key={inv.id} className="hover:bg-slate-50">
-                                <td className="py-2 px-3 font-bold text-[#0f3854]">{inv.invoice_number}</td>
-                                <td className="py-2 px-3 text-slate-600 whitespace-nowrap">
-                                  {(inv.date || '').split('-').reverse().join('/')}
-                                </td>
-                                <td className="py-2 px-3 text-right font-semibold">
-                                  {Number(inv.total_ht).toFixed(2).replace('.', ',')} €
-                                </td>
-                                <td className="py-2 px-3 text-center">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                      inv.status === 'regle'
-                                        ? 'bg-emerald-50 text-emerald-700'
-                                        : inv.status === 'brouillon'
-                                        ? 'bg-amber-50 text-amber-800'
-                                        : 'bg-sky-50 text-sky-800'
-                                    }`}
-                                  >
-                                    {inv.status === 'regle' ? 'Réglée' : inv.status === 'brouillon' ? 'Brouillon' : 'Émise'}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-3 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDownloadInvoiceDocx(inv)}
-                                    className="text-[#0f3854] hover:underline font-semibold"
-                                  >
-                                    .docx
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Toutes les notes d'honoraires émises sur {mission.code} (acomptes, notes intermédiaires et soldes).
+                    </p>
                   </div>
 
-                  <p className="text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                    Prochaine facture : « Mission d’expertise depuis le {nextInvoiceSubjectDate} »
-                  </p>
+                  <div className="flex items-center space-x-2 self-start sm:self-auto">
+                    <span className="text-xs font-bold text-[#0f3854] bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-100">
+                      Total facturé : {totalBilledHT.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € HT
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onPrepareBilling(mission.id)}
+                      className="px-3 py-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg text-xs font-bold shadow-2xs transition-colors"
+                    >
+                      + Émettre une note d'honoraires →
+                    </button>
+                  </div>
                 </div>
 
-                {/* Pointage du temps */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
+                {missionInvoices.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400 bg-slate-50/50 rounded-xl space-y-2">
+                    <p>Aucune note d'honoraires émise pour le moment sur ce dossier.</p>
+                    <button
+                      type="button"
+                      onClick={() => onPrepareBilling(mission.id)}
+                      className="text-[#0f3854] font-bold hover:underline"
+                    >
+                      Générer la première facture pour {mission.code} →
+                    </button>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
+                          <th className="py-2.5 px-3 font-semibold">Numéro</th>
+                          <th className="py-2.5 px-3 font-semibold">Date</th>
+                          <th className="py-2.5 px-3 font-semibold">Objet / Période</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Montant HT</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Net à payer TTC</th>
+                          <th className="py-2.5 px-3 font-semibold text-center">Statut</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Fichier Word</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {missionInvoices.map((inv: any) => {
+                          const net = inv.net_payable ?? inv.total_ttc ?? 0;
+                          return (
+                            <tr key={inv.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-bold text-[#0f3854] font-mono">{inv.invoice_number}</td>
+                              <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                                {(inv.date || '').split('-').reverse().join('/')}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
+                                {inv.subject || `Mission d'expertise`}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-semibold text-slate-800">
+                                {Number(inv.total_ht || 0).toFixed(2).replace('.', ',')} €
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                                {Number(net).toFixed(2).replace('.', ',')} €
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    inv.status === 'regle'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : inv.status === 'brouillon'
+                                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      : inv.status === 'annule'
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : 'bg-sky-50 text-sky-800 border border-sky-200'
+                                  }`}
+                                >
+                                  {inv.status === 'regle' ? 'Réglée' : inv.status === 'brouillon' ? 'Brouillon' : inv.status === 'annule' ? 'Avoir' : 'Émise'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadInvoiceDocx(inv)}
+                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-semibold transition-colors"
+                                >
+                                  <Download className="w-3 h-3 text-slate-500" />
+                                  <span>.docx</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
+                  <span>
+                    Prochaine note : objet pré-rempli à partir du{' '}
+                    <strong className="text-slate-700">{nextInvoiceSubjectDate}</strong>
+                  </span>
+                  <span className="font-semibold text-slate-600">
+                    Compteur en cours non facturé : {unbilledHours.toFixed(1).replace('.', ',')} h ({totalUnbilledHT.toFixed(2).replace('.', ',')} € HT)
+                  </span>
+                </div>
+              </div>
+
+              {/* POINTAGE DU TEMPS */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       <Clock className="w-4 h-4 text-[#0f3854]" />
@@ -1448,7 +1491,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       Constatations immédiates & Données terrain
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Photos en vrac (sans légende obligatoire), extractions Durandal et relevés du jour J.
+                      Photos en vrac (sans légende obligatoire), extractions techniques (enregistreurs, bandes) et relevés du jour J.
                     </p>
                   </div>
 
@@ -1456,7 +1499,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     {[
                       { id: 'jour_j', label: 'Jour J' },
                       { id: 'visite_terrain', label: 'Photos terrain' },
-                      { id: 'extractions', label: 'Extractions Durandal' },
+                      { id: 'extractions', label: 'Extractions techniques & Relevés' },
                     ].map((st) => (
                       <button
                         key={st.id}

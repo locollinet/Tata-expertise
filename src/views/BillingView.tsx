@@ -47,6 +47,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [advanceAmount, setAdvanceAmount] = useState('0');
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
+  const [registerFilter, setRegisterFilter] = useState<string | 'all'>(initialMissionCode || 'all');
 
   // Inline activity hours editing state
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
@@ -116,6 +117,16 @@ export const BillingView: React.FC<BillingViewProps> = ({
   useEffect(() => {
     loadSelectedMission();
   }, [selectedMissionId]);
+
+  const currentMissionCode = missions.find(m => m.id === selectedMissionId)?.code || missionDetail?.code;
+  const missionInvoicesCount = currentMissionCode
+    ? invoices.filter(inv => (inv.mission_code || '').toLowerCase() === currentMissionCode.toLowerCase()).length
+    : 0;
+
+  const displayedInvoices = useMemo(() => {
+    if (registerFilter === 'all') return invoices;
+    return invoices.filter(inv => (inv.mission_code || '').toLowerCase() === registerFilter.toLowerCase());
+  }, [invoices, registerFilter]);
 
   // Live calculation of preview amounts
   const unbilledActivities = missionDetail?.activities?.filter((a: any) => a.status === 'a_facturer') || [];
@@ -570,7 +581,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                               title="Cliquer pour ajuster ou arrondir les heures"
                               className="text-[11px] text-[#0f3854] hover:underline font-medium inline-flex items-center space-x-1"
                             >
-                              <span>{act.hours.toString().replace('.', ',')} h @ {act.hourly_rate} €</span>
+                              <span>{act.hours.toString().replace('.', ',')} h à {act.hourly_rate} €/h</span>
                               <Edit3 className="w-3 h-3 text-slate-400" />
                             </button>
                           </div>
@@ -772,17 +783,45 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
       {/* 2. REGISTRE DES FACTURES EMISES & SUIVI */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
             <div className="flex items-center space-x-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
               <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                Registre des notes d'honoraires ({invoices.length})
+                Registre des notes d'honoraires ({displayedInvoices.length})
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Téléchargement Word (.docx), ajustement avant émission et suivi des règlements.
             </p>
+          </div>
+
+          {/* Filtres : Toutes les factures vs Ce dossier uniquement */}
+          <div className="flex items-center space-x-1.5 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setRegisterFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                registerFilter === 'all'
+                  ? 'bg-[#0f3854] text-white shadow-2xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+              }`}
+            >
+              Toutes ({invoices.length})
+            </button>
+            {currentMissionCode && (
+              <button
+                type="button"
+                onClick={() => setRegisterFilter(currentMissionCode)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  registerFilter.toLowerCase() === currentMissionCode.toLowerCase()
+                    ? 'bg-[#0f3854] text-white shadow-2xs'
+                    : 'bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200'
+                }`}
+              >
+                Dossier {currentMissionCode} ({missionInvoicesCount})
+              </button>
+            )}
           </div>
         </div>
 
@@ -801,8 +840,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
           </div>
         )}
 
-        {invoices.length === 0 ? (
-          <p className="text-xs text-slate-400 py-8 text-center">Aucune facture enregistrée.</p>
+        {displayedInvoices.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400 space-y-2">
+            <p>Aucune facture enregistrée{registerFilter !== 'all' ? ` pour le dossier ${registerFilter}` : ''}.</p>
+            {registerFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setRegisterFilter('all')}
+                className="text-[#0f3854] font-semibold hover:underline"
+              >
+                Afficher toutes les factures ({invoices.length})
+              </button>
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -820,7 +870,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {invoices.map((inv) => {
+                {displayedInvoices.map((inv) => {
                   const isDraft = inv.status === 'brouillon';
                   const isPaid = inv.status === 'regle';
                   const isCancelled = inv.status === 'annule';

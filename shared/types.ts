@@ -11,7 +11,7 @@ export type MissionStatus =
 export type DossierVoletKey =
   | 'garde'          // 1. Page de garde (File Register)
   | 'contrats'       // 2. Contrats client / Assuré
-  | 'constatations'  // 3. Constatations immédiates (Jour J, visites terrain, extractions Durandal)
+  | 'constatations'  // 3. Constatations immédiates (Jour J, visites terrain, extractions techniques & enregistreurs)
   | 'contradictoire' // 4. Respect du contradictoire (Mises en cause, convocations, dires, LRAR)
   | 'prejudice'      // 5. Comptes du préjudice (Tableau de décompte + justificatifs liés)
   | 'rapports';      // 6. Rapports émis (Packages datés + PJ numérotées + projet de rapport)
