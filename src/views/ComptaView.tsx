@@ -317,11 +317,11 @@ export const ComptaView: React.FC = () => {
 
   const openEditEntryModal = (entry: AccountingEntry) => {
     setEditingEntry(entry);
-    setEditObject(entry.object);
-    setEditParty(entry.party);
-    setEditDate(entry.date);
-    setEditHT(String(entry.amount_ht));
-    setEditVat(String(entry.vat_amount));
+    setEditObject(entry.object || '');
+    setEditParty(entry.party || '');
+    setEditDate(entry.date || '');
+    setEditHT(String(entry.amount_ht ?? 0));
+    setEditVat(String(entry.vat_amount ?? 0));
     setEditComment(entry.comment || '');
     setEditReceiptFile(null);
     setUpdateTemplateToo(false);

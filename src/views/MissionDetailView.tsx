@@ -1396,7 +1396,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <input
                             type="text"
                             placeholder="Partie adverse (ex: Alstom)"
-                            value={ap.party_name}
+                            value={ap.party_name || ''}
                             onChange={(e) => {
                               const next = [...adverseParties];
                               next[idx] = { ...next[idx], party_name: e.target.value };
@@ -1407,7 +1407,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <input
                             type="text"
                             placeholder="Cabinet (ex: Saretec)"
-                            value={ap.expert_firm}
+                            value={ap.expert_firm || ''}
                             onChange={(e) => {
                               const next = [...adverseParties];
                               next[idx] = { ...next[idx], expert_firm: e.target.value };
@@ -1418,7 +1418,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <input
                             type="text"
                             placeholder="Nom confrère (ex: M. Pechereau)"
-                            value={ap.expert_name}
+                            value={ap.expert_name || ''}
                             onChange={(e) => {
                               const next = [...adverseParties];
                               next[idx] = { ...next[idx], expert_name: e.target.value };

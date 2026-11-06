@@ -842,7 +842,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         <input
                           type="text"
                           placeholder="Nom (ex: HELVETIA)"
-                          value={co.name}
+                          value={co.name || ''}
                           onChange={(e) => {
                             const val = e.target.value;
                             setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, name: val } : item));
@@ -855,7 +855,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             min="0"
                             max="100"
                             placeholder="%"
-                            value={co.percentage || ''}
+                            value={co.percentage !== undefined && co.percentage !== null ? co.percentage : ''}
                             onChange={(e) => {
                               const val = parseFloat(e.target.value) || 0;
                               setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, percentage: val } : item));
@@ -867,7 +867,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         <input
                           type="text"
                           placeholder="Réf"
-                          value={co.ref}
+                          value={co.ref || ''}
                           onChange={(e) => {
                             const val = e.target.value;
                             setCoInsurers(prev => prev.map((item, i) => i === idx ? { ...item, ref: val } : item));
@@ -1255,7 +1255,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             <td className="p-1.5">
                               <input
                                 type="text"
-                                value={line.description}
+                                value={line.description || ''}
                                 onChange={(e) => {
                                   const copy = [...editInvLines];
                                   copy[idx].description = e.target.value;
@@ -1267,7 +1267,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             <td className="p-1.5">
                               <input
                                 type="text"
-                                value={line.quantity}
+                                value={line.quantity ?? ''}
                                 onChange={(e) => {
                                   const copy = [...editInvLines];
                                   copy[idx].quantity = e.target.value;
@@ -1279,7 +1279,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             <td className="p-1.5">
                               <input
                                 type="text"
-                                value={line.time_spent}
+                                value={line.time_spent ?? ''}
                                 onChange={(e) => {
                                   const copy = [...editInvLines];
                                   copy[idx].time_spent = e.target.value;
@@ -1292,7 +1292,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             <td className="p-1.5">
                               <input
                                 type="text"
-                                value={line.unit_price_ht}
+                                value={line.unit_price_ht ?? ''}
                                 onChange={(e) => {
                                   const copy = [...editInvLines];
                                   copy[idx].unit_price_ht = e.target.value;

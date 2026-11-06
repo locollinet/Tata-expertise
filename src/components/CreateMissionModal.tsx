@@ -364,7 +364,7 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
                     <label className="block text-[10px] text-slate-400 uppercase font-semibold mb-0.5">Partie adverse</label>
                     <input
                       type="text"
-                      value={adv.party_name}
+                      value={adv.party_name || ''}
                       onChange={(e) => handleUpdateAdverseParty(idx, 'party_name', e.target.value)}
                       placeholder="ex: SNCF Réseau, VINCI..."
                       className="w-full rounded border-slate-200 p-1.5 border text-xs"
