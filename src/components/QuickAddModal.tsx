@@ -453,6 +453,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                     if (firstMatch) setMissionId(firstMatch.id);
                   }
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (filteredMissions.length > 0) {
+                      setMissionId(filteredMissions[0].id);
+                    }
+                  }
+                }}
                 placeholder="Rechercher par n° (ex: 728, 2020), client (Helvetia, AXA) ou affaire..."
                 className="w-full text-xs rounded-lg border-slate-300 pl-8 pr-7 py-1.5 bg-white border focus:border-[#0f3854] focus:ring-[#0f3854]"
               />

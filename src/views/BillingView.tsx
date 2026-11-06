@@ -53,6 +53,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
   const [registerFilter, setRegisterFilter] = useState<string | 'all'>(initialMissionCode || 'all');
+  const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
 
   // Inline activity hours editing state
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
@@ -128,10 +129,29 @@ export const BillingView: React.FC<BillingViewProps> = ({
     ? invoices.filter(inv => (inv.mission_code || '').toLowerCase() === currentMissionCode.toLowerCase()).length
     : 0;
 
+  const missionsWithInvoices = useMemo(() => {
+    const counts: Record<string, number> = {};
+    invoices.forEach(inv => {
+      const code = inv.mission_code || 'Sans_dossier';
+      counts[code] = (counts[code] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [invoices]);
+
   const displayedInvoices = useMemo(() => {
-    if (registerFilter === 'all') return invoices;
-    return invoices.filter(inv => (inv.mission_code || '').toLowerCase() === registerFilter.toLowerCase());
-  }, [invoices, registerFilter]);
+    let list = invoices;
+    if (registerFilter !== 'all') {
+      list = list.filter(inv => (inv.mission_code || '').toLowerCase() === registerFilter.toLowerCase());
+    }
+    const q = invoiceSearchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(inv =>
+      (inv.invoice_number || '').toLowerCase().includes(q) ||
+      (inv.mission_code || '').toLowerCase().includes(q) ||
+      (inv.client_name || '').toLowerCase().includes(q) ||
+      (inv.subject || '').toLowerCase().includes(q)
+    );
+  }, [invoices, registerFilter, invoiceSearchQuery]);
 
   // Live calculation of preview amounts
   const unbilledActivities = missionDetail?.activities?.filter((a: any) => a.status === 'a_facturer') || [];
@@ -464,7 +484,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <span className="text-[11px] text-slate-400 font-normal">| Facturation au temps réel (lignes archivées et soldées)</span>
           </div>
 
-          {/* Mission selection with Search Loupe */}
+          {/* Mission selection with Search Loupe & Checkbox */}
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -478,29 +498,66 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   if (q) {
                     const match = missions.find(
                       m =>
-                        m.code.toLowerCase().includes(q) ||
-                        m.title.toLowerCase().includes(q) ||
-                        (m.insurance_client || '').toLowerCase().includes(q)
+                        (includeClosed || m.status !== 'cloture') &&
+                        (m.code.toLowerCase().includes(q) ||
+                          m.title.toLowerCase().includes(q) ||
+                          (m.insurance_client || '').toLowerCase().includes(q) ||
+                          (m.insured_party || '').toLowerCase().includes(q))
                     );
                     if (match) setSelectedMissionId(match.id);
                   }
                 }}
-                placeholder="Rechercher dossier (ex: 728), client..."
-                className="text-xs rounded-lg border-slate-300 pl-8 pr-3 py-1.5 bg-white border focus:border-[#0f3854] w-56"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (filteredMissions.length > 0) {
+                      setSelectedMissionId(filteredMissions[0].id);
+                    }
+                  }
+                }}
+                placeholder="Rechercher dossier (ex: 728, Alstom)..."
+                className="text-xs rounded-xl border-slate-300 pl-8 pr-7 py-2 bg-slate-50/80 border focus:bg-white focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] w-full sm:w-64 shadow-2xs transition-all"
               />
+              {missionSearch && (
+                <button
+                  type="button"
+                  onClick={() => setMissionSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold p-0.5 cursor-pointer"
+                  title="Effacer la recherche"
+                >
+                  ×
+                </button>
+              )}
             </div>
 
             <select
               value={selectedMissionId}
               onChange={(e) => setSelectedMissionId(e.target.value)}
-              className="text-xs rounded-lg border-slate-300 shadow-2xs focus:border-[#0f3854] focus:ring-[#0f3854] py-1.5 px-3 bg-slate-50 border font-medium text-slate-800"
+              className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] py-2 px-3 bg-white border font-bold text-slate-900 max-w-md truncate cursor-pointer hover:bg-slate-50"
             >
-              {filteredMissions.map(m => (
-                <option key={m.id} value={m.id}>
-                  {m.code} — {m.title.slice(0, 38)}... ({(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT)
-                </option>
-              ))}
+              {filteredMissions.length === 0 ? (
+                <option value="" disabled>Aucun dossier trouvé pour « {missionSearch} »</option>
+              ) : (
+                filteredMissions.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.code} — {m.title.length > 40 ? `${m.title.slice(0, 40)}…` : m.title} ({m.insurance_client}) — {(m.total_unbilled_ht || 0).toFixed(2).replace('.', ',')} € HT à facturer{m.status === 'cloture' ? ' [CLOS]' : ''}
+                  </option>
+                ))
+              )}
             </select>
+
+            <label
+              className="inline-flex items-center space-x-1.5 text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer select-none shrink-0 px-1 py-1"
+              title="Inclure également les dossiers clos / archivés"
+            >
+              <input
+                type="checkbox"
+                checked={includeClosed}
+                onChange={(e) => setIncludeClosed(e.target.checked)}
+                className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
+              />
+              <span className="hidden xl:inline">Inclure clos</span>
+            </label>
           </div>
         </div>
 
@@ -900,32 +957,44 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </p>
           </div>
 
-          {/* Filtres : Toutes les factures vs Ce dossier uniquement */}
-          <div className="flex items-center space-x-1.5 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setRegisterFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                registerFilter === 'all'
-                  ? 'bg-[#0f3854] text-white shadow-2xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-              }`}
+          {/* Filtres & Recherche de factures : Loupe + Sélecteur par dossier */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 self-stretch sm:self-auto">
+            {/* Loupe de recherche de facture */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={invoiceSearchQuery}
+                onChange={(e) => setInvoiceSearchQuery(e.target.value)}
+                placeholder="Rechercher facture (n°, client, objet)..."
+                className="text-xs rounded-xl border-slate-300 pl-8 pr-7 py-1.5 bg-slate-50 border focus:bg-white focus:border-[#0f3854] w-full sm:w-56 shadow-2xs"
+              />
+              {invoiceSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setInvoiceSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold p-0.5 cursor-pointer"
+                  title="Effacer la recherche"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Menu déroulant de filtre par dossier */}
+            <select
+              value={registerFilter}
+              onChange={(e) => setRegisterFilter(e.target.value)}
+              className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] py-1.5 px-3 bg-white border font-semibold text-slate-800 cursor-pointer"
+              title="Filtrer les factures par dossier"
             >
-              Toutes ({invoices.length})
-            </button>
-            {currentMissionCode && (
-              <button
-                type="button"
-                onClick={() => setRegisterFilter(currentMissionCode)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  registerFilter.toLowerCase() === currentMissionCode.toLowerCase()
-                    ? 'bg-[#0f3854] text-white shadow-2xs'
-                    : 'bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200'
-                }`}
-              >
-                Dossier {currentMissionCode} ({missionInvoicesCount})
-              </button>
-            )}
+              <option value="all">Toutes les factures ({invoices.length})</option>
+              {missionsWithInvoices.map(([code, count]) => (
+                <option key={code} value={code}>
+                  Dossier {code} ({count} facture{count > 1 ? 's' : ''})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 

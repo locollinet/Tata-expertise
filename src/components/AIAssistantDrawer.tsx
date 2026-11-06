@@ -3,7 +3,7 @@ import {
   Bot, Sparkles, Send, X, Copy, Check, RotateCcw, AlertCircle,
   ChevronRight, Camera, Paperclip, FileText, Receipt, FolderPlus,
   ArrowRight, UploadCloud, CheckCircle2, Mic, Square, Radio, Image as ImageIcon,
-  Clock, BookOpen, Volume2
+  Clock, BookOpen, Volume2, Search
 } from 'lucide-react';
 import { api } from '../api.js';
 import { Mission } from '@shared/types.js';
@@ -84,6 +84,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [cardMissionSearch, setCardMissionSearch] = useState<Record<string, string>>({});
 
   // Audio Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -780,26 +781,75 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                 )}
                               </div>
 
-                              {/* Target Mission Selector */}
-                              {card.action_type !== 'new_mission' && (
-                                <div>
-                                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                    Dossier de rattachement :
-                                  </label>
-                                  <select
-                                    value={card.matched_mission_id || ''}
-                                    onChange={(e) => updateCardMission(m.id, e.target.value)}
-                                    className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-lg font-medium text-slate-800 focus:ring-1 focus:ring-[#0f3854]"
-                                  >
-                                    <option value="" disabled>Sélectionner un dossier...</option>
-                                    {missions.map((ms) => (
-                                      <option key={ms.id} value={ms.id}>
-                                        [{ms.code}] {ms.title.slice(0, 40)}...
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
+                              {/* Target Mission Selector with Search Loupe */}
+                              {card.action_type !== 'new_mission' && (() => {
+                                const q = (cardMissionSearch[m.id] || '').trim().toLowerCase();
+                                const filteredMissionsForCard = missions.filter(ms => {
+                                  if (!q) return true;
+                                  return (
+                                    ms.code.toLowerCase().includes(q) ||
+                                    ms.title.toLowerCase().includes(q) ||
+                                    (ms.insurance_client || '').toLowerCase().includes(q) ||
+                                    (ms.insured_party || '').toLowerCase().includes(q)
+                                  );
+                                });
+
+                                return (
+                                  <div className="space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-200">
+                                    <div className="flex items-center justify-between">
+                                      <label className="block text-[11px] font-bold text-slate-700">
+                                        Dossier de rattachement ({filteredMissionsForCard.length}) :
+                                      </label>
+                                      {cardMissionSearch[m.id] && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCardMissionSearch(prev => ({ ...prev, [m.id]: '' }))}
+                                          className="text-[10px] text-slate-400 hover:text-slate-600 font-semibold cursor-pointer"
+                                        >
+                                          Effacer
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Loupe de recherche rapide */}
+                                    <div className="relative">
+                                      <Search className="w-3 h-3 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                      <input
+                                        type="text"
+                                        value={cardMissionSearch[m.id] || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setCardMissionSearch(prev => ({ ...prev, [m.id]: val }));
+                                          const query = val.trim().toLowerCase();
+                                          if (query) {
+                                            const first = missions.find(ms =>
+                                              ms.code.toLowerCase().includes(query) ||
+                                              ms.title.toLowerCase().includes(query) ||
+                                              (ms.insurance_client || '').toLowerCase().includes(query)
+                                            );
+                                            if (first) updateCardMission(m.id, first.id);
+                                          }
+                                        }}
+                                        placeholder="Filtrer dossier (ex: 728, Alstom)..."
+                                        className="w-full text-xs pl-6 pr-2 py-1 bg-white border border-slate-200 rounded-md focus:border-[#0f3854]"
+                                      />
+                                    </div>
+
+                                    <select
+                                      value={card.matched_mission_id || ''}
+                                      onChange={(e) => updateCardMission(m.id, e.target.value)}
+                                      className="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-lg font-medium text-slate-800 focus:ring-1 focus:ring-[#0f3854]"
+                                    >
+                                      <option value="" disabled>Sélectionner un dossier...</option>
+                                      {filteredMissionsForCard.map((ms) => (
+                                        <option key={ms.id} value={ms.id}>
+                                          [{ms.code}] {ms.title.slice(0, 40)}... ({ms.insurance_client})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                );
+                              })()}
 
                               {/* Field Photo Specific Form Fields */}
                               {card.action_type === 'field_photo' && (
