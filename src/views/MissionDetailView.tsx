@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft, Clock, Receipt, FileText, Mail, Train, Plus, Trash2, Download,
   CheckCircle2, AlertCircle, Save, ExternalLink, Calendar, Copy, Check,
   FolderOpen, UploadCloud, Paperclip, FileSpreadsheet, Eye, ShieldCheck, Sliders, Camera,
-  ChevronDown, Edit3, Archive, RotateCcw, Users, Scale, Calculator, Send, Sparkles, Package, Building2, TrendingUp, Shield, X
+  ChevronDown, Edit3, Archive, RotateCcw, Users, Scale, Calculator, Send, Sparkles, Package, Building2, TrendingUp, Shield, X, Search
 } from 'lucide-react';
 import { api } from '../api.js';
 import {
@@ -14,6 +14,7 @@ import {
   DamageLine,
   IssuedReport,
   MissionDocument,
+  Mission,
 } from '@shared/types.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 import {
@@ -27,10 +28,12 @@ import {
 
 interface MissionDetailViewProps {
   missionId: string;
+  missions?: Mission[];
   initialMission?: any;
   initialVolet?: DossierVoletKey;
   sourceTab?: 'today' | 'missions' | 'billing';
   onBack: () => void;
+  onSwitchMission?: (newMissionCodeOrId: string, currentVolet?: DossierVoletKey) => void;
   onCacheMission?: (mission: any) => void;
   onOpenQuickAdd: (missionId: string) => void;
   onPrepareBilling: (missionId: string) => void;
@@ -52,16 +55,73 @@ const VOLETS_CONFIG: Array<{
 
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   missionId,
+  missions = [],
   initialMission,
   initialVolet,
   sourceTab = 'missions',
   onBack,
+  onSwitchMission,
   onCacheMission,
   onOpenQuickAdd,
   onPrepareBilling,
 }) => {
   const [mission, setMission] = useState<any>(initialMission || null);
   const [loading, setLoading] = useState(!initialMission || !initialMission.activities);
+
+  // Switcher de dossier (adapté pour 150 dossiers avec loupe et menu déroulant)
+  const [allMissionsList, setAllMissionsList] = useState<Mission[]>(missions);
+  const [switcherSearch, setSwitcherSearch] = useState('');
+  const [includeClosedInSwitcher, setIncludeClosedInSwitcher] = useState(false);
+
+  useEffect(() => {
+    if (missions && missions.length > 0) {
+      setAllMissionsList(missions);
+    } else {
+      api.getMissions().then((res) => {
+        if (Array.isArray(res)) setAllMissionsList(res);
+      }).catch(console.error);
+    }
+  }, [missions]);
+
+  const filteredMissionsForSwitcher = useMemo(() => {
+    const q = switcherSearch.trim().toLowerCase();
+    return (allMissionsList || []).filter((m: any) => {
+      if (!includeClosedInSwitcher && m.status === 'cloture' && m.id !== mission?.id && m.code !== mission?.code) {
+        return false;
+      }
+      if (!q) return true;
+      const adv = (m.adverse_parties || [])
+        .map((p: any) => `${p.party_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''}`)
+        .join(' ')
+        .toLowerCase();
+      const hay = `${m.code || ''} ${m.title || ''} ${m.case_reference || ''} ${m.insurance_client || ''} ${m.insured_party || ''} ${adv}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [allMissionsList, switcherSearch, includeClosedInSwitcher, mission]);
+
+  const handleSelectOtherMission = (targetIdOrCode: string) => {
+    if (!targetIdOrCode) return;
+    if (targetIdOrCode === mission?.id || targetIdOrCode === mission?.code) return;
+    if (onSwitchMission) {
+      onSwitchMission(targetIdOrCode, activeVolet);
+    } else {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'missions');
+      url.searchParams.set('mission', targetIdOrCode);
+      if (activeVolet) url.searchParams.set('volet', activeVolet);
+      window.location.href = url.toString();
+    }
+  };
+
+  const handleSwitcherKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredMissionsForSwitcher.length > 0) {
+        const first = filteredMissionsForSwitcher[0];
+        handleSelectOtherMission(first.code || first.id);
+      }
+    }
+  };
 
   const rawSubtab = new URLSearchParams(window.location.search).get('subtab');
   const rawVolet = new URLSearchParams(window.location.search).get('volet');
@@ -847,45 +907,115 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         </div>
       )}
 
-      {/* TOP NAVIGATION BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          onClick={onBack}
-          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>
-            {sourceTab === 'today'
-              ? "Aujourd'hui"
-              : sourceTab === 'billing'
-              ? 'Factures'
-              : 'Dossiers'}
-          </span>
-        </button>
+      {/* BANDEAU DE NAVIGATION & COMMUTATEUR RAPIDE DE DOSSIER (Pour 150 dossiers) */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3 sm:p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        {/* Partie Gauche : Bouton Retour + Loupe de recherche + Menu déroulant */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs transition-colors shrink-0 cursor-pointer"
+            title="Revenir au registre des dossiers"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span className="whitespace-nowrap">
+              {sourceTab === 'today'
+                ? "Aujourd'hui"
+                : sourceTab === 'billing'
+                ? 'Factures'
+                : 'Dossiers'}
+            </span>
+          </button>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-100/80 text-slate-600 text-[11px]">
-            <FolderOpen className="w-3.5 h-3.5 text-[#0f3854]" />
-            <span>Finder Mac : <strong className="font-mono text-slate-800">{mission.code}/{currentVoletMeta.macFolder}</strong></span>
+          <div className="h-5 w-px bg-slate-200 hidden sm:block shrink-0" />
+
+          {/* Module de bascule de dossier : Loupe + Menu Déroulant */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 min-w-0">
+            {/* Barre de recherche avec loupe */}
+            <div className="relative shrink-0 w-full sm:w-60 lg:w-72">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={switcherSearch}
+                onChange={(e) => setSwitcherSearch(e.target.value)}
+                onKeyDown={handleSwitcherKeyDown}
+                placeholder="Changer de dossier (ex: 728, Alstom)..."
+                className="w-full text-xs rounded-xl border-slate-200 pl-8 pr-7 py-2 bg-slate-50/80 border focus:bg-white focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] shadow-2xs transition-all placeholder:text-slate-400"
+              />
+              {switcherSearch && (
+                <button
+                  type="button"
+                  onClick={() => setSwitcherSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold p-0.5 cursor-pointer"
+                  title="Effacer la recherche"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Menu déroulant de sélection immédiate */}
+            <div className="relative flex-1 min-w-0">
+              <select
+                value={mission?.code || mission?.id || missionId}
+                onChange={(e) => handleSelectOtherMission(e.target.value)}
+                className="w-full text-xs rounded-xl border-slate-200 shadow-2xs focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] py-2 pl-3 pr-8 bg-white border font-bold text-slate-900 truncate cursor-pointer hover:bg-slate-50/80 transition-colors"
+                title="Sélectionner directement un autre dossier"
+              >
+                {filteredMissionsForSwitcher.length === 0 ? (
+                  <option value="" disabled>Aucun dossier ne correspond à « {switcherSearch} »</option>
+                ) : (
+                  filteredMissionsForSwitcher.map((m: any) => (
+                    <option key={m.id} value={m.code || m.id}>
+                      {m.code} — {m.title.length > 44 ? `${m.title.slice(0, 44)}…` : m.title} ({m.insurance_client}){m.status === 'cloture' ? ' [CLOS]' : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+
+            {/* Filtre pour inclure les dossiers clos si souhaité */}
+            <label
+              className="inline-flex items-center space-x-1.5 text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer select-none shrink-0 px-1 py-1"
+              title="Cocher pour afficher également les dossiers d'expertise clos / archivés"
+            >
+              <input
+                type="checkbox"
+                checked={includeClosedInSwitcher}
+                onChange={(e) => setIncludeClosedInSwitcher(e.target.checked)}
+                className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
+              />
+              <span className="hidden xl:inline">Inclure clos</span>
+            </label>
+          </div>
+        </div>
+
+        {/* Partie Droite : Finder Mac + Bouton Archiver / Réouvrir */}
+        <div className="flex items-center space-x-2 shrink-0 self-end lg:self-auto text-xs pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+          <div className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100/90 text-slate-600 text-[11px] border border-slate-200/60 shadow-2xs">
+            <FolderOpen className="w-3.5 h-3.5 text-[#0f3854] shrink-0" />
+            <span className="hidden sm:inline">Finder Mac :</span>
+            <strong className="font-mono text-slate-800">{mission.code}/{currentVoletMeta.macFolder}</strong>
           </div>
 
           <button
             type="button"
             onClick={handleToggleMissionStatus}
-            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+            className={`inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors shadow-2xs cursor-pointer ${
               mission.status === 'cloture'
-                ? 'bg-amber-50 text-amber-800 border-amber-300'
+                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
             }`}
+            title={mission.status === 'cloture' ? 'Réouvrir ce dossier en cours d\'instruction' : 'Archiver ce dossier'}
           >
             {mission.status === 'cloture' ? (
               <>
-                <RotateCcw className="w-3 h-3" />
+                <RotateCcw className="w-3 h-3 text-amber-700" />
                 <span>Réouvrir</span>
               </>
             ) : (
               <>
-                <Archive className="w-3 h-3" />
+                <Archive className="w-3 h-3 text-slate-500" />
                 <span>Archiver</span>
               </>
             )}

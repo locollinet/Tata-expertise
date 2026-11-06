@@ -214,6 +214,17 @@ export function App() {
             <MissionDetailView
               key={selectedMissionId}
               missionId={selectedMissionId}
+              missions={missions}
+              onSwitchMission={(newIdOrCode, volet) => {
+                const target = missions.find(
+                  m => m.id === newIdOrCode || m.code.toLowerCase() === newIdOrCode.toLowerCase()
+                );
+                const finalId = target ? target.id : newIdOrCode;
+                const finalCode = target ? target.code : newIdOrCode;
+                if (volet) setSelectedMissionVolet(volet);
+                setSelectedMissionId(finalId);
+                updateURL('missions', finalCode, undefined, volet || selectedMissionVolet);
+              }}
               sourceTab={sourceTab}
               initialVolet={selectedMissionVolet}
               initialMission={
