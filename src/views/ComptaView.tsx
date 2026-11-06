@@ -17,7 +17,6 @@ import {
   CheckCircle2,
   UploadCloud,
   FileText,
-  Sparkles,
   RefreshCw,
   Search,
   ExternalLink,
@@ -141,26 +140,6 @@ export const ComptaView: React.FC = () => {
     }
   };
 
-  const handleSimulateStatement = async () => {
-    const fakeContent = `RELEVE DE COMPTE BANCAIRE PROFESSIONNEL - ${selectedMonth}
-SOCIETE GENERALE - Agence Professionnels Asnieres
-Titulaire : EI VALENTINE PECHEUX - Cabinet VP EXPERTISE
-Compte N° FR76 3000 3012 3456 7890 1234 567
-
-Date | Libelle des Operations | Debit | Credit
-${selectedMonth}-05 | PRLV SEPA SANEF PEAGE A1 TELEPEAGE | 42.80 |
-${selectedMonth}-08 | CB SNCF INTERCITES VOYAGE PARIS AMIENS | 58.40 |
-${selectedMonth}-12 | CB RESTAURANT LE RELAIS DU CHEMINOT | 34.50 |
-${selectedMonth}-14 | PRLV URSSAF ILE DE FRANCE COTISATIONS | 1140.00 |
-${selectedMonth}-18 | VIR SEPA AXA ASSURANCES INDEMNITE REF 2026-097 | | 2825.16
-${selectedMonth}-20 | CB STATIONNEMENT INDIGO GARE AMIENS | 18.00 |
-${selectedMonth}-25 | PRLV ORANGE TELECOM PRO INTERNET FIBRE | 49.99 |
-`;
-    const blob = new Blob([fakeContent], { type: 'text/csv' });
-    const file = new File([blob], `Releve_Bancaire_${selectedMonth}.csv`, { type: 'text/csv' });
-    setStatementFile(file);
-    await handleReconcileStatement(file);
-  };
 
   const handleAddFromBank = async (item: BankStatementItem) => {
     setAddingEntryId(item.id);
@@ -1138,17 +1117,7 @@ ${selectedMonth}-25 | PRLV ORANGE TELECOM PRO INTERNET FIBRE | 49.99 |
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSimulateStatement}
-                      disabled={reconciling}
-                      className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors flex items-center space-x-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Simuler relevé {monthLabels[selectedMonth] || selectedMonth}</span>
-                    </button>
-                  </div>
+
                 </div>
 
                 {/* Zone de Drag & Drop Relevé */}

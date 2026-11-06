@@ -461,7 +461,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
           <div className="flex items-center space-x-2.5">
             <span className="w-2 h-2 rounded-full bg-[#0f3854]"></span>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Nouvelle note d'honoraires</h2>
-            <span className="text-[11px] text-slate-400 font-normal">| Remise à zéro auto du pointage</span>
+            <span className="text-[11px] text-slate-400 font-normal">| Facturation au temps réel (lignes archivées et soldées)</span>
           </div>
 
           {/* Mission selection with Search Loupe */}
