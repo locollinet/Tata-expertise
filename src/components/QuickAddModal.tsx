@@ -10,6 +10,7 @@ interface QuickAddModalProps {
   missions: Mission[];
   onSuccess: () => void;
   defaultMissionId?: string;
+  defaultTab?: 'activity' | 'expense' | 'photo';
 }
 
 export const QuickAddModal: React.FC<QuickAddModalProps> = ({
@@ -18,8 +19,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   missions,
   onSuccess,
   defaultMissionId,
+  defaultTab,
 }) => {
-  const [tab, setTab] = useState<'activity' | 'expense' | 'photo'>('activity');
+  const [tab, setTab] = useState<'activity' | 'expense' | 'photo'>(defaultTab || 'activity');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null);
@@ -68,12 +70,15 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const [photoForReport, setPhotoForReport] = useState(true);
 
   useEffect(() => {
+    if (isOpen && defaultTab) {
+      setTab(defaultTab);
+    }
     if (defaultMissionId) {
       setMissionId(defaultMissionId);
     } else if (filteredMissions.length > 0 && !filteredMissions.some(m => m.id === missionId)) {
       setMissionId(filteredMissions[0].id);
     }
-  }, [defaultMissionId, filteredMissions]);
+  }, [isOpen, defaultTab, defaultMissionId, filteredMissions]);
 
   if (!isOpen) return null;
 
@@ -317,6 +322,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         }
       }
 
+      window.dispatchEvent(new CustomEvent('vp-mission-data-updated'));
       onSuccess();
       if (!keepOpen) {
         onClose();

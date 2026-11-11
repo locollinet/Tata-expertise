@@ -31,6 +31,7 @@ export const ComptaView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('2026-10');
   const [activeSubTab, setActiveSubTab] = useState<'livre' | 'recurrents' | 'tva' | 'rapprochement'>('livre');
   const [receiptFilter, setReceiptFilter] = useState<'all' | 'missing'>('all');
+  const [scopeFilter, setScopeFilter] = useState<'all' | 'entreprise' | 'dossiers' | 'recettes'>('all');
   const [data, setData] = useState<{
     month: string;
     entries: AccountingEntry[];
@@ -47,6 +48,12 @@ export const ComptaView: React.FC = () => {
       depenses_ht: number;
       depenses_tva: number;
       depenses_ttc: number;
+      frais_entreprise_ht?: number;
+      frais_entreprise_tva?: number;
+      frais_entreprise_ttc?: number;
+      frais_dossiers_ht?: number;
+      frais_dossiers_tva?: number;
+      frais_dossiers_ttc?: number;
       recettes_ht: number;
       recettes_tva: number;
       recettes_ttc: number;
@@ -547,61 +554,126 @@ export const ComptaView: React.FC = () => {
         </div>
       ) : (
         <>
-          {/* Summary KPIs */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Recettes */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-semibold uppercase tracking-wider text-[#0f3854]">Recettes du mois</span>
-                <ArrowUpRight className="w-4 h-4 text-[#0f3854]" />
-              </div>
-              <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-slate-900">
-                  {data.summary.recettes_ttc.toFixed(2).replace('.', ',')} €
-                </span>
-                <span className="text-xs font-semibold text-slate-500">TTC</span>
-              </div>
-              <div className="mt-2 text-xs text-slate-600 flex justify-between border-t border-slate-100 pt-2">
-                <span>HT : {data.summary.recettes_ht.toFixed(2).replace('.', ',')} €</span>
-                <span className="font-semibold text-[#0f3854]">TVA collectée (20%) : {data.summary.recettes_tva.toFixed(2).replace('.', ',')} €</span>
-              </div>
-            </div>
+          {/* Summary KPIs : Distinction claire Recettes Dossiers / Frais Entreprise (Cabinet) / Frais liés aux Dossiers (Débours) / TVA */}
+          {(() => {
+            const entEntries = data.entries.filter((e) => e.type === 'depense' && !e.mission_code);
+            const dosEntries = data.entries.filter((e) => e.type === 'depense' && Boolean(e.mission_code));
+            const entHT = data.summary.frais_entreprise_ht ?? entEntries.reduce((s, e) => s + e.amount_ht, 0);
+            const entTVA = data.summary.frais_entreprise_tva ?? entEntries.reduce((s, e) => s + e.vat_amount, 0);
+            const entTTC = data.summary.frais_entreprise_ttc ?? entEntries.reduce((s, e) => s + e.amount_ttc, 0);
+            const dosHT = data.summary.frais_dossiers_ht ?? dosEntries.reduce((s, e) => s + e.amount_ht, 0);
+            const dosTVA = data.summary.frais_dossiers_tva ?? dosEntries.reduce((s, e) => s + e.vat_amount, 0);
+            const dosTTC = data.summary.frais_dossiers_ttc ?? dosEntries.reduce((s, e) => s + e.amount_ttc, 0);
 
-            {/* Dépenses */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-semibold uppercase tracking-wider text-rose-600">Dépenses & Charges ({monthLabels[selectedMonth]})</span>
-                <ArrowDownRight className="w-4 h-4 text-rose-600" />
-              </div>
-              <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-slate-900">
-                  {data.summary.depenses_ttc.toFixed(2).replace('.', ',')} €
-                </span>
-                <span className="text-xs font-semibold text-slate-500">TTC</span>
-              </div>
-              <div className="mt-2 text-xs text-slate-600 flex justify-between border-t border-slate-100 pt-2">
-                <span>HT : {data.summary.depenses_ht.toFixed(2).replace('.', ',')} €</span>
-                <span className="font-semibold text-rose-700">TVA déductible : {data.summary.depenses_tva.toFixed(2).replace('.', ',')} €</span>
-              </div>
-            </div>
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. Recettes Dossiers */}
+                <div
+                  onClick={() => setScopeFilter(scopeFilter === 'recettes' ? 'all' : 'recettes')}
+                  className={`bg-white p-4 rounded-xl border shadow-2xs cursor-pointer transition-all ${
+                    scopeFilter === 'recettes' ? 'border-[#0f3854] ring-2 ring-[#0f3854]/20' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase tracking-wider text-[#0f3854]">
+                      💶 Recettes (Honoraires dossiers)
+                    </span>
+                    <ArrowUpRight className="w-4 h-4 text-[#0f3854]" />
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-slate-900">
+                      {data.summary.recettes_ttc.toFixed(2).replace('.', ',')} €
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">TTC</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-600 flex justify-between border-t border-slate-100 pt-2">
+                    <span>HT : {data.summary.recettes_ht.toFixed(2).replace('.', ',')} €</span>
+                    <span className="font-semibold text-[#0f3854]">
+                      TVA : {data.summary.recettes_tva.toFixed(2).replace('.', ',')} €
+                    </span>
+                  </div>
+                </div>
 
-            {/* TVA nette due */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-semibold uppercase tracking-wider text-amber-600">TVA Nette à déclarer (DGFIP)</span>
-                <FileSpreadsheet className="w-4 h-4 text-amber-600" />
+                {/* 2. Frais de l'entreprise (Charges fixes Cabinet hors dossiers) */}
+                <div
+                  onClick={() => setScopeFilter(scopeFilter === 'entreprise' ? 'all' : 'entreprise')}
+                  className={`bg-white p-4 rounded-xl border shadow-2xs cursor-pointer transition-all ${
+                    scopeFilter === 'entreprise' ? 'border-rose-600 ring-2 ring-rose-500/20' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase tracking-wider text-rose-700">
+                      🏢 Frais de l'entreprise (Cabinet)
+                    </span>
+                    <span className="text-[10px] font-bold bg-rose-50 text-rose-800 px-1.5 py-0.5 rounded border border-rose-200">
+                      {entEntries.length} lignes
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-slate-900">
+                      {entTTC.toFixed(2).replace('.', ',')} €
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">TTC</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-600 flex justify-between border-t border-slate-100 pt-2">
+                    <span>HT : {entHT.toFixed(2).replace('.', ',')} €</span>
+                    <span className="font-semibold text-rose-700">
+                      TVA déd. : {entTVA.toFixed(2).replace('.', ',')} €
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. Frais liés aux dossiers d'expertise (Débours refacturables) */}
+                <div
+                  onClick={() => setScopeFilter(scopeFilter === 'dossiers' ? 'all' : 'dossiers')}
+                  className={`bg-white p-4 rounded-xl border shadow-2xs cursor-pointer transition-all ${
+                    scopeFilter === 'dossiers' ? 'border-emerald-600 ring-2 ring-emerald-500/20' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase tracking-wider text-emerald-800">
+                      📁 Frais liés aux dossiers (Débours)
+                    </span>
+                    <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                      {dosEntries.length} lignes
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-slate-900">
+                      {dosTTC.toFixed(2).replace('.', ',')} €
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">TTC</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-600 flex justify-between border-t border-slate-100 pt-2">
+                    <span>HT : {dosHT.toFixed(2).replace('.', ',')} €</span>
+                    <span className="font-semibold text-emerald-700">
+                      TVA déd. : {dosTVA.toFixed(2).replace('.', ',')} €
+                    </span>
+                  </div>
+                </div>
+
+                {/* 4. TVA nette due */}
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-bold uppercase tracking-wider text-amber-700">
+                      TVA Nette à déclarer (DGFIP)
+                    </span>
+                    <FileSpreadsheet className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className="text-xl font-extrabold text-[#0f3854]">
+                      {data.summary.tva_nette_a_payer.toFixed(2).replace('.', ',')} €
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">À reverser</span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500 border-t border-slate-100 pt-2">
+                    {data.summary.recettes_tva.toFixed(2).replace('.', ',')} € coll. −{' '}
+                    {data.summary.depenses_tva.toFixed(2).replace('.', ',')} € déd.
+                  </p>
+                </div>
               </div>
-              <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-[#0f3854]">
-                  {data.summary.tva_nette_a_payer.toFixed(2).replace('.', ',')} €
-                </span>
-                <span className="text-xs font-semibold text-slate-500">À reverser</span>
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500 border-t border-slate-100 pt-2">
-                {data.summary.recettes_tva.toFixed(2).replace('.', ',')} € collectés − {data.summary.depenses_tva.toFixed(2).replace('.', ',')} € déductibles
-              </p>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Sub-navigation Tabs : Livre Mensuel | Abonnements & Frais Récurrents | Détail de la TVA */}
           <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-fit">
@@ -677,68 +749,108 @@ export const ComptaView: React.FC = () => {
                 </button>
               </div>
 
-              {/* Barre de filtrage & Justificatifs manquants */}
+              {/* Barre de filtrage : Distinction Frais Entreprise vs Frais Dossiers vs Recettes & Justificatifs manquants */}
               {(() => {
                 const missingCount = data.entries.filter(e => e.type === 'depense' && !e.receipt_filename).length;
+                const entrepriseCount = data.entries.filter(e => e.type === 'depense' && !e.mission_code).length;
+                const dossiersCount = data.entries.filter(e => e.type === 'depense' && Boolean(e.mission_code)).length;
+                const recettesCount = data.entries.filter(e => e.type === 'recette').length;
+
                 const displayedEntries = data.entries.filter(e => {
-                  if (receiptFilter === 'missing') {
-                    return e.type === 'depense' && !e.receipt_filename;
+                  if (receiptFilter === 'missing' && !(e.type === 'depense' && !e.receipt_filename)) {
+                    return false;
                   }
+                  if (scopeFilter === 'entreprise') return e.type === 'depense' && !e.mission_code;
+                  if (scopeFilter === 'dossiers') return e.type === 'depense' && Boolean(e.mission_code);
+                  if (scopeFilter === 'recettes') return e.type === 'recette';
                   return true;
                 });
 
                 return (
                   <>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-                      <div>
-                        <div className="flex items-center space-x-2">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-sm font-bold text-slate-900">
                             Livre des recettes et dépenses — {monthLabels[selectedMonth] || selectedMonth}
                           </h2>
-                          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                          {/* Filtre par nature : Tout | Frais Entreprise | Frais liés aux Dossiers | Recettes */}
+                          <div className="inline-flex flex-wrap rounded-lg bg-slate-100 p-0.5 border border-slate-200 gap-0.5">
                             <button
                               type="button"
-                              onClick={() => setReceiptFilter('all')}
-                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
-                                receiptFilter === 'all'
+                              onClick={() => setScopeFilter('all')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                scopeFilter === 'all'
                                   ? 'bg-white text-[#0f3854] shadow-xs'
                                   : 'text-slate-600 hover:text-slate-900'
                               }`}
                             >
-                              Toutes ({data.entries.length})
+                              Tout ({data.entries.length})
                             </button>
                             <button
                               type="button"
-                              onClick={() => setReceiptFilter('missing')}
-                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all inline-flex items-center space-x-1 ${
-                                receiptFilter === 'missing'
-                                  ? 'bg-amber-500 text-white shadow-xs'
-                                  : missingCount > 0
-                                  ? 'text-amber-800 bg-amber-50 hover:bg-amber-100'
-                                  : 'text-slate-400 hover:text-slate-600'
+                              onClick={() => setScopeFilter('entreprise')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                scopeFilter === 'entreprise'
+                                  ? 'bg-rose-700 text-white shadow-xs'
+                                  : 'text-rose-800 hover:bg-rose-50'
                               }`}
-                              title="Afficher uniquement les dépenses sans reçu ou ticket pour votre comptable"
                             >
-                              <span>⚠️ Justificatifs manquants</span>
-                              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                                receiptFilter === 'missing' ? 'bg-white/30 text-white' : 'bg-amber-200 text-amber-900'
-                              }`}>
-                                {missingCount}
-                              </span>
+                              🏢 Frais de l'entreprise ({entrepriseCount})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScopeFilter('dossiers')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                scopeFilter === 'dossiers'
+                                  ? 'bg-emerald-700 text-white shadow-xs'
+                                  : 'text-emerald-800 hover:bg-emerald-50'
+                              }`}
+                            >
+                              📁 Frais liés aux dossiers ({dossiersCount})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScopeFilter('recettes')}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                scopeFilter === 'recettes'
+                                  ? 'bg-[#0f3854] text-white shadow-xs'
+                                  : 'text-[#0f3854] hover:bg-sky-50'
+                              }`}
+                            >
+                              💶 Recettes dossiers ({recettesCount})
                             </button>
                           </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setReceiptFilter(receiptFilter === 'missing' ? 'all' : 'missing')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all inline-flex items-center space-x-1 border cursor-pointer ${
+                              receiptFilter === 'missing'
+                                ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
+                                : missingCount > 0
+                                ? 'text-amber-800 bg-amber-50 border-amber-200 hover:bg-amber-100'
+                                : 'text-slate-400 border-slate-200 hover:text-slate-600'
+                            }`}
+                            title="Afficher uniquement les dépenses sans reçu ou ticket pour votre comptable"
+                          >
+                            <span>⚠️ Sans justif</span>
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                              receiptFilter === 'missing' ? 'bg-white/30 text-white' : 'bg-amber-200 text-amber-900'
+                            }`}>
+                              {missingCount}
+                            </span>
+                          </button>
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          {receiptFilter === 'missing'
-                            ? `Affichage exclusif des ${missingCount} dépense(s) sans reçu : joignez votre ticket en 1 clic ci-dessous.`
-                            : "Cliquez sur « Joindre justif » ou sur l'icône crayon pour ajuster un montant."}
+                        <p className="text-[11px] text-slate-500">
+                          Distinction automatique entre <strong>🏢 Frais généraux de l'entreprise (Cabinet)</strong> et <strong>📁 Frais rattachés à un dossier d'expertise (Débours refacturés)</strong>.
                         </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => setActiveSubTab('recurrents')}
-                        className="text-xs font-semibold text-[#0f3854] hover:underline inline-flex items-center space-x-1 self-start sm:self-auto"
+                        className="text-xs font-semibold text-[#0f3854] hover:underline inline-flex items-center space-x-1 self-start lg:self-auto"
                       >
                         <Repeat className="w-3.5 h-3.5" />
                         <span>Gérer mes abonnements mensuels / annuels →</span>
@@ -750,7 +862,7 @@ export const ComptaView: React.FC = () => {
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
                             <th className="py-2.5 px-2.5 font-semibold">Date</th>
-                            <th className="py-2.5 px-2.5 font-semibold">Fréquence / Dossier</th>
+                            <th className="py-2.5 px-2.5 font-semibold">Affectation (Entreprise vs Dossier)</th>
                             <th className="py-2.5 px-2.5 font-semibold">Objet de l'opération</th>
                             <th className="py-2.5 px-2.5 font-semibold">Tiers (Client / Fournisseur)</th>
                             <th className="py-2.5 px-2.5 font-semibold text-right text-rose-700 bg-rose-50/30">Dépense HT</th>
@@ -768,8 +880,8 @@ export const ComptaView: React.FC = () => {
                             <tr>
                               <td colSpan={12} className="py-8 text-center text-xs text-slate-400">
                                 {receiptFilter === 'missing'
-                                  ? '🎉 Aucun justificatif manquant pour ce mois-ci ! Tout est carré.'
-                                  : 'Aucune écriture comptable pour ce mois.'}
+                                  ? '🎉 Aucun justificatif manquant pour cette sélection ! Tout est carré.'
+                                  : 'Aucune écriture comptable pour ce filtre.'}
                               </td>
                             </tr>
                           ) : (
@@ -785,15 +897,23 @@ export const ComptaView: React.FC = () => {
                             {entry.date.split('-').reverse().join('/')}
                           </td>
                           <td className="py-2 px-2.5 whitespace-nowrap">
-                            {entry.mission_code ? (
-                              <span className="font-bold text-[#0f3854]">{entry.mission_code}</span>
+                            {entry.type === 'recette' ? (
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-[#0f3854] border border-sky-200">
+                                <span>💶 Recette • {entry.mission_code || 'Dossier'}</span>
+                              </span>
+                            ) : entry.mission_code ? (
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <span>📁 Dossier {entry.mission_code}</span>
+                              </span>
                             ) : isRec ? (
-                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
                                 <Repeat className="w-2.5 h-2.5" />
-                                <span>{frequencyLabels[entry.frequency || 'mensuel'] || 'Mensuel'}</span>
+                                <span>🏢 Entreprise ({frequencyLabels[entry.frequency || 'mensuel'] || 'Mensuel'})</span>
                               </span>
                             ) : (
-                              <span className="text-slate-500 text-[11px]">Frais cabinet</span>
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                <span>🏢 Frais Entreprise</span>
+                              </span>
                             )}
                           </td>
                           <td className="py-2 px-2.5 font-medium text-slate-900">

@@ -15,6 +15,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [guaranteeFilter, setGuaranteeFilter] = useState<string>('all');
   const [includeClosed, setIncludeClosed] = useState<boolean>(false);
 
   const q = searchTerm.trim().toLowerCase();
@@ -27,14 +28,16 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
     }
     const matchesStatus = statusFilter === 'all' || m.status === statusFilter;
     if (!matchesStatus) return false;
+    const matchesGuarantee = guaranteeFilter === 'all' || (m.guarantee_type || 'RC') === guaranteeFilter;
+    if (!matchesGuarantee) return false;
     if (!q) return true;
 
     const advStr = (m.adverse_parties || [])
-      .map((p: any) => `${p.party_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''} ${p.lawyer_name || ''}`)
+      .map((p: any) => `${p.party_name || ''} ${p.insurer_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''} ${p.lawyer_name || ''}`)
       .join(' ')
       .toLowerCase();
 
-    const hay = `${m.code} ${m.title} ${m.case_reference} ${m.insurance_client} ${m.client_contact || ''} ${m.insured_party || ''} ${m.insured_reference || ''} ${m.broker_name || ''} ${m.broker_reference || ''} ${m.third_parties || ''} ${advStr}`.toLowerCase();
+    const hay = `${m.code} ${m.title} ${m.case_reference} ${m.guarantee_type || ''} ${m.insurance_client} ${m.client_contact || ''} ${m.insured_party || ''} ${m.insured_contact || ''} ${m.insured_reference || ''} ${m.broker_name || ''} ${m.broker_reference || ''} ${m.third_parties || ''} ${advStr}`.toLowerCase();
 
     if (hay.includes(q)) return true;
     if (searchedPieceNum !== null) return true; // Let user open dossier or see matched pieces
@@ -112,26 +115,52 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
           </label>
         </div>
 
-        <div className="flex items-center space-x-1.5 overflow-x-auto">
-          {[
-            { id: 'all', label: 'Tous les dossiers actifs' },
-            { id: 'en_cours', label: 'En cours' },
-            { id: 'attente_pieces', label: 'Attente pièces' },
-            { id: 'rapport_remis', label: 'Rapport remis' },
-            { id: 'cloture', label: 'Clôturés' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setStatusFilter(tab.id)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
-                statusFilter === tab.id
-                  ? 'bg-[#0f3854] text-white'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-1.5 overflow-x-auto">
+            {[
+              { id: 'all', label: 'Tous les dossiers actifs' },
+              { id: 'en_cours', label: 'En cours' },
+              { id: 'attente_pieces', label: 'Attente pièces' },
+              { id: 'rapport_remis', label: 'Rapport remis' },
+              { id: 'cloture', label: 'Clôturés' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setStatusFilter(tab.id)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+                  statusFilter === tab.id
+                    ? 'bg-[#0f3854] text-white'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center space-x-1 overflow-x-auto">
+            <span className="text-[11px] font-semibold text-slate-400 mr-1">Garantie :</span>
+            {[
+              { id: 'all', label: 'Toutes' },
+              { id: 'RC', label: 'RC' },
+              { id: 'Dommages', label: 'Dommages' },
+              { id: 'TRME', label: 'TRME' },
+              { id: 'EAD', label: 'EAD' },
+              { id: 'Autre', label: 'Autre' },
+            ].map((g) => (
+              <button
+                key={g.id}
+                onClick={() => setGuaranteeFilter(g.id)}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-md whitespace-nowrap transition-colors cursor-pointer ${
+                  guaranteeFilter === g.id
+                    ? 'bg-cyan-700 text-white'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -156,19 +185,22 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                 className="bg-white p-5 rounded-xl border border-slate-200 hover:border-[#0f3854]/40 hover:shadow-md cursor-pointer transition-all flex flex-col justify-between group"
               >
                 <div>
-                  {/* Top Bar : N/Réf, V/Réf, Enjeu, Statut */}
+                  {/* Top Bar : N/Réf, Garantie, V/Réf, Enjeu, Statut */}
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-sm font-bold text-[#0f3854] bg-[#0f3854]/10 px-2.5 py-0.5 rounded">
                         {mission.code}
                       </span>
+                      <span className="text-xs font-bold text-cyan-900 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded">
+                        {mission.guarantee_type || 'RC'}
+                      </span>
                       <span className="text-xs text-slate-500 font-mono bg-slate-100 px-2 py-0.5 rounded">
-                        Réf. client : {mission.case_reference}
+                        Réf. Cie : {mission.case_reference}
                       </span>
                       {stakeFormatted && (
                         <span className="inline-flex items-center space-x-1 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
                           <TrendingUp className="w-3 h-3 text-amber-600" />
-                          <span>Enjeu : {stakeFormatted}</span>
+                          <span>Quantum : {stakeFormatted}</span>
                         </span>
                       )}
                     </div>
@@ -201,14 +233,15 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                     <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-start space-x-1.5 text-[11px] text-slate-600">
                       <Users className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
                       <div className="truncate">
-                        <span className="font-semibold text-slate-500">En face : </span>
+                        <span className="font-semibold text-slate-500">Tiers : </span>
                         {advParties.map((p, idx) => (
                           <span key={p.id || idx}>
                             {idx > 0 && ' · '}
                             <strong className="text-slate-800">{p.party_name}</strong>
+                            {p.insurer_name && <span className="text-slate-500"> [{p.insurer_name}]</span>}
                             {(p.expert_firm || p.expert_name) && (
                               <span className="text-[#0f3854]">
-                                {' '}({[p.expert_firm, p.expert_name].filter(Boolean).join(' — ')})
+                                {' '}({[p.expert_name, p.expert_firm].filter(Boolean).join(' — ')})
                               </span>
                             )}
                           </span>

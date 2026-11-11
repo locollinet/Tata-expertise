@@ -52,8 +52,24 @@ export const BillingView: React.FC<BillingViewProps> = ({
   ]);
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
-  const [registerFilter, setRegisterFilter] = useState<string | 'all'>(initialMissionCode || 'all');
+  const [registerFilter, setRegisterFilter] = useState<string | 'all'>('all');
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
+
+  // Calcul temps réel du prochain numéro séquentiel global de facture (tous dossiers confondus)
+  const nextGlobalInvoiceNumber = useMemo(() => {
+    const year = new Date().getFullYear();
+    const prefix = `${year}-`;
+    let maxSeq = 70;
+    for (const inv of invoices) {
+      const numStr = String(inv.invoice_number || '').trim();
+      if (numStr.startsWith(prefix)) {
+        const tail = numStr.slice(prefix.length).replace(/[^0-9]/g, '');
+        const parsed = parseInt(tail, 10);
+        if (!isNaN(parsed) && parsed > maxSeq) maxSeq = parsed;
+      }
+    }
+    return `${year}-${String(maxSeq + 1).padStart(3, '0')}`;
+  }, [invoices]);
 
   // Inline activity hours editing state
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
@@ -339,10 +355,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-      // Also sync to local Mac / iCloud Drive folder if connected (both Dossier Page de garde & Compta)
+      // Also sync to local Mac / iCloud Drive folder if connected (Dossier 07_Factures_Honoraires & Compta)
       await syncFileToLocalMacFolder({
         missionCode: inv.mission_code,
-        subFolder: '01_Page_de_garde',
+        subFolder: '07_Factures_Honoraires',
         fileName,
         data: blob,
       });
@@ -758,9 +774,22 @@ export const BillingView: React.FC<BillingViewProps> = ({
           {/* Billing Preview & Confirmation Box */}
           <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4 flex flex-col justify-between">
             <div className="space-y-3">
-              <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
-                Objet & Totaux de la Facture
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
+                  Objet & Totaux de la Facture
+                </span>
+                <span
+                  className="px-2.5 py-0.5 rounded-lg bg-[#0f3854] text-white font-mono text-[11px] font-extrabold"
+                  title="Numérotation séquentielle globale du cabinet (tous dossiers confondus)"
+                >
+                  Prochain N° : {nextGlobalInvoiceNumber}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-lg text-[11px] text-amber-950 flex items-center justify-between">
+                <span>Numérotation chronologique globale (tous dossiers) :</span>
+                <strong className="font-mono text-xs text-[#0f3854]">N° {nextGlobalInvoiceNumber}</strong>
+              </div>
 
               {/* Historique des factures déjà émises sur ce dossier */}
               {missionDetail?.invoices && missionDetail.invoices.length > 0 && (
@@ -981,20 +1010,39 @@ export const BillingView: React.FC<BillingViewProps> = ({
               )}
             </div>
 
-            {/* Menu déroulant de filtre par dossier */}
-            <select
-              value={registerFilter}
-              onChange={(e) => setRegisterFilter(e.target.value)}
-              className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] py-1.5 px-3 bg-white border font-semibold text-slate-800 cursor-pointer"
-              title="Filtrer les factures par dossier"
-            >
-              <option value="all">Toutes les factures ({invoices.length})</option>
-              {missionsWithInvoices.map(([code, count]) => (
-                <option key={code} value={code}>
-                  Dossier {code} ({count} facture{count > 1 ? 's' : ''})
-                </option>
-              ))}
-            </select>
+            {/* Boutons rapides : Toutes les factures vs Dossier actif + Menu déroulant */}
+            <div className="flex items-center space-x-1.5">
+              {currentMissionCode && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRegisterFilter(registerFilter === currentMissionCode ? 'all' : currentMissionCode)
+                  }
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                    registerFilter === currentMissionCode
+                      ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                      : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  {registerFilter === currentMissionCode
+                    ? `Filtre actif : ${currentMissionCode} (${missionInvoicesCount}) — Voir tout`
+                    : `Filtrer sur ${currentMissionCode} (${missionInvoicesCount})`}
+                </button>
+              )}
+              <select
+                value={registerFilter}
+                onChange={(e) => setRegisterFilter(e.target.value)}
+                className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] py-1.5 px-3 bg-white border font-semibold text-slate-800 cursor-pointer"
+                title="Filtrer les factures par dossier"
+              >
+                <option value="all">Toutes les factures du cabinet ({invoices.length})</option>
+                {missionsWithInvoices.map(([code, count]) => (
+                  <option key={code} value={code}>
+                    Dossier {code} ({count} facture{count > 1 ? 's' : ''})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -1031,8 +1079,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500 bg-slate-50/50">
-                  <th className="py-2.5 px-3 font-semibold">Numéro</th>
-                  <th className="py-2.5 px-3 font-semibold">Date</th>
+                  <th className="py-2.5 px-3 font-semibold">N° Global</th>
+                  <th className="py-2.5 px-3 font-semibold">Date & Heure d'émission</th>
                   <th className="py-2.5 px-3 font-semibold">Dossier</th>
                   <th className="py-2.5 px-3 font-semibold">Client Assureur</th>
                   <th className="py-2.5 px-3 font-semibold text-right">Montant HT</th>
@@ -1047,14 +1095,23 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   const isDraft = inv.status === 'brouillon';
                   const isPaid = inv.status === 'regle';
                   const isCancelled = inv.status === 'annule';
+                  const timePart =
+                    inv.created_at && inv.created_at.includes('T')
+                      ? inv.created_at.split('T')[1]?.slice(0, 5)
+                      : null;
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/50">
-                      <td className="py-2.5 px-3 font-bold text-[#0f3854]">
+                      <td className="py-2.5 px-3 font-bold text-[#0f3854] font-mono">
                         {inv.invoice_number}
                       </td>
                       <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
-                        {inv.date.split('-').reverse().join('/')}
+                        <span>{inv.date.split('-').reverse().join('/')}</span>
+                        {timePart && (
+                          <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
+                            {timePart}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 font-medium text-slate-800">
                         {onNavigateToMission ? (

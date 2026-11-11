@@ -30,6 +30,7 @@ export type MacDossierSubFolder =
   | '04_Contradictoire'
   | '05_Comptes_du_prejudice'
   | '06_Rapports_emis'
+  | '07_Factures_Honoraires'
   // Alias rétrocompatibles
   | 'Photos_Terrain'
   | 'Documents_Pieces'
@@ -53,12 +54,13 @@ export const ALL_DOSSIER_VOLET_FOLDERS: MacDossierSubFolder[] = [
   '04_Contradictoire',
   '05_Comptes_du_prejudice',
   '06_Rapports_emis',
+  '07_Factures_Honoraires',
 ];
 
 function resolveCanonicalVoletFolder(subFolder: MacDossierSubFolder): string {
   switch (subFolder) {
     case 'Factures':
-      return '01_Page_de_garde';
+      return '07_Factures_Honoraires';
     case 'Photos_Terrain':
     case 'Documents_Pieces':
       return '03_Constatations_immediates';
@@ -226,7 +228,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
       }
     }
 
-    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/01_Page_de_garde/ ET dans Compta/<AAAA-MM>/Factures_emises/
+    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/07_Factures_Honoraires/ ET dans Compta/<AAAA-MM>/Factures_emises/
     const invoicesRes = await fetch('/api/invoices');
     if (invoicesRes.ok) {
       const invoices = await invoicesRes.json();
@@ -237,10 +239,20 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
             const blob = await docxRes.blob();
             await syncFileToLocalMacFolder({
               missionCode: inv.our_ref || 'Cabinet_VP',
-              subFolder: '01_Page_de_garde',
+              subFolder: '07_Factures_Honoraires',
               fileName: `Facture_${inv.invoice_number}.docx`,
               data: blob,
             });
+            // Nettoyage automatique si une ancienne copie se trouvait dans 01_Page_de_garde
+            try {
+              const { handle: dossiersRoot } = await getDossiersRootHandle(rootHandle);
+              const safeMission = (inv.our_ref || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
+              const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: false });
+              const gardeDir = await missionDir.getDirectoryHandle('01_Page_de_garde', { create: false });
+              await gardeDir.removeEntry(`Facture_${inv.invoice_number}.docx`);
+            } catch {
+              // Ignorer si déjà absent
+            }
             const month = (inv.date || '2026-10').slice(0, 7);
             await syncComptaFileToMac({
               month,
@@ -556,4 +568,136 @@ export async function syncFileToLocalMacFolder(params: {
   }
 
   return { synced: false };
+}
+
+export interface UntrackedMacFile {
+  id: string;
+  file: File;
+  fileName: string;
+  cleanName: string;
+  relativePath: string;
+  subFolder: string;
+  inferredSection: DossierVoletKey;
+  inferredCategory: string;
+  size: number;
+  lastModified: number;
+}
+
+function normalizeFileNameForComparison(name: string): string {
+  return String(name || '')
+    .trim()
+    .replace(/^Pi[eè]ce[_\s-]*n?[°o]?[_\s-]*\d+[_\s-]*/i, '')
+    .toLowerCase();
+}
+
+function mapMacFolderToSectionAndCategory(folderName: string): { section: DossierVoletKey; category: string } {
+  const lower = folderName.toLowerCase();
+  if (lower.includes('02_contrat') || lower.includes('contrat')) {
+    return { section: 'contrats', category: 'contrat_client' };
+  }
+  if (lower.includes('04_contradictoire') || lower.includes('contradictoire') || lower.includes('dire')) {
+    return { section: 'contradictoire', category: 'procedure_dires' };
+  }
+  if (lower.includes('05_comptes') || lower.includes('prejudice') || lower.includes('préjudice')) {
+    return { section: 'prejudice', category: 'justificatif_prejudice' };
+  }
+  if (lower.includes('06_rapport') || lower.includes('rapport')) {
+    return { section: 'rapports', category: 'rapport_emis' };
+  }
+  return { section: 'constatations', category: 'note_technique' };
+}
+
+/**
+ * Scanne le dossier local Mac `<Racine>/01_Dossiers_Expertise/<Code_Dossier>/`
+ * pour détecter les fichiers déposés directement via le Finder qui ne sont pas encore dans l'application.
+ */
+export async function scanUntrackedMacFilesForMission(
+  missionCode: string,
+  existingAppFileNames: string[]
+): Promise<UntrackedMacFile[]> {
+  const status = getLocalSyncStatus();
+  if (!status.connected || status.mode !== 'native' || !isFileSystemAccessSupported()) {
+    return [];
+  }
+
+  try {
+    const rootHandle = await getSavedDirectoryHandle();
+    if (!rootHandle) return [];
+
+    const perm = await rootHandle.queryPermission({ mode: 'read' });
+    if (perm !== 'granted') return [];
+
+    const { handle: dossiersRoot } = await getDossiersRootHandle(rootHandle);
+    const safeMission = (missionCode || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!safeMission) return [];
+
+    let missionDir: any;
+    try {
+      missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: false });
+    } catch {
+      return [];
+    }
+
+    const existingNormalized = new Set(
+      existingAppFileNames.flatMap(n => [
+        String(n || '').trim().toLowerCase(),
+        normalizeFileNameForComparison(n),
+      ])
+    );
+
+    const untracked: UntrackedMacFile[] = [];
+
+    const shouldIgnoreFile = (fileName: string, folderName: string): boolean => {
+      if (!fileName || fileName.startsWith('.') || fileName.startsWith('~$')) return true;
+      const lower = fileName.toLowerCase();
+      if (lower === 'thumbs.db' || lower === 'desktop.ini') return true;
+      // Ignorer les fichiers générés automatiquement par l'app (synthèse, décompte CSV, factures honoraires)
+      if (lower.startsWith('synthese_dossier_') || lower.startsWith('fiche_de_garde_')) return true;
+      if (lower.startsWith('decompte_prejudice_') && lower.endsWith('.csv')) return true;
+      if (lower.startsWith('facture_') && lower.endsWith('.docx')) return true;
+      if (lower.startsWith('projet_rapport_') && lower.endsWith('.docx')) return true;
+      if (folderName === '07_Factures_Honoraires') return true;
+      return false;
+    };
+
+    const scanDirectoryEntries = async (dirHandle: any, folderLabel: string) => {
+      for await (const [entryName, entryHandle] of dirHandle.entries()) {
+        if (entryHandle.kind === 'file') {
+          if (shouldIgnoreFile(entryName, folderLabel)) continue;
+          const normRaw = entryName.trim().toLowerCase();
+          const normClean = normalizeFileNameForComparison(entryName);
+          if (existingNormalized.has(normRaw) || existingNormalized.has(normClean)) {
+            continue;
+          }
+          try {
+            const fileObj: File = await entryHandle.getFile();
+            const { section, category } = mapMacFolderToSectionAndCategory(folderLabel);
+            untracked.push({
+              id: `${folderLabel}/${entryName}`,
+              file: fileObj,
+              fileName: entryName,
+              cleanName: entryName.replace(/^Pi[eè]ce[_\s-]*n?[°o]?[_\s-]*\d+[_\s-]*/i, ''),
+              relativePath: folderLabel ? `${folderLabel}/${entryName}` : entryName,
+              subFolder: folderLabel || 'Racine du dossier (En vrac)',
+              inferredSection: section,
+              inferredCategory: category,
+              size: fileObj.size,
+              lastModified: fileObj.lastModified,
+            });
+          } catch {
+            // Ignore unreadable file
+          }
+        } else if (entryHandle.kind === 'directory' && !entryName.startsWith('.')) {
+          if (entryName === '07_Factures_Honoraires') continue;
+          await scanDirectoryEntries(entryHandle, folderLabel ? `${folderLabel}/${entryName}` : entryName);
+        }
+      }
+    };
+
+    await scanDirectoryEntries(missionDir, '');
+    return untracked.sort((a, b) => b.lastModified - a.lastModified);
+  } catch (err) {
+    console.warn('Scan Finder Mac ignoré :', err);
+    return [];
+  }
 }

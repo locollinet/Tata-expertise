@@ -25,13 +25,13 @@ export function seedData() {
 
   const insertMission = db.prepare(`
     INSERT INTO missions (
-      id, code, title, case_reference, status, insurance_client, client_contact,
-      insured_party, third_parties, court_reference, incident_date, reception_date,
+      id, code, title, case_reference, guarantee_type, status, insurance_client, client_contact,
+      insured_party, insured_contact, third_parties, court_reference, incident_date, reception_date,
       description, current_step, next_action, next_deadline, billing_contact_name,
       billing_address, custom_hourly_rate, custom_travel_rate, custom_km_rate
     ) VALUES (
-      @id, @code, @title, @case_reference, @status, @insurance_client, @client_contact,
-      @insured_party, @third_parties, @court_reference, @incident_date, @reception_date,
+      @id, @code, @title, @case_reference, @guarantee_type, @status, @insurance_client, @client_contact,
+      @insured_party, @insured_contact, @third_parties, @court_reference, @incident_date, @reception_date,
       @description, @current_step, @next_action, @next_deadline, @billing_contact_name,
       @billing_address, @custom_hourly_rate, @custom_travel_rate, @custom_km_rate
     )
@@ -81,23 +81,25 @@ export function seedData() {
     )
   `);
 
-  // Mission 1 : ALSTOM - SGP Ligne 18 (VP2026922) -> Facture 2026-097
+  // Mission 1 : ALSTOM - SGP Ligne 18 (VP2026922) -> Facture 2026-071 & 2026-097
   const m1Id = 'm-vp2026922';
   insertMission.run({
     id: m1Id,
     code: 'VP2026922',
-    title: 'ALSTOM - SGP Ligne 18 - Effondrement dalle de couverture trémie OA-08',
+    title: "SGP Ligne 18 - Effondrement d'une dalle dans une trémie (couverture de la trémie OA-08)",
     case_reference: '11161461',
+    guarantee_type: 'TRME',
     status: 'en_cours',
     insurance_client: 'AXA XL',
     client_contact: 'Yannick DELAUNAY',
     insured_party: 'ALSTOM',
+    insured_contact: 'GARNIER / I DELTOMBE MOREIRA',
     third_parties: 'SGP / VINCI',
-    court_reference: 'TJ Nanterre - Référé préventif',
-    incident_date: '2026-02-15',
-    reception_date: '2026-04-30',
-    description: "Dommages aux équipements et matériels sous trémie suite à l'effondrement partiel d'une dalle provisoire de chantier.",
-    current_step: "Analyse des notes techniques Alstom et préparation de la réunion contradictoire de novembre.",
+    court_reference: '-',
+    incident_date: '2026-02-12',
+    reception_date: '2026-04-28',
+    description: "Dommages à l'infrastructure ALSTOM sise en dessous — Incertitude quant au fait qu'il s'agisse d'un ouvrage provisoire ou définitif",
+    current_step: "Analyse des notes techniques Alstom et préparation de la réunion contradictoire.",
     next_action: "Finaliser la note d'observation technique suite aux dires de VINCI.",
     next_deadline: '2026-11-05',
     billing_contact_name: 'Yannick DELAUNAY',
@@ -105,6 +107,33 @@ export function seedData() {
     custom_hourly_rate: 190,
     custom_travel_rate: 135,
     custom_km_rate: 0.95,
+  });
+
+  // Facture 2026-071 (première note d'honoraires sur VP2026922 issue de la photo Excel de Valentine)
+  const inv71Id = 'inv-2026-071';
+  insertInvoice.run({
+    id: inv71Id,
+    invoice_number: '2026-071',
+    mission_id: m1Id,
+    mission_code: 'VP2026922',
+    client_name: 'AXA XL',
+    client_address: "Tour Majunga\nLa Défense 9\n6 Place de la pyramide\n92 800 PUTEAUX",
+    subject: "Mission d’expertise initiale – Réunion sur site le 22/07/2026 & Rapport n°1 du 28/07/2026",
+    case_title: "ALSTOM - SGP Ligne 18 - Effondrement dalle de couverture trémie OA-08",
+    client_ref: "11161461",
+    our_ref: "VP2026922",
+    date: "2026-07-28",
+    total_ht: 4254.30,
+    vat_rate: 0.20,
+    vat_amount: 850.86,
+    total_ttc: 5105.16,
+    advance_amount: 0,
+    net_payable: 5105.16,
+    status: 'regle',
+    payment_date: '2026-08-24',
+    payment_method: 'Virement',
+    paid_amount: 5105.16,
+    split_details: null,
   });
 
   // Facture 2026-097 (reconstitution exacte)
@@ -197,10 +226,12 @@ export function seedData() {
     code: 'VP2025915',
     title: 'FORWARDIS - Déraillement à Clermont-Gravanche le 25/03/2025',
     case_reference: '10772207',
+    guarantee_type: 'RC',
     status: 'en_cours',
     insurance_client: 'AXA XL',
     client_contact: 'Fabienne MULLER',
     insured_party: 'FORWARDIS',
+    insured_contact: 'Direction Sinistres Fret',
     third_parties: 'SNCF Réseau / VTG',
     court_reference: 'TJ Clermont-Ferrand - Référé expertise',
     incident_date: '2025-03-25',
@@ -273,10 +304,12 @@ export function seedData() {
     code: 'VP2026728',
     title: 'TLA TRANSPORTS - Collision au PN N°5 d’Ettendorf le 20/05/2026',
     case_reference: '26GF13102078',
+    guarantee_type: 'Dommages',
     status: 'en_cours',
     insurance_client: 'HELVETIA Assurances',
     client_contact: 'Marc LECLERC',
     insured_party: 'TLA TRANSPORTS',
+    insured_contact: 'M. SCHMITT',
     third_parties: 'SNCF Réseau / Région Grand Est',
     court_reference: 'Tribunal de Commerce de Strasbourg',
     incident_date: '2026-05-20',
@@ -352,10 +385,12 @@ export function seedData() {
     code: 'VP2026104',
     title: "REGIORAIL - Rupture d'attelage et dérive de rame fret à Ambérieu",
     case_reference: 'RR-2026-AMB-09',
+    guarantee_type: 'RC',
     status: 'en_cours',
     insurance_client: 'ALBINGIA',
     client_contact: 'Christophe VIAL',
     insured_party: 'REGIORAIL',
+    insured_contact: 'Jean-Luc BERTHIER',
     third_parties: 'SNCF Réseau',
     court_reference: 'TJ Bourg-en-Bresse',
     incident_date: '2026-06-12',

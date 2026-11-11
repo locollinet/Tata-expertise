@@ -22,22 +22,30 @@ export function initDatabase() {
       code TEXT UNIQUE NOT NULL,
       title TEXT NOT NULL,
       case_reference TEXT NOT NULL,
+      guarantee_type TEXT DEFAULT 'RC',
       status TEXT NOT NULL DEFAULT 'en_cours',
       insurance_client TEXT NOT NULL,
       client_contact TEXT,
+      insurer_company TEXT,
       insured_party TEXT,
+      insured_contact TEXT,
       insured_reference TEXT,
       broker_name TEXT,
       broker_reference TEXT,
+      client_lawyer TEXT,
       third_parties TEXT,
       adverse_parties TEXT DEFAULT '[]',
       stake_amount REAL,
       initial_stake_amount REAL,
       stake_history TEXT DEFAULT '[]',
       court_reference TEXT,
+      judicial_expert TEXT,
       incident_date TEXT,
       reception_date TEXT NOT NULL,
       description TEXT NOT NULL,
+      preliminary_analysis TEXT DEFAULT '',
+      pv_dommages_date TEXT DEFAULT '',
+      expertise_operations TEXT DEFAULT '[]',
       current_step TEXT NOT NULL,
       next_action TEXT NOT NULL,
       next_deadline TEXT,
@@ -317,13 +325,21 @@ export function initDatabase() {
     "ALTER TABLE report_drafts ADD COLUMN raw_field_notes TEXT DEFAULT ''",
     "ALTER TABLE missions ADD COLUMN custom_billing_threshold REAL DEFAULT 3500",
     "ALTER TABLE missions ADD COLUMN custom_vat_rate REAL DEFAULT 0.20",
+    "ALTER TABLE missions ADD COLUMN guarantee_type TEXT DEFAULT 'RC'",
+    "ALTER TABLE missions ADD COLUMN insurer_company TEXT",
+    "ALTER TABLE missions ADD COLUMN insured_contact TEXT",
     "ALTER TABLE missions ADD COLUMN insured_reference TEXT",
     "ALTER TABLE missions ADD COLUMN broker_name TEXT",
     "ALTER TABLE missions ADD COLUMN broker_reference TEXT",
+    "ALTER TABLE missions ADD COLUMN client_lawyer TEXT",
     "ALTER TABLE missions ADD COLUMN adverse_parties TEXT DEFAULT '[]'",
     "ALTER TABLE missions ADD COLUMN stake_amount REAL",
     "ALTER TABLE missions ADD COLUMN initial_stake_amount REAL",
     "ALTER TABLE missions ADD COLUMN stake_history TEXT DEFAULT '[]'",
+    "ALTER TABLE missions ADD COLUMN judicial_expert TEXT",
+    "ALTER TABLE missions ADD COLUMN preliminary_analysis TEXT DEFAULT ''",
+    "ALTER TABLE missions ADD COLUMN pv_dommages_date TEXT DEFAULT ''",
+    "ALTER TABLE missions ADD COLUMN expertise_operations TEXT DEFAULT '[]'",
     "ALTER TABLE expenses ADD COLUMN vat_rate REAL DEFAULT 0.20",
     "ALTER TABLE expenses ADD COLUMN receipt_original_name TEXT",
     "ALTER TABLE accounting_entries ADD COLUMN vat_rate REAL DEFAULT 0",
@@ -355,31 +371,117 @@ export function initDatabase() {
         currentAdverse = [];
       }
 
-      if (currentAdverse.length === 0 && m.third_parties) {
-        if (m.code === 'VP2026922') {
+      if (m.code === 'VP2026922') {
+        // Align VP2026922 with Valentine's exact Excel Synthesis Table photo
+        const hasTrc = currentAdverse.some((a: any) => a.insurer_name === 'TRC' || a.expert_name?.includes('LAWRUK'));
+        if (currentAdverse.length === 0 || !hasTrc) {
           currentAdverse = [
             {
               id: 'adv-sgp',
-              party_name: 'Société du Grand Paris (SGP)',
-              expert_firm: 'Saretec',
-              expert_name: 'M. Pechereau',
-              lawyer_name: 'Me Laurent (Cab. Gide)',
+              party_name: 'SGP',
+              insurer_name: 'TRC',
+              expert_firm: 'SARETEC',
+              expert_name: 'Stefan LAWRUK',
+              lawyer_name: '',
               reference: 'SGP-L18-OA08',
             },
             {
               id: 'adv-vinci',
-              party_name: 'VINCI Construction Grands Projets',
-              expert_firm: 'Polyexpert',
-              expert_name: 'Marc Vasseur',
+              party_name: 'VINCI',
+              insurer_name: '',
+              expert_firm: '',
+              expert_name: '',
               lawyer_name: '',
-              reference: 'SIN-2026-4412',
+              reference: '',
             },
           ];
-        } else if (m.code === 'VP2025915') {
+          db.prepare('UPDATE missions SET adverse_parties = ? WHERE id = ?').run(JSON.stringify(currentAdverse), m.id);
+        }
+
+        // Ensure guarantee_type = 'TRME', insured_contact = 'GARNIER / I DELTOMBE MOREIRA', stake_amount = 838222.02, expertise_operations
+        let ops: any[] = [];
+        try {
+          ops = m.expertise_operations ? JSON.parse(m.expertise_operations) : [];
+        } catch {
+          ops = [];
+        }
+        if (ops.length === 0) {
+          ops = [
+            {
+              id: 'op-1',
+              label: '1',
+              expertise_date: '2026-07-22',
+              report_date: '2026-07-28',
+              quantum: 838222.02,
+              invoice_number: '2026-071',
+              invoice_amount_ht: 5105.16,
+              invoice_date: '2026-07-28',
+            },
+            {
+              id: 'op-2',
+              label: '2',
+              expertise_date: '2026-09-25',
+              report_date: '2026-10-08',
+              quantum: 838222.02,
+              invoice_number: '2026-097',
+              invoice_amount_ht: 2825.16,
+              invoice_date: '2026-10-08',
+            },
+            { id: 'op-3', label: '3', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+            { id: 'op-4', label: '4', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+            { id: 'op-5', label: '5', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+            { id: 'op-def', label: 'Définitif', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+          ];
+        }
+        db.prepare(`
+          UPDATE missions
+          SET guarantee_type = CASE WHEN guarantee_type IS NULL OR guarantee_type = '' OR guarantee_type = 'RC' THEN 'TRME' ELSE guarantee_type END,
+              insured_contact = COALESCE(NULLIF(insured_contact, ''), 'GARNIER / I DELTOMBE MOREIRA'),
+              stake_amount = CASE WHEN stake_amount IS NULL OR stake_amount = 3150000 THEN 838222.02 ELSE stake_amount END,
+              initial_stake_amount = CASE WHEN initial_stake_amount IS NULL OR initial_stake_amount = 2800000 THEN 838222.02 ELSE initial_stake_amount END,
+              expertise_operations = ?
+          WHERE id = ?
+        `).run(JSON.stringify(ops), m.id);
+
+        // Ensure Invoice 2026-071 exists on VP2026922 (as seen on her Excel Synthesis Table)
+        const inv71 = db.prepare('SELECT id FROM invoices WHERE invoice_number = ?').get('2026-071');
+        if (!inv71) {
+          db.prepare(`
+            INSERT INTO invoices (
+              id, invoice_number, mission_id, mission_code, client_name, client_address,
+              subject, case_title, client_ref, our_ref, date, total_ht, vat_rate, vat_amount,
+              total_ttc, advance_amount, net_payable, status, payment_date, payment_method, paid_amount, split_details
+            ) VALUES (
+              'inv-2026-071', '2026-071', ?, 'VP2026922', 'AXA XL',
+              'Tour Majunga\nLa Défense 9\n6 Place de la pyramide\n92 800 PUTEAUX',
+              'Mission d’expertise initiale – Réunion sur site le 22/07/2026 & Rapport n°1 du 28/07/2026',
+              'ALSTOM - SGP Ligne 18 - Effondrement dalle de couverture trémie OA-08',
+              '11161461', 'VP2026922', '2026-07-28', 4254.30, 0.20, 850.86, 5105.16, 0, 5105.16,
+              'regle', '2026-08-24', 'Virement', 5105.16, NULL
+            )
+          `).run(m.id);
+        }
+
+        // Ensure VP2026922 has unbilled expenses so Loul's & Valentine can immediately see & test Frais in Dossier view
+        const expCount = db.prepare('SELECT COUNT(*) as c FROM expenses WHERE mission_id = ?').get(m.id) as { c: number };
+        if (expCount.c === 0) {
+          const insExp = db.prepare(`
+            INSERT INTO expenses (
+              id, mission_id, mission_code, date, category, label, quantity, unit_price,
+              total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, status, invoice_id, is_refacturable
+            ) VALUES (?, ?, 'VP2026922', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'a_facturer', NULL, 1)
+          `);
+          insExp.run('exp-m1-km1', m.id, '2026-10-14', 'km', 'Déplacement chantier Massy OA-08 (A/R véhicule)', 70, 0.95, 66.50, 0, 0, 66.50);
+          insExp.run('exp-m1-peage1', m.id, '2026-10-14', 'peage', 'Péage A10 / Duplex A86 Massy', 1, 22.80, 22.80, 0.20, 4.56, 27.36);
+          insExp.run('exp-m1-parking1', m.id, '2026-10-14', 'parking', 'Parking Gare TGV Massy-Palaiseau', 1, 18.50, 18.50, 0.20, 3.70, 22.20);
+        }
+      } else if (currentAdverse.length === 0 && m.third_parties) {
+        if (m.code === 'VP2025915') {
           currentAdverse = [
             {
               id: 'adv-sncf',
               party_name: 'SNCF Réseau',
+              insurer_name: '',
               expert_firm: 'Saretec',
               expert_name: 'Pechereau',
               lawyer_name: '',
@@ -394,6 +496,7 @@ export function initDatabase() {
           currentAdverse = parts.map((name: string, idx: number) => ({
             id: `adv-${m.id}-${idx + 1}`,
             party_name: name,
+            insurer_name: '',
             expert_firm: idx === 0 ? 'Saretec' : '',
             expert_name: idx === 0 ? 'Confrère mandaté' : '',
             lawyer_name: '',
@@ -401,6 +504,12 @@ export function initDatabase() {
           }));
         }
         db.prepare('UPDATE missions SET adverse_parties = ? WHERE id = ?').run(JSON.stringify(currentAdverse), m.id);
+      }
+
+      // Set default guarantee_type per mission if empty
+      if (!m.guarantee_type) {
+        const defaultGuarantee = m.code === 'VP2026922' ? 'TRME' : m.code === 'VP2026728' ? 'Dommages' : 'RC';
+        db.prepare('UPDATE missions SET guarantee_type = ? WHERE id = ?').run(defaultGuarantee, m.id);
       }
 
       if (m.stake_amount === null || m.stake_amount === undefined) {

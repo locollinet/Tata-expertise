@@ -16,13 +16,32 @@ export type DossierVoletKey =
   | 'prejudice'      // 5. Comptes du préjudice (Tableau de décompte + justificatifs liés)
   | 'rapports';      // 6. Rapports émis (Packages datés + PJ numérotées + projet de rapport)
 
+export type GuaranteeType =
+  | 'RC'
+  | 'Dommages'
+  | 'TRME'
+  | 'EAD'
+  | 'Autre';
+
 export interface AdverseParty {
   id?: string;
-  party_name: string;    // Ex: SNCF Réseau, VINCI...
-  expert_firm?: string;  // Cabinet du confrère (ex: Saretec, Polyexpert, Stelliant...)
-  expert_name?: string;  // Nom du confrère (ex: Pechereau)
-  lawyer_name?: string;  // Avocat éventuel
+  party_name: string;    // Ex: SGP, VINCI...
+  insurer_name?: string; // Compagnie tiers (ex: TRC, AXA, Allianz...)
+  expert_firm?: string;  // Cabinet du confrère (ex: SARETEC, Polyexpert, Stelliant...)
+  expert_name?: string;  // Nom du confrère (ex: Stefan LAWRUK)
+  lawyer_name?: string;  // Avocat tiers éventuel
   reference?: string;    // Référence éventuelle de la partie adverse / confrère
+}
+
+export interface ExpertiseOperationRow {
+  id: string;
+  label: string;         // Ex: "1", "2", "3", "4", "5", "Définitif"
+  expertise_date?: string; // Date d'opération d'expertise (ex: 2026-07-22)
+  report_date?: string;    // Date d'émission du rapport (ex: 2026-07-28)
+  quantum?: number | null; // Quantum évalué (ex: 838222.02)
+  invoice_number?: string; // Numéro de facture liée (ex: 2026-071)
+  invoice_amount_ht?: number | null; // Montant HT (ex: 5105.16)
+  invoice_date?: string;   // Date de facture (ex: 2026-07-28)
 }
 
 export interface StakeEntry {
@@ -69,24 +88,32 @@ export interface Mission {
   id: string;
   code: string; // N/Réf. Ex: VP2026922
   title: string; // Ex: ALSTOM - SGP Ligne 18...
-  case_reference: string; // Réf. Client (V/Réf.) Ex: 11161461
+  case_reference: string; // Réf. Client / Compagnie (V/Réf.) Ex: 11161461
+  guarantee_type?: GuaranteeType | string; // Garantie / Type de mission : RC | Dommages | TRME | EAD | Autre
   status: MissionStatus;
-  insurance_client: string; // Client (facturé) Ex: AXA XL
-  client_contact?: string; // Interlocuteur client Ex: Yannick DELAUNAY
-  insurer_contact?: string; // Interlocuteur client / assureur (alias)
-  insured_party?: string; // Assuré Ex: ALSTOM
+  insurance_client: string; // Donneur d'ordre / Client (facturé) Ex: AXA XL
+  client_contact?: string; // Interlocuteur donneur d'ordre Ex: Yannick DELAUNAY
+  insurer_company?: string; // Compagnie (si distincte du donneur d'ordre)
+  insurer_contact?: string; // Interlocuteur compagnie / assureur (alias)
+  insured_party?: string; // Assuré Ex: ALSTOM (ou "= Client" / "N/A")
+  insured_contact?: string; // Interlocuteur assuré Ex: GARNIER / I DELTOMBE MOREIRA
   insured_reference?: string; // Réf. Assuré
-  broker_name?: string; // Courtier
+  broker_name?: string; // Courtier (ou "N/A")
   broker_reference?: string; // Réf. Courtier
+  client_lawyer?: string; // Avocat (du client / assuré)
   third_parties?: string; // Texte libre historique (rétrocompatibilité)
-  adverse_parties?: AdverseParty[]; // Parties adverses structurées avec confrères
-  stake_amount?: number | null; // Enjeu actuel du dossier (€)
+  adverse_parties?: AdverseParty[]; // Parties adverses structurées avec compagnie tiers, confrères, avocat tiers
+  stake_amount?: number | null; // Enjeu / Quantum actuel du dossier (€)
   initial_stake_amount?: number | null; // Enjeu initial (€)
   stake_history?: StakeEntry[]; // Historique de l'évolution de l'enjeu
-  court_reference?: string; // Ex: Tribunal Judiciaire de Nanterre
+  court_reference?: string; // Tribunal Ex: Tribunal Judiciaire de Nanterre
+  judicial_expert?: string; // Expert judiciaire désigné (si expertise judiciaire)
   incident_date?: string;
   reception_date: string;
-  description: string;
+  description: string; // Briève description
+  preliminary_analysis?: string; // Analyse préliminaire / Commentaires (Synthesis Table)
+  pv_dommages_date?: string; // Date PV Dommages (Synthesis Table)
+  expertise_operations?: ExpertiseOperationRow[]; // Tableau Opérations d'expertise / Rapports / Quantum / Factures
   current_step: string;
   next_action: string;
   next_deadline?: string;

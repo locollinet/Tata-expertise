@@ -15,6 +15,8 @@ import {
   IssuedReport,
   MissionDocument,
   Mission,
+  GuaranteeType,
+  ExpertiseOperationRow,
 } from '@shared/types.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 import {
@@ -24,6 +26,8 @@ import {
   VOLET_TO_MAC_FOLDER,
   isLocalSyncConnected,
   getLocalSyncFolderName,
+  scanUntrackedMacFilesForMission,
+  UntrackedMacFile,
 } from '../utils/localFolderSync.js';
 
 interface MissionDetailViewProps {
@@ -35,7 +39,7 @@ interface MissionDetailViewProps {
   onBack: () => void;
   onSwitchMission?: (newMissionCodeOrId: string, currentVolet?: DossierVoletKey) => void;
   onCacheMission?: (mission: any) => void;
-  onOpenQuickAdd: (missionId: string) => void;
+  onOpenQuickAdd: (missionId: string, defaultTab?: 'activity' | 'expense' | 'photo') => void;
   onPrepareBilling: (missionId: string) => void;
 }
 
@@ -154,29 +158,51 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [docOptionalNote, setDocOptionalNote] = useState('');
   const [constatSubSection, setConstatSubSection] = useState<'jour_j' | 'visite_terrain' | 'extractions'>('visite_terrain');
 
-  // Volet 1 (Page de garde)
+  // Volet 1 (Page de garde — Synthesis Table)
   const [editingParties, setEditingParties] = useState(false);
+  const [guaranteeTypeEdit, setGuaranteeTypeEdit] = useState<string>('RC');
   const [clientName, setClientName] = useState('');
   const [clientRef, setClientRef] = useState('');
   const [clientContact, setClientContact] = useState('');
+  const [insurerCompany, setInsurerCompany] = useState('');
   const [billingAddress, setBillingAddress] = useState('');
   const [insuredParty, setInsuredParty] = useState('');
+  const [insuredContact, setInsuredContact] = useState('');
   const [insuredRef, setInsuredRef] = useState('');
   const [brokerName, setBrokerName] = useState('');
   const [brokerRef, setBrokerRef] = useState('');
+  const [clientLawyer, setClientLawyer] = useState('');
+  const [courtReferenceEdit, setCourtReferenceEdit] = useState('');
+  const [judicialExpertEdit, setJudicialExpertEdit] = useState('');
+  const [incidentDateEdit, setIncidentDateEdit] = useState('');
+  const [receptionDateEdit, setReceptionDateEdit] = useState('');
+  const [descriptionEdit, setDescriptionEdit] = useState('');
+  const [preliminaryAnalysisEdit, setPreliminaryAnalysisEdit] = useState('');
+  const [pvDommagesDateEdit, setPvDommagesDateEdit] = useState('');
+  const [expertiseOperationsEdit, setExpertiseOperationsEdit] = useState<ExpertiseOperationRow[]>([]);
+  const [editingOperations, setEditingOperations] = useState(false);
   const [missionCodeEdit, setMissionCodeEdit] = useState('');
   const [missionTitleEdit, setMissionTitleEdit] = useState('');
   const [adverseParties, setAdverseParties] = useState<AdverseParty[]>([]);
 
-  // Enjeu
+  // Enjeu / Quantum
   const [showUpdateStake, setShowUpdateStake] = useState(false);
   const [newStakeAmount, setNewStakeAmount] = useState('');
   const [newStakeNote, setNewStakeNote] = useState('');
 
-  // Pointage & Tarifs
+  // Pointage, Frais & Tarifs
   const [editingActId, setEditingActId] = useState<string | null>(null);
   const [editActHours, setEditActHours] = useState<string>('');
+  const [editingExpId, setEditingExpId] = useState<string | null>(null);
+  const [editExpQty, setEditExpQty] = useState<string>('');
+  const [editExpUnit, setEditExpUnit] = useState<string>('');
   const [showRatesDrawer, setShowRatesDrawer] = useState(false);
+
+  // Synchronisation Bidirectionnelle Finder Mac -> App (Détection des fichiers en écart)
+  const [untrackedMacFiles, setUntrackedMacFiles] = useState<UntrackedMacFile[]>([]);
+  const [untrackedTargetVolets, setUntrackedTargetVolets] = useState<Record<string, DossierVoletKey>>({});
+  const [scanningMacFiles, setScanningMacFiles] = useState(false);
+  const [importingMacFiles, setImportingMacFiles] = useState(false);
 
   // Volet 3 (Constatations)
   const [showAddAttendee, setShowAddAttendee] = useState(false);
@@ -238,14 +264,34 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   };
 
   const syncFormStateFromMission = (data: any) => {
+    setGuaranteeTypeEdit(data.guarantee_type || 'RC');
     setClientName(data.insurance_client || '');
     setClientRef(data.case_reference || '');
-    setClientContact(data.insurer_contact || '');
+    setClientContact(data.client_contact || data.insurer_contact || '');
+    setInsurerCompany(data.insurer_company || '');
     setBillingAddress(data.billing_address || '');
     setInsuredParty(data.insured_party || '');
+    setInsuredContact(data.insured_contact || '');
     setInsuredRef(data.insured_reference || '');
     setBrokerName(data.broker_name || '');
     setBrokerRef(data.broker_reference || '');
+    setClientLawyer(data.client_lawyer || '');
+    setCourtReferenceEdit(data.court_reference || '');
+    setJudicialExpertEdit(data.judicial_expert || '');
+    setIncidentDateEdit(data.incident_date || '');
+    setReceptionDateEdit(data.reception_date || '');
+    setDescriptionEdit(data.description || '');
+    setPreliminaryAnalysisEdit(data.preliminary_analysis || '');
+    setPvDommagesDateEdit(data.pv_dommages_date || '');
+    const ops: ExpertiseOperationRow[] = Array.isArray(data.expertise_operations) && data.expertise_operations.length > 0
+      ? data.expertise_operations
+      : [
+          { id: 'op-1', label: '1', expertise_date: '', report_date: '', quantum: data.stake_amount ?? null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+          { id: 'op-2', label: '2', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+          { id: 'op-3', label: '3', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+          { id: 'op-def', label: 'Définitif', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+        ];
+    setExpertiseOperationsEdit(ops);
     setMissionCodeEdit(data.code || '');
     setMissionTitleEdit(data.title || '');
     setAdverseParties(Array.isArray(data.adverse_parties) ? data.adverse_parties : []);
@@ -259,12 +305,36 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     }
   };
 
+  const runFinderDiffScan = async (missionData: any) => {
+    if (!missionData?.code || !isLocalSyncConnected()) return;
+    setScanningMacFiles(true);
+    try {
+      const existingNames = [
+        ...(missionData.documents || []).map((d: any) => d.original_name),
+        ...(missionData.photos || []).map((p: any) => p.original_name),
+        ...(missionData.issued_reports || []).map((r: any) => r.original_name).filter(Boolean),
+      ];
+      const found = await scanUntrackedMacFilesForMission(missionData.code, existingNames);
+      setUntrackedMacFiles(found);
+      const mapVolets: Record<string, DossierVoletKey> = {};
+      for (const f of found) {
+        mapVolets[f.id] = f.inferredSection;
+      }
+      setUntrackedTargetVolets(mapVolets);
+    } catch {
+      // Ignore scan error
+    } finally {
+      setScanningMacFiles(false);
+    }
+  };
+
   const loadData = async () => {
     try {
       const data = await api.getMission(missionId);
       setMission(data);
       onCacheMission?.(data);
       syncFormStateFromMission(data);
+      runFinderDiffScan(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -279,6 +349,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       setLoading(!initialMission.activities);
     }
     loadData();
+
+    const handleRefreshEvent = () => {
+      loadData();
+    };
+    window.addEventListener('vp-mission-data-updated', handleRefreshEvent);
+    window.addEventListener('vp-local-sync-changed', handleRefreshEvent);
+    return () => {
+      window.removeEventListener('vp-mission-data-updated', handleRefreshEvent);
+      window.removeEventListener('vp-local-sync-changed', handleRefreshEvent);
+    };
   }, [missionId]);
 
   if (!mission) {
@@ -309,12 +389,59 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const docsRapports = allDocuments.filter((d) => d.section === 'rapports' || d.category === 'rapport_emis');
 
   const voletCounts: Record<DossierVoletKey, number> = {
-    garde: (mission.activities?.length || 0) + (missionInvoices.length || 0),
+    garde: (mission.activities?.length || 0) + (mission.expenses?.length || 0) + (missionInvoices.length || 0),
     contrats: docsContrats.length,
     constatations: docsConstatations.length + allPhotos.length,
     contradictoire: docsContradictoire.length + (mission.communications?.length || 0) + (mission.registered_mails?.length || 0),
     prejudice: damageLines.length + docsPrejudice.length,
     rapports: issuedReports.length + docsRapports.length,
+  };
+
+  const handleImportUntrackedMacFiles = async (itemsToImport: UntrackedMacFile[]) => {
+    if (!itemsToImport || itemsToImport.length === 0) return;
+    setImportingMacFiles(true);
+    try {
+      // Group files by target volet so each goes into the right section
+      const byVolet: Record<string, File[]> = {};
+      for (const item of itemsToImport) {
+        const targetVolet = untrackedTargetVolets[item.id] || item.inferredSection || 'constatations';
+        if (!byVolet[targetVolet]) byVolet[targetVolet] = [];
+        byVolet[targetVolet].push(item.file);
+      }
+
+      const categoryMap: Record<string, string> = {
+        garde: 'autre',
+        contrats: 'contrat_client',
+        constatations: 'note_technique',
+        contradictoire: 'procedure_dires',
+        prejudice: 'justificatif_prejudice',
+        rapports: 'rapport_emis',
+      };
+
+      let totalImported = 0;
+      for (const [voletKey, fileList] of Object.entries(byVolet)) {
+        const formData = new FormData();
+        formData.append('section', voletKey === 'garde' ? 'constatations' : voletKey);
+        formData.append('category', categoryMap[voletKey] || 'autre');
+        for (const f of fileList) {
+          formData.append('files', f);
+        }
+        const res = await fetch(`/api/missions/${mission.id}/documents`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (res.ok) {
+          totalImported += fileList.length;
+        }
+      }
+
+      showToast(`${totalImported} fichier(s) du Finder Mac importé(s) et numéroté(s) dans le dossier !`);
+      await loadData();
+    } catch (err: any) {
+      showToast(err.message || "Erreur lors de l'import depuis le Finder Mac", 'error');
+    } finally {
+      setImportingMacFiles(false);
+    }
   };
 
   const handleUploadFilesToVolet = async (
@@ -400,24 +527,91 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     e.preventDefault();
     try {
       const cleanedParties = adverseParties.filter(
-        (p) => p.party_name.trim() || (p.expert_firm && p.expert_firm.trim()) || (p.expert_name && p.expert_name.trim())
+        (p) =>
+          p.party_name.trim() ||
+          (p.insurer_name && p.insurer_name.trim()) ||
+          (p.expert_firm && p.expert_firm.trim()) ||
+          (p.expert_name && p.expert_name.trim())
       );
       await api.updateMission(mission.id, {
         code: missionCodeEdit.trim(),
         title: missionTitleEdit.trim(),
+        guarantee_type: guaranteeTypeEdit || 'RC',
         insurance_client: clientName.trim(),
         case_reference: clientRef.trim(),
         client_contact: clientContact.trim(),
+        insurer_company: insurerCompany.trim(),
         insurer_contact: clientContact.trim(),
         billing_address: billingAddress.trim(),
         insured_party: insuredParty.trim(),
+        insured_contact: insuredContact.trim(),
         insured_reference: insuredRef.trim(),
         broker_name: brokerName.trim(),
         broker_reference: brokerRef.trim(),
+        client_lawyer: clientLawyer.trim(),
+        court_reference: courtReferenceEdit.trim(),
+        judicial_expert: judicialExpertEdit.trim(),
+        incident_date: incidentDateEdit,
+        reception_date: receptionDateEdit,
+        description: descriptionEdit.trim(),
+        preliminary_analysis: preliminaryAnalysisEdit.trim(),
+        pv_dommages_date: pvDommagesDateEdit.trim(),
+        expertise_operations: expertiseOperationsEdit,
         adverse_parties: cleanedParties,
       });
       setEditingParties(false);
-      showToast('Références et parties enregistrées.');
+      showToast('Fiche de synthèse (Synthesis Table) enregistrée.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveOperationsTable = async () => {
+    try {
+      await api.updateMission(mission.id, {
+        pv_dommages_date: pvDommagesDateEdit.trim(),
+        expertise_operations: expertiseOperationsEdit,
+        preliminary_analysis: preliminaryAnalysisEdit.trim(),
+      });
+      setEditingOperations(false);
+      showToast('Tableau des opérations d’expertise et commentaires enregistrés.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveExpenseEdit = async (expId: string) => {
+    const qty = parseFloat(editExpQty.replace(',', '.'));
+    const unit = parseFloat(editExpUnit.replace(',', '.'));
+    if (isNaN(qty) || qty <= 0 || isNaN(unit) || unit < 0) return;
+    try {
+      await api.updateExpense(expId, { quantity: qty, unit_price: unit });
+      setEditingExpId(null);
+      showToast('Frais mis à jour.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteExpense = async (expId: string, label: string) => {
+    if (!window.confirm(`Supprimer le frais « ${label} » ?`)) return;
+    try {
+      await api.deleteExpense(expId);
+      showToast('Frais supprimé.');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteActivity = async (actId: string, label: string) => {
+    if (!window.confirm(`Supprimer le pointage « ${label} » ?`)) return;
+    try {
+      await api.deleteActivity(actId);
+      showToast('Pointage supprimé.');
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -484,7 +678,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
       await syncFileToLocalMacFolder({
         missionCode: mission.code,
-        subFolder: '01_Page_de_garde',
+        subFolder: '07_Factures_Honoraires',
         fileName,
         data: blob,
       });
@@ -990,13 +1184,31 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Partie Droite : Finder Mac + Bouton Archiver / Réouvrir */}
-        <div className="flex items-center space-x-2 shrink-0 self-end lg:self-auto text-xs pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+        {/* Partie Droite : Finder Mac + Scanner écarts + Bouton Archiver / Réouvrir */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0 self-end lg:self-auto text-xs pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
           <div className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100/90 text-slate-600 text-[11px] border border-slate-200/60 shadow-2xs">
             <FolderOpen className="w-3.5 h-3.5 text-[#0f3854] shrink-0" />
             <span className="hidden sm:inline">Finder Mac :</span>
-            <strong className="font-mono text-slate-800">{mission.code}/{currentVoletMeta.macFolder}</strong>
+            <strong className="font-mono text-slate-800">
+              {mission.code}/{activeVolet === 'garde' ? '01_Page_de_garde & 07_Factures_Honoraires' : currentVoletMeta.macFolder}
+            </strong>
           </div>
+
+          <button
+            type="button"
+            onClick={() => runFinderDiffScan(false)}
+            disabled={scanningFinder}
+            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 transition-colors shadow-2xs cursor-pointer"
+            title="Scanner le dossier Finder sur votre Mac pour détecter les nouveaux fichiers déposés manuellement et les importer dans l'application"
+          >
+            <RotateCcw className={`w-3 h-3 text-[#0f3854] ${scanningFinder ? 'animate-spin' : ''}`} />
+            <span>{scanningFinder ? 'Scan Finder...' : 'Scanner Finder Mac'}</span>
+            {untrackedMacFiles.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-extrabold">
+                {untrackedMacFiles.length}
+              </span>
+            )}
+          </button>
 
           <button
             type="button"
@@ -1023,6 +1235,85 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         </div>
       </div>
 
+      {/* BANDEAU D'ÉCART FINDER MAC -> APPLICATION (Détection automatique des fichiers déposés dans le Finder) */}
+      {untrackedMacFiles.length > 0 && (
+        <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 shadow-xs space-y-3 text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-start space-x-2.5">
+              <FolderOpen className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-amber-950 block">
+                  {untrackedMacFiles.length} fichier(s) détecté(s) dans votre Finder Mac non encore intégré(s) dans l'application
+                </span>
+                <span className="text-[11px] text-amber-800">
+                  Vous avez déposé ces documents directement dans les sous-dossiers Mac de <strong>{mission.code}</strong>. Voulez-vous les intégrer au dossier ?
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                type="button"
+                disabled={importingFinderFiles}
+                onClick={() => handleImportUntrackedMacFiles(untrackedMacFiles)}
+                className="px-3.5 py-1.5 bg-[#0f3854] hover:bg-[#16496d] disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-2xs cursor-pointer"
+              >
+                {importingFinderFiles ? 'Import en cours...' : `Tout intégrer (${untrackedMacFiles.length})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setUntrackedMacFiles([])}
+                className="px-2.5 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl font-semibold text-[11px] cursor-pointer"
+              >
+                Masquer
+              </button>
+            </div>
+          </div>
+
+          <div className="divide-y divide-amber-200/70 bg-white rounded-xl border border-amber-200 overflow-hidden">
+            {untrackedMacFiles.map((uf, idx) => (
+              <div key={`${uf.subFolder}-${uf.fileName}-${idx}`} className="p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 min-w-0">
+                  <FileText className="w-3.5 h-3.5 text-[#0f3854] shrink-0" />
+                  <span className="font-bold text-slate-900 truncate">{uf.fileName}</span>
+                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] shrink-0">
+                    Finder : {uf.subFolder}
+                  </span>
+                  <span className="text-[10px] text-slate-400 shrink-0">
+                    ({Math.max(1, Math.round(uf.size / 1024))} Ko)
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <span className="text-[11px] text-slate-500">Classer dans :</span>
+                  <select
+                    value={uf.suggestedVolet}
+                    onChange={(e) => {
+                      const next = [...untrackedMacFiles];
+                      next[idx] = { ...next[idx], suggestedVolet: e.target.value as VoletKey };
+                      setUntrackedMacFiles(next);
+                    }}
+                    className="text-[11px] rounded-lg border border-slate-300 py-1 px-2 bg-slate-50 font-semibold text-slate-800"
+                  >
+                    {VOLETS_CONFIG.map((v) => (
+                      <option key={v.key} value={v.key}>
+                        {v.num}. {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={importingFinderFiles}
+                    onClick={() => handleImportUntrackedMacFiles([uf])}
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] cursor-pointer"
+                  >
+                    Intégrer
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* EN-TÊTE ÉLÉGANT DU DOSSIER */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 sm:p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1031,16 +1322,20 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <span className="px-2.5 py-0.5 rounded-md text-xs font-extrabold bg-[#0f3854] text-white font-mono">
                 {mission.code}
               </span>
+              <span className="px-2.5 py-0.5 rounded-md text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                Garantie : {mission.guarantee_type || 'RC'}
+              </span>
               <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                Client : {mission.insurance_client}
+                Donneur d'ordre : {mission.insurance_client}
               </span>
               {mission.case_reference && (
                 <span className="text-xs text-slate-500 font-mono">
-                  (V/Réf : {mission.case_reference})
+                  (Réf. Cie : {mission.case_reference})
                 </span>
               )}
               <span className="text-xs text-slate-600">
                 • Assuré : <strong className="text-slate-800">{mission.insured_party}</strong>
+                {mission.insured_contact ? ` (${mission.insured_contact})` : ''}
               </span>
             </div>
             <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
@@ -1049,14 +1344,23 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           </div>
 
           {/* Actions Rapides */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => onOpenQuickAdd(mission.id)}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              onClick={() => onOpenQuickAdd(mission.id, 'activity')}
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
             >
               <Clock className="w-4 h-4 text-[#0f3854]" />
               <span>Pointer du temps</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenQuickAdd(mission.id, 'expense')}
+              className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-emerald-700" />
+              <span>+ Frais / Débours ({mission.expenses?.length || 0})</span>
             </button>
 
             <button
@@ -1251,37 +1555,226 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 </form>
               )}
 
-              {/* FICHE D'IDENTITÉ : PARTIES & CONFRÈRES */}
+              {/* FICHE DE GARDE COMPLÈTE — SYNTHESIS TABLE (Fidèle à Expertise File Register_2026) */}
               <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <div className="flex items-center space-x-2">
                     <Building2 className="w-4 h-4 text-[#0f3854]" />
-                    <h2 className="text-sm font-bold text-slate-900">Parties prenantes & Confrères</h2>
+                    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                      Synthesis Table — Références, Garantie, Parties & Confrères
+                    </h2>
                   </div>
                   <button
                     type="button"
                     onClick={() => setEditingParties(!editingParties)}
-                    className="text-xs font-semibold text-[#0f3854] hover:underline cursor-pointer"
+                    className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#0f3854] transition-colors cursor-pointer"
                   >
-                    {editingParties ? 'Fermer' : 'Modifier'}
+                    {editingParties ? 'Fermer l’édition' : '✎ Modifier la fiche de garde'}
                   </button>
                 </div>
 
                 {editingParties ? (
-                  <form onSubmit={handleSavePartiesAndRefs} className="space-y-4 text-xs bg-slate-50/50 p-4 rounded-xl border border-slate-200">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <form onSubmit={handleSavePartiesAndRefs} className="space-y-4 text-xs bg-slate-50/60 p-4 rounded-xl border border-slate-200">
+                    {/* Ligne 1 : Référence Interne, Référence Compagnie, Garantie, Réception, Date sinistre */}
+                    <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                       <div>
-                        <label className="block font-bold text-slate-700 mb-1">N/Réf. (Code VP) *</label>
+                        <label className="block font-bold text-slate-700 mb-1">Réf. Interne (Code VP) *</label>
                         <input
                           type="text"
                           value={missionCodeEdit}
                           onChange={(e) => setMissionCodeEdit(e.target.value)}
                           required
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono font-bold"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono font-bold text-[#0f3854]"
                         />
                       </div>
-                      <div className="sm:col-span-2">
-                        <label className="block font-bold text-slate-700 mb-1">Intitulé du dossier *</label>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Réf. Compagnie (V/Réf.)</label>
+                        <input
+                          type="text"
+                          value={clientRef}
+                          onChange={(e) => setClientRef(e.target.value)}
+                          placeholder="ex: 11161461"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-amber-900 mb-1">Garantie / Nature *</label>
+                        <select
+                          value={guaranteeType}
+                          onChange={(e) => setGuaranteeType(e.target.value as GuaranteeType)}
+                          className="w-full rounded-lg border-amber-300 p-2 border bg-amber-50/60 font-bold text-amber-950"
+                        >
+                          <option value="RC">RC (Responsabilité Civile)</option>
+                          <option value="Dommages">Dommages (Doma)</option>
+                          <option value="TRME">TRME (Tous Risques Montage Essais)</option>
+                          <option value="EAD">EAD (Expertise Amiable / Judiciaire)</option>
+                          <option value="Autre">Autre garantie</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Réception mission</label>
+                        <input
+                          type="date"
+                          value={receptionDateEdit}
+                          onChange={(e) => setReceptionDateEdit(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Date du sinistre</label>
+                        <input
+                          type="date"
+                          value={incidentDateEdit}
+                          onChange={(e) => setIncidentDateEdit(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ligne 2 : Tribunal & Expert Judiciaire */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Tribunal (si judiciaire / référé)</label>
+                        <input
+                          type="text"
+                          value={courtReference}
+                          onChange={(e) => setCourtReference(e.target.value)}
+                          placeholder="ex: TJ de Nanterre (RG 26/01420) ou -"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Expert Judiciaire désigné</label>
+                        <input
+                          type="text"
+                          value={judicialExpert}
+                          onChange={(e) => setJudicialExpert(e.target.value)}
+                          placeholder="ex: M. Jean-Paul Moreau (Expert près la Cour d'Appel) ou -"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ligne 3 : Donneur d'ordre, Interlocuteur, Compagnie, Courtier */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <label className="block font-bold text-[#0f3854] mb-1">Donneur d'ordre (Facturé) *</label>
+                        <input
+                          type="text"
+                          value={clientName}
+                          onChange={(e) => setClientName(e.target.value)}
+                          required
+                          placeholder="ex: AXA XL"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Interlocuteur Donneur d'ordre</label>
+                        <input
+                          type="text"
+                          value={clientContact}
+                          onChange={(e) => setClientContact(e.target.value)}
+                          placeholder="ex: Yannick DELAUNAY"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Compagnie (si distincte)</label>
+                        <input
+                          type="text"
+                          value={insurerCompany}
+                          onChange={(e) => setInsurerCompany(e.target.value)}
+                          placeholder="ex: AXA France IARD / Lloyd's"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-medium text-slate-700">Courtier</label>
+                          <button
+                            type="button"
+                            onClick={() => setBrokerName('N/A')}
+                            className="text-[10px] font-bold text-slate-500 hover:text-[#0f3854]"
+                          >
+                            N/A
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={brokerName}
+                          onChange={(e) => setBrokerName(e.target.value)}
+                          placeholder="ex: Marsh / Willis ou N/A"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ligne 4 : Assuré, Interlocuteur Assuré, Avocat, Adresse facturation */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-bold text-slate-700">Assuré *</label>
+                          <div className="space-x-1">
+                            <button
+                              type="button"
+                              onClick={() => setInsuredParty(clientName)}
+                              className="text-[10px] font-bold text-[#0f3854] hover:underline"
+                            >
+                              = Client
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInsuredParty('N/A')}
+                              className="text-[10px] font-bold text-slate-400 hover:text-slate-700"
+                            >
+                              N/A
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          value={insuredParty}
+                          onChange={(e) => setInsuredParty(e.target.value)}
+                          required
+                          placeholder="ex: ALSTOM"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Interlocuteur Assuré</label>
+                        <input
+                          type="text"
+                          value={insuredContact}
+                          onChange={(e) => setInsuredContact(e.target.value)}
+                          placeholder="ex: GARNIER / I DELTOMBE MOREIRA"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Avocat (Client / Assuré)</label>
+                        <input
+                          type="text"
+                          value={clientLawyer}
+                          onChange={(e) => setClientLawyer(e.target.value)}
+                          placeholder="ex: Me Durand"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Adresse facturation Client</label>
+                        <input
+                          type="text"
+                          value={billingAddress}
+                          onChange={(e) => setBillingAddress(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ligne 5 : Sujet, Briève description & Analyse préliminaire */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Sujet (Intitulé du dossier) *</label>
                         <input
                           type="text"
                           value={missionTitleEdit}
@@ -1290,123 +1783,93 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
                         />
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200">
                       <div>
-                        <label className="block font-bold text-[#0f3854] mb-1">Client (facturé) *</label>
-                        <input
-                          type="text"
-                          value={clientName}
-                          onChange={(e) => setClientName(e.target.value)}
-                          required
+                        <label className="block font-bold text-slate-700 mb-1">Briève description du sinistre</label>
+                        <textarea
+                          rows={2}
+                          value={missionSummaryEdit}
+                          onChange={(e) => setMissionSummaryEdit(e.target.value)}
+                          placeholder="Dommages constatés, contexte technique..."
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                         />
                       </div>
                       <div>
-                        <label className="block font-bold text-[#0f3854] mb-1">Réf. Client (V/Réf.)</label>
-                        <input
-                          type="text"
-                          value={clientRef}
-                          onChange={(e) => setClientRef(e.target.value)}
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Interlocuteur</label>
-                        <input
-                          type="text"
-                          value={clientContact}
-                          onChange={(e) => setClientContact(e.target.value)}
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        <label className="block font-bold text-amber-900 mb-1">Analyse préliminaire / Commentaires</label>
+                        <textarea
+                          rows={2}
+                          value={preliminaryAnalysis}
+                          onChange={(e) => setPreliminaryAnalysis(e.target.value)}
+                          placeholder="Vérifications de garanties, réserves, points de vigilance..."
+                          className="w-full rounded-lg border-amber-300 p-2 border bg-amber-50/40"
                         />
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block font-medium text-slate-700 mb-1">Adresse de facturation du Client</label>
-                      <input
-                        type="text"
-                        value={billingAddress}
-                        onChange={(e) => setBillingAddress(e.target.value)}
-                        className="w-full rounded-lg border-slate-300 p-2 border bg-white"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200">
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Assuré *</label>
-                        <input
-                          type="text"
-                          value={insuredParty}
-                          onChange={(e) => setInsuredParty(e.target.value)}
-                          required
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Réf. Assuré</label>
-                        <input
-                          type="text"
-                          value={insuredRef}
-                          onChange={(e) => setInsuredRef(e.target.value)}
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Courtier</label>
-                        <input
-                          type="text"
-                          value={brokerName}
-                          onChange={(e) => setBrokerName(e.target.value)}
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block font-medium text-slate-700 mb-1">Réf. Courtier</label>
-                        <input
-                          type="text"
-                          value={brokerRef}
-                          onChange={(e) => setBrokerRef(e.target.value)}
-                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Parties adverses & Confrères */}
+                    {/* Ligne 6 : Tiers / Compagnie tiers / Expert tiers / Avocat tiers */}
                     <div className="pt-3 border-t border-slate-200 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-800">Parties adverses & Confrères</span>
+                        <span className="font-bold text-slate-800">
+                          Tiers, Compagnie tiers, Expert tiers & Avocat tiers ({adverseParties.length})
+                        </span>
                         <button
                           type="button"
                           onClick={() =>
                             setAdverseParties([
                               ...adverseParties,
-                              { id: `adv-${Date.now()}-${adverseParties.length + 1}`, party_name: '', expert_firm: '', expert_name: '', lawyer_name: '' },
+                              {
+                                id: `adv-${Date.now()}-${adverseParties.length + 1}`,
+                                party_name: '',
+                                insurer_name: '',
+                                expert_firm: '',
+                                expert_name: '',
+                                lawyer_name: '',
+                              },
                             ])
                           }
                           className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[11px] font-semibold text-[#0f3854] hover:bg-slate-50"
                         >
-                          + Ajouter
+                          + Ajouter un Tiers
                         </button>
                       </div>
 
                       {adverseParties.map((ap, idx) => (
-                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-5 gap-2 bg-white p-2.5 rounded-lg border border-slate-200">
                           <input
                             type="text"
-                            placeholder="Partie adverse (ex: Alstom)"
+                            placeholder="Tiers (ex: SGP, VINCI)"
                             value={ap.party_name || ''}
                             onChange={(e) => {
                               const next = [...adverseParties];
                               next[idx] = { ...next[idx], party_name: e.target.value };
                               setAdverseParties(next);
                             }}
+                            className="rounded border-slate-300 p-1.5 border text-xs font-bold"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Compagnie tiers (ex: TRC, Allianz)"
+                            value={ap.insurer_name || ''}
+                            onChange={(e) => {
+                              const next = [...adverseParties];
+                              next[idx] = { ...next[idx], insurer_name: e.target.value };
+                              setAdverseParties(next);
+                            }}
                             className="rounded border-slate-300 p-1.5 border text-xs"
                           />
                           <input
                             type="text"
-                            placeholder="Cabinet (ex: Saretec)"
+                            placeholder="Expert tiers (ex: Stefan LAWRUK)"
+                            value={ap.expert_name || ''}
+                            onChange={(e) => {
+                              const next = [...adverseParties];
+                              next[idx] = { ...next[idx], expert_name: e.target.value };
+                              setAdverseParties(next);
+                            }}
+                            className="rounded border-slate-300 p-1.5 border text-xs font-semibold text-[#0f3854]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Cabinet expert (ex: SARETEC)"
                             value={ap.expert_firm || ''}
                             onChange={(e) => {
                               const next = [...adverseParties];
@@ -1415,21 +1878,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                             }}
                             className="rounded border-slate-300 p-1.5 border text-xs"
                           />
-                          <input
-                            type="text"
-                            placeholder="Nom confrère (ex: M. Pechereau)"
-                            value={ap.expert_name || ''}
-                            onChange={(e) => {
-                              const next = [...adverseParties];
-                              next[idx] = { ...next[idx], expert_name: e.target.value };
-                              setAdverseParties(next);
-                            }}
-                            className="rounded border-slate-300 p-1.5 border text-xs font-semibold"
-                          />
                           <div className="flex items-center space-x-1">
                             <input
                               type="text"
-                              placeholder="Avocat (facultatif)"
+                              placeholder="Avocat tiers"
                               value={ap.lawyer_name || ''}
                               onChange={(e) => {
                                 const next = [...adverseParties];
@@ -1442,6 +1894,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                               type="button"
                               onClick={() => setAdverseParties(adverseParties.filter((_, i) => i !== idx))}
                               className="p-1 text-slate-400 hover:text-rose-600"
+                              title="Supprimer ce tiers"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1462,67 +1915,684 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         type="submit"
                         className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-semibold"
                       >
-                        Enregistrer
+                        Enregistrer la Synthesis Table
                       </button>
                     </div>
                   </form>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                    {/* Client */}
-                    <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-1.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#0f3854]">
-                        Client (Mandant)
-                      </span>
-                      <p className="text-sm font-bold text-slate-900">{mission.insurance_client}</p>
-                      <p className="text-slate-600">
-                        V/Réf : <span className="font-mono font-bold text-slate-800">{mission.case_reference || '—'}</span>
-                      </p>
-                      {mission.insurer_contact && (
-                        <p className="text-slate-500">{mission.insurer_contact}</p>
-                      )}
+                  <div className="space-y-4 text-xs">
+                    {/* Bandeau supérieur : Référence Interne | Compagnie | Garantie | Réception | Date sinistre | Tribunal | Expert */}
+                    <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 bg-slate-50/90 p-3 rounded-xl border border-slate-200/90">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Réf. Interne</span>
+                        <span className="font-mono font-extrabold text-[#0f3854] text-xs">{mission.code}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Réf. Compagnie</span>
+                        <span className="font-mono font-bold text-slate-800">{mission.case_reference || '—'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-amber-700 block">Garantie</span>
+                        <span className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-950 font-extrabold text-[11px] border border-amber-300">
+                          {mission.guarantee_type || 'RC'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Réception mission</span>
+                        <span className="font-bold text-slate-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 inline-block">
+                          {(mission.reception_date || '').split('-').reverse().join('/') || '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Date du sinistre</span>
+                        <span className="font-semibold text-slate-800">
+                          {(mission.incident_date || '').split('-').reverse().join('/') || '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Tribunal</span>
+                        <span className="font-medium text-slate-700 truncate block" title={mission.court_reference || '-'}>
+                          {mission.court_reference || '-'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Expert Judiciaire</span>
+                        <span className="font-medium text-slate-700 truncate block" title={mission.judicial_expert || '-'}>
+                          {mission.judicial_expert || '-'}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Assuré & Courtier */}
-                    <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-1.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        Assuré & Courtier
-                      </span>
-                      <p className="text-sm font-bold text-slate-900">{mission.insured_party}</p>
-                      {mission.insured_reference && (
-                        <p className="text-slate-600">
-                          Réf. Assuré : <span className="font-mono">{mission.insured_reference}</span>
-                        </p>
-                      )}
-                      <p className="text-slate-500 pt-1 border-t border-slate-200/60">
-                        Courtier : {mission.broker_name || 'Sans courtier'}
-                        {mission.broker_reference && ` (${mission.broker_reference})`}
-                      </p>
-                    </div>
-
-                    {/* Confrères */}
-                    <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-1.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                        Confrères & Parties adverses ({adverseParties.length})
-                      </span>
-                      {adverseParties.length === 0 ? (
-                        <p className="text-slate-400 italic">Aucun confrère renseigné.</p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {adverseParties.map((ap, i) => (
-                            <div key={i} className="text-xs">
-                              <span className="font-bold text-slate-900">{ap.party_name}</span>
-                              {(ap.expert_name || ap.expert_firm) && (
-                                <p className="text-[#0f3854] font-medium">
-                                  {ap.expert_name || 'Expert'} {ap.expert_firm ? `(${ap.expert_firm})` : ''}
-                                </p>
-                              )}
-                            </div>
-                          ))}
+                    {/* Grille 3 colonnes : Donneur d'ordre / Assuré & Courtier / Tiers & Confrères */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Donneur d'ordre & Compagnie */}
+                      <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0f3854]">
+                          Donneur d'ordre & Compagnie
+                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Donneur d'ordre :</span>
+                          <strong className="text-sm font-bold text-slate-900 text-right">{mission.insurance_client}</strong>
                         </div>
-                      )}
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Interlocuteur :</span>
+                          <span className="font-semibold text-[#0f3854] text-right">{mission.insurer_contact || '—'}</span>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Compagnie :</span>
+                          <span className="font-medium text-slate-800 text-right">{mission.insurer_company || '—'}</span>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-slate-200/60">
+                          <span className="text-slate-500">Courtier :</span>
+                          <span className="font-medium text-slate-700 text-right">
+                            {mission.broker_name || '—'}
+                            {mission.broker_reference ? ` (${mission.broker_reference})` : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Assuré & Avocat */}
+                      <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Assuré & Conseil
+                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Assuré :</span>
+                          <strong className="text-sm font-bold text-slate-900 text-right">{mission.insured_party || '—'}</strong>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Interlocuteur :</span>
+                          <span className="font-semibold text-[#0f3854] text-right">{mission.insured_contact || '—'}</span>
+                        </div>
+                        {mission.insured_reference && (
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-slate-500">Réf. Assuré :</span>
+                            <span className="font-mono text-slate-700">{mission.insured_reference}</span>
+                          </div>
+                        )}
+                        <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-slate-200/60">
+                          <span className="text-slate-500">Avocat :</span>
+                          <span className="font-medium text-slate-700 text-right">{mission.client_lawyer || '—'}</span>
+                        </div>
+                      </div>
+
+                      {/* Tiers, Compagnie tiers, Expert tiers, Avocat tiers */}
+                      <div className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            Tiers & Confrères ({adverseParties.length})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingParties(true)}
+                            className="text-[11px] font-semibold text-[#0f3854] hover:underline"
+                          >
+                            + Gérer les tiers
+                          </button>
+                        </div>
+                        {adverseParties.length === 0 ? (
+                          <p className="text-slate-400 italic">Aucun tiers renseigné.</p>
+                        ) : (
+                          <div className="space-y-2 divide-y divide-slate-200/60">
+                            {adverseParties.map((ap, i) => (
+                              <div key={i} className={i > 0 ? 'pt-1.5 space-y-0.5' : 'space-y-0.5'}>
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-900">Tiers {i + 1} : {ap.party_name}</span>
+                                  {ap.insurer_name && (
+                                    <span className="px-1.5 py-0.2 rounded bg-sky-50 text-[#0f3854] border border-sky-200 font-bold text-[10px]">
+                                      Cie : {ap.insurer_name}
+                                    </span>
+                                  )}
+                                </div>
+                                {(ap.expert_name || ap.expert_firm) && (
+                                  <p className="text-[#0f3854] font-medium text-[11px]">
+                                    Expert tiers : {ap.expert_name || '—'} {ap.expert_firm ? `(${ap.expert_firm})` : ''}
+                                  </p>
+                                )}
+                                {ap.lawyer_name && (
+                                  <p className="text-slate-500 text-[11px]">Avocat tiers : {ap.lawyer_name}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Briève description & Analyse préliminaire */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                      <div className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                          Briève description du sinistre
+                        </span>
+                        <p className="text-slate-800 whitespace-pre-line font-medium">
+                          {mission.summary || 'Aucune description renseignée.'}
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block mb-1">
+                          Analyse préliminaire / Notes de cadrage
+                        </span>
+                        <p className="text-slate-800 whitespace-pre-line">
+                          {mission.preliminary_analysis || 'Aucune note d’analyse préliminaire.'}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
+
+                {/* TABLEAU DE BORD : OPÉRATIONS D'EXPERTISE | RAPPORTS | QUANTUM | FACTURES + PV DOMMAGES */}
+                <div className="pt-4 border-t border-slate-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#0f3854]">
+                        Suivi chronologique : Opérations d'expertise · Rapports · Quantum · Factures
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Exactement comme dans votre tableau Excel (Synthesis Table) : suivez vos réunions, dates de rapports, quantum et factures associées.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingOperations(!editingOperations)}
+                      className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#0f3854] self-start sm:self-auto cursor-pointer"
+                    >
+                      {editingOperations ? 'Fermer' : '✎ Mettre à jour le tableau / PV Dommages'}
+                    </button>
+                  </div>
+
+                  {editingOperations ? (
+                    <form onSubmit={handleSaveOperationsTable} className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs border-collapse bg-white rounded-lg overflow-hidden border border-slate-200">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                              <th className="py-2 px-2 text-center w-20">Étape</th>
+                              <th className="py-2 px-2 text-left">Date Opération d'expertise</th>
+                              <th className="py-2 px-2 text-left">Date Rapport émis</th>
+                              <th className="py-2 px-2 text-right">Quantum (€)</th>
+                              <th className="py-2 px-2 text-left">N° Facture</th>
+                              <th className="py-2 px-2 text-right">Montant Facture (€)</th>
+                              <th className="py-2 px-2 text-left">Date Facture</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {operationsRows.map((row, idx) => (
+                              <tr key={row.step}>
+                                <td className="p-1.5 text-center font-bold text-slate-800 bg-slate-50">{row.step}</td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="JJ/MM/AAAA"
+                                    value={row.operation_date || ''}
+                                    onChange={(e) => {
+                                      const next = [...operationsRows];
+                                      next[idx] = { ...next[idx], operation_date: e.target.value };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1 bg-amber-50/40 font-medium"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="JJ/MM/AAAA"
+                                    value={row.report_date || ''}
+                                    onChange={(e) => {
+                                      const next = [...operationsRows];
+                                      next[idx] = { ...next[idx], report_date: e.target.value };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1 bg-amber-50/40 font-medium"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 838222.02"
+                                    value={row.quantum !== undefined && row.quantum !== null ? String(row.quantum) : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const next = [...operationsRows];
+                                      next[idx] = {
+                                        ...next[idx],
+                                        quantum: val.trim() === '' ? null : parseFloat(val.replace(',', '.')) || 0,
+                                      };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1 text-right font-mono"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 2026-071"
+                                    value={row.invoice_number || ''}
+                                    onChange={(e) => {
+                                      const next = [...operationsRows];
+                                      next[idx] = { ...next[idx], invoice_number: e.target.value };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1 font-mono font-bold text-[#0f3854]"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 5105.16"
+                                    value={row.invoice_amount !== undefined && row.invoice_amount !== null ? String(row.invoice_amount) : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const next = [...operationsRows];
+                                      next[idx] = {
+                                        ...next[idx],
+                                        invoice_amount: val.trim() === '' ? null : parseFloat(val.replace(',', '.')) || 0,
+                                      };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1 text-right font-semibold"
+                                  />
+                                </td>
+                                <td className="p-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="JJ/MM/AAAA"
+                                    value={row.invoice_date || ''}
+                                    onChange={(e) => {
+                                      const next = [...operationsRows];
+                                      next[idx] = { ...next[idx], invoice_date: e.target.value };
+                                      setOperationsRows(next);
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-2 py-1"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                        <div className="flex items-center space-x-2">
+                          <label className="font-bold text-slate-800">PV Dommages (Date ou statut) :</label>
+                          <input
+                            type="text"
+                            placeholder="ex: 15/11/2026 ou XX/XX/2026"
+                            value={pvDommagesDate}
+                            onChange={(e) => setPvDommagesDate(e.target.value)}
+                            className="border border-amber-300 bg-amber-50 rounded-lg px-2.5 py-1 font-bold text-slate-900"
+                          />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingOperations(false)}
+                            className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-600"
+                          >
+                            Annuler
+                          </button>
+                          <button
+                            type="submit"
+                            className="px-4 py-1.5 bg-[#0f3854] text-white rounded-lg font-bold"
+                          >
+                            Enregistrer le suivi
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="border border-slate-200 rounded-xl overflow-hidden overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100/90 border-b border-slate-200 text-slate-700">
+                              <th className="py-2 px-3 text-center font-bold w-24">Opérations d'expertise</th>
+                              <th className="py-2 px-3 text-center font-bold">Date réunion / expertise</th>
+                              <th className="py-2 px-3 text-center font-bold">Rapports</th>
+                              <th className="py-2 px-3 text-right font-bold">Quantum</th>
+                              <th className="py-2 px-3 text-center font-bold">N° Facture</th>
+                              <th className="py-2 px-3 text-right font-bold">Montant Facture</th>
+                              <th className="py-2 px-3 text-center font-bold">Date Facture</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {operationsRows.map((row) => {
+                              const hasData =
+                                row.operation_date ||
+                                row.report_date ||
+                                row.quantum !== null && row.quantum !== undefined ||
+                                row.invoice_number;
+                              const isDefinitif = row.step === 'Définitif';
+                              return (
+                                <tr
+                                  key={row.step}
+                                  className={`${isDefinitif ? 'bg-amber-50/60 font-semibold' : hasData ? 'bg-white' : 'bg-slate-50/30 text-slate-400'}`}
+                                >
+                                  <td className="py-2 px-3 text-center font-bold text-slate-800 border-r border-slate-100">
+                                    {row.step}
+                                  </td>
+                                  <td className="py-2 px-3 text-center font-semibold text-[#0f3854] bg-amber-50/30">
+                                    {row.operation_date || '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-center font-semibold text-[#0f3854] bg-amber-50/30">
+                                    {row.report_date || '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                                    {row.quantum !== null && row.quantum !== undefined
+                                      ? `${Number(row.quantum).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`
+                                      : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-center font-mono font-bold text-[#0f3854] bg-amber-50/30">
+                                    {row.invoice_number || '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-bold text-slate-900 bg-amber-50/30">
+                                    {row.invoice_amount !== null && row.invoice_amount !== undefined
+                                      ? `${Number(row.invoice_amount).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`
+                                      : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-center text-slate-700 bg-amber-50/30">
+                                    {row.invoice_date || '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200/80 text-xs">
+                        <span className="font-bold text-slate-800">PV Dommages :</span>
+                        <span className="font-mono font-bold text-amber-950">
+                          {mission.pv_dommages_date || pvDommagesDate || 'Non renseigné'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* POINTAGE DU DOSSIER (TEMPS) & FRAIS / DÉBOURS DU DOSSIER (CÔTE À CÔTE) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* 1. POINTAGE DU TEMPS */}
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Clock className="w-4 h-4 text-[#0f3854]" />
+                      <h3 className="text-sm font-bold text-slate-900">
+                        Pointage du temps ({mission.activities?.length || 0} lignes)
+                      </h3>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowRatesDrawer(!showRatesDrawer)}
+                        className="text-xs text-slate-500 hover:text-slate-800 px-2 py-0.5 rounded bg-slate-100"
+                        title="Modifier les tarifs horaires et kilométriques de ce dossier"
+                      >
+                        {mission.custom_hourly_rate || 190} €/h
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenQuickAdd(mission.id, 'activity')}
+                        className="px-2.5 py-1 rounded-lg bg-[#0f3854] text-white text-xs font-bold hover:bg-[#16496d] cursor-pointer"
+                      >
+                        + Pointer du temps
+                      </button>
+                    </div>
+                  </div>
+
+                  {showRatesDrawer && (
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <MissionRatesSettings mission={mission} onUpdated={loadData} />
+                    </div>
+                  )}
+
+                  {(mission.activities || []).length === 0 ? (
+                    <p className="py-6 text-center text-xs text-slate-400 bg-slate-50/50 rounded-xl">
+                      Aucun temps pointé sur ce dossier.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-xl overflow-hidden text-xs max-h-72 overflow-y-auto">
+                      {(mission.activities || []).map((act: any) => (
+                        <div key={act.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50 gap-2">
+                          <div className="min-w-0">
+                            <span className="font-semibold text-slate-900 block truncate">
+                              {ACTIVITY_CATEGORY_LABELS[act.category as keyof typeof ACTIVITY_CATEGORY_LABELS] || act.label}
+                            </span>
+                            <span className="text-[11px] text-slate-400 block truncate">
+                              {(act.date || '').split('-').reverse().join('/')}
+                              {act.notes ? ` • ${act.notes}` : ''}
+                            </span>
+                          </div>
+                          <div className="text-right flex items-center space-x-2 shrink-0">
+                            {editingActId === act.id ? (
+                              <div className="flex items-center space-x-1">
+                                <input
+                                  type="text"
+                                  value={editActHours}
+                                  onChange={(e) => setEditActHours(e.target.value)}
+                                  className="w-12 border border-[#0f3854] rounded px-1 py-0.5 text-right font-bold"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveActivityHours(act.id)}
+                                  className="px-1.5 py-0.5 bg-[#0f3854] text-white rounded text-[10px]"
+                                >
+                                  OK
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingActId(act.id);
+                                    setEditActHours(String(act.hours));
+                                  }}
+                                  className="text-right hover:underline"
+                                  title="Cliquer pour ajuster les heures"
+                                >
+                                  <span className="font-bold text-slate-900 block">
+                                    {Number(act.total_ht).toFixed(2).replace('.', ',')} € HT
+                                  </span>
+                                  <span
+                                    className={`text-[10px] font-semibold ${
+                                      act.status === 'facture'
+                                        ? 'text-emerald-700'
+                                        : act.status === 'brouillon_facture'
+                                        ? 'text-amber-700'
+                                        : 'text-[#0f3854]'
+                                    }`}
+                                  >
+                                    {act.hours}h •{' '}
+                                    {act.status === 'facture'
+                                      ? 'Facturé'
+                                      : act.status === 'brouillon_facture'
+                                      ? 'En brouillon'
+                                      : 'À facturer'}
+                                  </span>
+                                </button>
+                                {act.status !== 'facture' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteActivity(act.id)}
+                                    className="text-slate-300 hover:text-rose-600 p-1"
+                                    title="Supprimer ce pointage"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. FRAIS & DÉBOURS DU DOSSIER (Tous les frais rattachés au dossier : à facturer, en brouillon, facturés) */}
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Receipt className="w-4 h-4 text-emerald-700" />
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">
+                          Frais & Débours du dossier ({mission.expenses?.length || 0})
+                        </h3>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        Total :{' '}
+                        {((mission.expenses || []).reduce((s: number, e: any) => s + Number(e.total_ht || 0), 0))
+                          .toFixed(2)
+                          .replace('.', ',')}{' '}
+                        € HT
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onOpenQuickAdd(mission.id, 'expense')}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 cursor-pointer"
+                      >
+                        + Ajouter un frais / km
+                      </button>
+                    </div>
+                  </div>
+
+                  {(mission.expenses || []).length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-400 bg-slate-50/50 rounded-xl space-y-1.5">
+                      <p>Aucun frais ou déplacement enregistré sur ce dossier.</p>
+                      <button
+                        type="button"
+                        onClick={() => onOpenQuickAdd(mission.id, 'expense')}
+                        className="text-emerald-700 font-bold hover:underline"
+                      >
+                        + Saisir un billet de train, hôtel, repas, péage ou km →
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-xl overflow-hidden text-xs max-h-72 overflow-y-auto">
+                      {(mission.expenses || []).map((exp: any) => (
+                        <div key={exp.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50 gap-2">
+                          {editingExpId === exp.id ? (
+                            <div className="flex flex-wrap items-center gap-1.5 w-full">
+                              <input
+                                type="text"
+                                value={editExpLabel}
+                                onChange={(e) => setEditExpLabel(e.target.value)}
+                                className="flex-1 min-w-[140px] border border-slate-300 rounded px-2 py-1 text-xs font-semibold"
+                              />
+                              <input
+                                type="text"
+                                value={editExpQty}
+                                onChange={(e) => setEditExpQty(e.target.value)}
+                                placeholder="Qté"
+                                className="w-14 border border-slate-300 rounded px-1.5 py-1 text-center text-xs"
+                              />
+                              <input
+                                type="text"
+                                value={editExpUnitPrice}
+                                onChange={(e) => setEditExpUnitPrice(e.target.value)}
+                                placeholder="PU HT"
+                                className="w-20 border border-slate-300 rounded px-1.5 py-1 text-right text-xs font-bold"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveExpenseEdit(exp)}
+                                className="px-2 py-1 bg-emerald-700 text-white rounded text-[10px] font-bold"
+                              >
+                                OK
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingExpId(null)}
+                                className="px-1.5 py-1 bg-slate-100 text-slate-600 rounded text-[10px]"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="min-w-0">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="font-semibold text-slate-900 truncate">{exp.label}</span>
+                                  {exp.category !== 'km' && (
+                                    <span
+                                      className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[9px] font-bold shrink-0"
+                                      title="Ce débours est automatiquement synchronisé dans votre Livre Comptable (Frais liés aux dossiers)"
+                                    >
+                                      Sync Compta
+                                    </span>
+                                  )}
+                                  {exp.receipt_path && (
+                                    <a
+                                      href={`/uploads/${exp.receipt_path}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[#0f3854] hover:underline text-[10px] font-bold shrink-0"
+                                      title="Voir le justificatif joint"
+                                    >
+                                      [Justif]
+                                    </a>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-slate-400 block">
+                                  {(exp.date || '').split('-').reverse().join('/')} • {exp.quantity} ×{' '}
+                                  {Number(exp.unit_price).toFixed(2).replace('.', ',')} € HT
+                                  {exp.vat_amount > 0 ? ` (TVA ${Number(exp.vat_amount).toFixed(2).replace('.', ',')} €)` : ''}
+                                </span>
+                              </div>
+
+                              <div className="text-right flex items-center space-x-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingExpId(exp.id);
+                                    setEditExpLabel(exp.label);
+                                    setEditExpQty(String(exp.quantity));
+                                    setEditExpUnitPrice(String(exp.unit_price));
+                                  }}
+                                  className="text-right hover:underline"
+                                  title="Cliquer pour modifier ce frais"
+                                >
+                                  <span className="font-bold text-slate-900 block">
+                                    {Number(exp.total_ht).toFixed(2).replace('.', ',')} € HT
+                                  </span>
+                                  <span
+                                    className={`text-[10px] font-semibold ${
+                                      exp.status === 'facture'
+                                        ? 'text-emerald-700'
+                                        : exp.status === 'brouillon_facture'
+                                        ? 'text-amber-700'
+                                        : 'text-[#0f3854]'
+                                    }`}
+                                  >
+                                    {exp.status === 'facture'
+                                      ? 'Facturé'
+                                      : exp.status === 'brouillon_facture'
+                                      ? 'En brouillon'
+                                      : 'À facturer'}
+                                  </span>
+                                </button>
+                                {exp.status !== 'facture' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteExpense(exp.id)}
+                                    className="text-slate-300 hover:text-rose-600 p-1"
+                                    title="Supprimer ce frais"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* FACTURES DU DOSSIER (Section dédiée avec historique complet) */}
@@ -1536,7 +2606,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       </h3>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Toutes les notes d'honoraires émises sur {mission.code} (acomptes, notes intermédiaires et soldes).
+                      Toutes les notes d'honoraires émises sur {mission.code} (classées dans Finder sous <code className="font-mono text-slate-700">07_Factures_Honoraires</code>).
                     </p>
                   </div>
 
@@ -1570,8 +2640,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
-                          <th className="py-2.5 px-3 font-semibold">Numéro</th>
-                          <th className="py-2.5 px-3 font-semibold">Date</th>
+                          <th className="py-2.5 px-3 font-semibold">Numéro Global</th>
+                          <th className="py-2.5 px-3 font-semibold">Date & Heure</th>
                           <th className="py-2.5 px-3 font-semibold">Objet / Période</th>
                           <th className="py-2.5 px-3 font-semibold text-right">Montant HT</th>
                           <th className="py-2.5 px-3 font-semibold text-right">Net à payer TTC</th>
@@ -1582,11 +2652,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <tbody className="divide-y divide-slate-100">
                         {missionInvoices.map((inv: any) => {
                           const net = inv.net_payable ?? inv.total_ttc ?? 0;
+                          const timePart = inv.created_at && inv.created_at.includes('T')
+                            ? inv.created_at.split('T')[1]?.slice(0, 5)
+                            : null;
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 font-bold text-[#0f3854] font-mono">{inv.invoice_number}</td>
                               <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
                                 {(inv.date || '').split('-').reverse().join('/')}
+                                {timePart && <span className="text-[10px] text-slate-400 ml-1">({timePart})</span>}
                               </td>
                               <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
                                 {inv.subject || `Mission d'expertise`}
@@ -1640,99 +2714,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </span>
                 </div>
               </div>
-
-              {/* POINTAGE DU TEMPS */}
-              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Clock className="w-4 h-4 text-[#0f3854]" />
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Pointage du dossier ({mission.activities?.length || 0} lignes)
-                      </h3>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowRatesDrawer(!showRatesDrawer)}
-                        className="text-xs text-slate-500 hover:text-slate-800"
-                      >
-                        {mission.custom_hourly_rate || 190} €/h
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onOpenQuickAdd(mission.id)}
-                        className="text-xs font-bold text-[#0f3854] hover:underline"
-                      >
-                        + Pointer
-                      </button>
-                    </div>
-                  </div>
-
-                  {showRatesDrawer && (
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <MissionRatesSettings mission={mission} onUpdated={loadData} />
-                    </div>
-                  )}
-
-                  {(mission.activities || []).length === 0 ? (
-                    <p className="py-6 text-center text-xs text-slate-400 bg-slate-50/50 rounded-xl">
-                      Aucun temps pointé sur ce dossier.
-                    </p>
-                  ) : (
-                    <div className="divide-y divide-slate-100 border border-slate-200/80 rounded-xl overflow-hidden text-xs max-h-60 overflow-y-auto">
-                      {(mission.activities || []).map((act: any) => (
-                        <div key={act.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50">
-                          <div>
-                            <span className="font-semibold text-slate-900 block">
-                              {ACTIVITY_CATEGORY_LABELS[act.category as keyof typeof ACTIVITY_CATEGORY_LABELS] || act.label}
-                            </span>
-                            <span className="text-[11px] text-slate-400">
-                              {(act.date || '').split('-').reverse().join('/')}
-                              {act.notes ? ` • ${act.notes}` : ''}
-                            </span>
-                          </div>
-                          <div className="text-right flex items-center space-x-2">
-                            {editingActId === act.id ? (
-                              <div className="flex items-center space-x-1">
-                                <input
-                                  type="text"
-                                  value={editActHours}
-                                  onChange={(e) => setEditActHours(e.target.value)}
-                                  className="w-12 border border-[#0f3854] rounded px-1 py-0.5 text-right font-bold"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveActivityHours(act.id)}
-                                  className="px-1.5 py-0.5 bg-[#0f3854] text-white rounded text-[10px]"
-                                >
-                                  OK
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingActId(act.id);
-                                  setEditActHours(String(act.hours));
-                                }}
-                                className="text-right hover:underline"
-                              >
-                                <span className="font-bold text-slate-900 block">
-                                  {Number(act.total_ht).toFixed(2).replace('.', ',')} €
-                                </span>
-                                <span className="text-[10px] text-slate-500">
-                                  {act.hours}h ({act.status === 'facture' ? 'Facturé' : 'À facturer'})
-                                </span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            </div>
+          )}
 
           {/* =====================================================================
               VOLET 2 : 02. CONTRATS

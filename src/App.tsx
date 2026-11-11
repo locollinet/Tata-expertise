@@ -84,6 +84,7 @@ export function App() {
   // Modals & Drawers
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickAddDefaultMissionId, setQuickAddDefaultMissionId] = useState<string | undefined>(undefined);
+  const [quickAddDefaultTab, setQuickAddDefaultTab] = useState<'activity' | 'expense' | 'photo' | undefined>(undefined);
   const [isCreateMissionOpen, setIsCreateMissionOpen] = useState(false);
   const [createMissionInitialData, setCreateMissionInitialData] = useState<any>(null);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
@@ -127,8 +128,9 @@ export function App() {
     }
   }, [missions]);
 
-  const handleOpenQuickAdd = (missionId?: string) => {
+  const handleOpenQuickAdd = (missionId?: string, defaultTab?: 'activity' | 'expense' | 'photo') => {
     setQuickAddDefaultMissionId(missionId);
+    setQuickAddDefaultTab(defaultTab);
     setIsQuickAddOpen(true);
   };
 
@@ -239,7 +241,7 @@ export function App() {
                 }));
               }}
               onBack={handleBackFromMission}
-              onOpenQuickAdd={(mId) => handleOpenQuickAdd(mId)}
+              onOpenQuickAdd={(mId, tab) => handleOpenQuickAdd(mId, tab)}
               onPrepareBilling={(mId) => {
                 const m = missions.find(x => x.id === mId) || missionsCache[mId];
                 handleNavigateToBilling(m?.code);
@@ -378,6 +380,7 @@ export function App() {
         onClose={() => setIsQuickAddOpen(false)}
         missions={missions}
         defaultMissionId={quickAddDefaultMissionId}
+        defaultTab={quickAddDefaultTab}
         onSuccess={refreshData}
       />
 

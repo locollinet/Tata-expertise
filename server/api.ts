@@ -172,6 +172,7 @@ apiRouter.get('/dashboard', (_req, res) => {
 apiRouter.get('/missions', (req, res) => {
   const query = (req.query.q as string || '').toLowerCase().trim();
   const statusFilter = req.query.status as string;
+  const guaranteeFilter = req.query.guarantee_type as string;
 
   let sql = 'SELECT * FROM missions WHERE 1=1';
   const params: any[] = [];
@@ -179,6 +180,10 @@ apiRouter.get('/missions', (req, res) => {
   if (statusFilter && statusFilter !== 'all') {
     sql += ' AND status = ?';
     params.push(statusFilter);
+  }
+  if (guaranteeFilter && guaranteeFilter !== 'all') {
+    sql += ' AND guarantee_type = ?';
+    params.push(guaranteeFilter);
   }
 
   sql += ' ORDER BY created_at DESC';
@@ -193,6 +198,7 @@ apiRouter.get('/missions', (req, res) => {
       const stats = getMissionUnbilledStats(m.id);
       const adverse_parties = parseJsonSafe<any[]>(m.adverse_parties, []);
       const stake_history = parseJsonSafe<any[]>(m.stake_history, []);
+      const expertise_operations = parseJsonSafe<any[]>(m.expertise_operations, []);
       const docs = db.prepare('SELECT id, piece_number, section, original_name, caption, category FROM documents WHERE mission_id = ? ORDER BY piece_number ASC').all(m.id) as any[];
 
       let matched_pieces: any[] = [];
@@ -206,8 +212,10 @@ apiRouter.get('/missions', (req, res) => {
 
       return {
         ...m,
+        guarantee_type: m.guarantee_type || 'RC',
         adverse_parties,
         stake_history,
+        expertise_operations,
         unbilled_hours: stats.unbilled_hours,
         unbilled_expenses: stats.unbilled_expenses,
         total_unbilled_ht: stats.total_unbilled_ht,
@@ -223,10 +231,10 @@ apiRouter.get('/missions', (req, res) => {
       if (!query) return true;
       if (m.matched_pieces && m.matched_pieces.length > 0) return true;
       const advStr = (m.adverse_parties || [])
-        .map((p: any) => `${p.party_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''} ${p.lawyer_name || ''} ${p.reference || ''}`)
+        .map((p: any) => `${p.party_name || ''} ${p.insurer_name || ''} ${p.expert_firm || ''} ${p.expert_name || ''} ${p.lawyer_name || ''} ${p.reference || ''}`)
         .join(' ')
         .toLowerCase();
-      const hay = `${m.code || ''} ${m.title || ''} ${m.case_reference || ''} ${m.insurance_client || ''} ${m.client_contact || ''} ${m.insured_party || ''} ${m.insured_reference || ''} ${m.broker_name || ''} ${m.broker_reference || ''} ${m.third_parties || ''} ${advStr}`.toLowerCase();
+      const hay = `${m.code || ''} ${m.title || ''} ${m.case_reference || ''} ${m.guarantee_type || ''} ${m.insurance_client || ''} ${m.client_contact || ''} ${m.insurer_company || ''} ${m.insured_party || ''} ${m.insured_contact || ''} ${m.insured_reference || ''} ${m.broker_name || ''} ${m.broker_reference || ''} ${m.client_lawyer || ''} ${m.judicial_expert || ''} ${m.third_parties || ''} ${advStr}`.toLowerCase();
       return hay.includes(query);
     });
 
@@ -235,11 +243,12 @@ apiRouter.get('/missions', (req, res) => {
 
 apiRouter.post('/missions', (req, res) => {
   const {
-    code, title, case_reference, status = 'en_cours', insurance_client, client_contact,
-    insured_party, insured_reference, broker_name, broker_reference,
-    third_parties, adverse_parties, stake_amount,
-    court_reference, incident_date, reception_date = new Date().toISOString().slice(0, 10),
-    description = '', current_step = '', next_action = '', next_deadline, billing_contact_name,
+    code, title, case_reference, guarantee_type = 'RC', status = 'en_cours', insurance_client, client_contact,
+    insurer_company, insured_party, insured_contact, insured_reference, broker_name, broker_reference,
+    client_lawyer, third_parties, adverse_parties, stake_amount,
+    court_reference, judicial_expert, incident_date, reception_date = new Date().toISOString().slice(0, 10),
+    description = '', preliminary_analysis = '', pv_dommages_date = '', expertise_operations,
+    current_step = '', next_action = '', next_deadline, billing_contact_name,
     billing_address, custom_hourly_rate = 190, custom_travel_rate = 135, custom_km_rate = 0.95
   } = req.body;
 
@@ -248,7 +257,7 @@ apiRouter.post('/missions', (req, res) => {
   }
 
   const parsedAdverse: any[] = Array.isArray(adverse_parties)
-    ? adverse_parties.filter(p => p && (p.party_name || p.expert_name || p.expert_firm))
+    ? adverse_parties.filter(p => p && (p.party_name || p.insurer_name || p.expert_name || p.expert_firm))
     : [];
   const derivedThirdParties = parsedAdverse.length > 0
     ? parsedAdverse.map(p => p.party_name).filter(Boolean).join(' / ')
@@ -266,30 +275,42 @@ apiRouter.post('/missions', (req, res) => {
       }]
     : [];
 
+  const defaultOps = Array.isArray(expertise_operations) && expertise_operations.length > 0
+    ? expertise_operations
+    : [
+        { id: 'op-1', label: '1', expertise_date: '', report_date: '', quantum: numericStake, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+        { id: 'op-2', label: '2', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+        { id: 'op-3', label: '3', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+        { id: 'op-def', label: 'Définitif', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
+      ];
+
   const id = `m-${uuidv4().slice(0, 8)}`;
   try {
     db.prepare(`
       INSERT INTO missions (
-        id, code, title, case_reference, status, insurance_client, client_contact,
-        insured_party, insured_reference, broker_name, broker_reference,
-        third_parties, adverse_parties, stake_amount, initial_stake_amount, stake_history,
-        court_reference, incident_date, reception_date,
-        description, current_step, next_action, next_deadline, billing_contact_name,
+        id, code, title, case_reference, guarantee_type, status, insurance_client, client_contact,
+        insurer_company, insured_party, insured_contact, insured_reference, broker_name, broker_reference,
+        client_lawyer, third_parties, adverse_parties, stake_amount, initial_stake_amount, stake_history,
+        court_reference, judicial_expert, incident_date, reception_date,
+        description, preliminary_analysis, pv_dommages_date, expertise_operations,
+        current_step, next_action, next_deadline, billing_contact_name,
         billing_address, custom_hourly_rate, custom_travel_rate, custom_km_rate
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?, ?, ?
       )
     `).run(
-      id, code, title, case_reference, status, insurance_client, client_contact || null,
-      insured_party || null, insured_reference || null, broker_name || null, broker_reference || null,
-      derivedThirdParties || null, JSON.stringify(parsedAdverse), numericStake, numericStake, JSON.stringify(initialHistory),
-      court_reference || null, incident_date || null, reception_date,
-      description, current_step, next_action, next_deadline || null, billing_contact_name || null,
+      id, code, title, case_reference, guarantee_type || 'RC', status, insurance_client, client_contact || null,
+      insurer_company || null, insured_party || null, insured_contact || null, insured_reference || null, broker_name || null, broker_reference || null,
+      client_lawyer || null, derivedThirdParties || null, JSON.stringify(parsedAdverse), numericStake, numericStake, JSON.stringify(initialHistory),
+      court_reference || null, judicial_expert || null, incident_date || null, reception_date,
+      description, preliminary_analysis || '', pv_dommages_date || '', JSON.stringify(defaultOps),
+      current_step || '', next_action || '', next_deadline || null, billing_contact_name || null,
       billing_address || null, custom_hourly_rate, custom_travel_rate, custom_km_rate
     );
 
@@ -340,8 +361,10 @@ apiRouter.get('/missions/:id', (req, res) => {
 
   res.json({
     ...mission,
+    guarantee_type: mission.guarantee_type || 'RC',
     adverse_parties: parseJsonSafe<any[]>(mission.adverse_parties, []),
     stake_history: parseJsonSafe<any[]>(mission.stake_history, []),
+    expertise_operations: parseJsonSafe<any[]>(mission.expertise_operations, []),
     unbilled_hours: stats.unbilled_hours,
     unbilled_expenses: stats.unbilled_expenses,
     total_unbilled_ht: stats.total_unbilled_ht,
@@ -387,6 +410,9 @@ apiRouter.put('/missions/:id', (req, res) => {
     let stakeHistory = m.stake_history !== undefined
       ? (Array.isArray(m.stake_history) ? m.stake_history : parseJsonSafe<any[]>(m.stake_history, []))
       : parseJsonSafe<any[]>(existing.stake_history, []);
+    const expertiseOps = m.expertise_operations !== undefined
+      ? (Array.isArray(m.expertise_operations) ? m.expertise_operations : parseJsonSafe<any[]>(m.expertise_operations, []))
+      : parseJsonSafe<any[]>(existing.expertise_operations, []);
 
     // If stake_amount changed and caller didn't pass full stake_history, append a new StakeEntry automatically
     if (
@@ -405,7 +431,7 @@ apiRouter.put('/missions/:id', (req, res) => {
             id: `stk-${uuidv4().slice(0, 6)}`,
             date: m.stake_date || new Date().toISOString().slice(0, 10),
             amount: stakeAmount,
-            note: m.stake_note || (stakeHistory.length === 0 ? 'Estimation initiale' : 'Actualisation de l’enjeu'),
+            note: m.stake_note || (stakeHistory.length === 0 ? 'Estimation initiale' : 'Actualisation du quantum'),
           },
         ];
       }
@@ -413,34 +439,43 @@ apiRouter.put('/missions/:id', (req, res) => {
 
     db.prepare(`
       UPDATE missions SET
-        title = ?, case_reference = ?, status = ?, insurance_client = ?, client_contact = ?,
-        insured_party = ?, insured_reference = ?, broker_name = ?, broker_reference = ?,
-        third_parties = ?, adverse_parties = ?,
+        title = ?, case_reference = ?, guarantee_type = ?, status = ?, insurance_client = ?, client_contact = ?,
+        insurer_company = ?, insured_party = ?, insured_contact = ?, insured_reference = ?, broker_name = ?, broker_reference = ?,
+        client_lawyer = ?, third_parties = ?, adverse_parties = ?,
         stake_amount = ?, initial_stake_amount = ?, stake_history = ?,
-        court_reference = ?, incident_date = ?, reception_date = ?,
-        description = ?, current_step = ?, next_action = ?, next_deadline = ?, billing_contact_name = ?,
+        court_reference = ?, judicial_expert = ?, incident_date = ?, reception_date = ?,
+        description = ?, preliminary_analysis = ?, pv_dommages_date = ?, expertise_operations = ?,
+        current_step = ?, next_action = ?, next_deadline = ?, billing_contact_name = ?,
         billing_address = ?, custom_hourly_rate = ?, custom_travel_rate = ?, custom_km_rate = ?,
         custom_billing_threshold = ?, custom_vat_rate = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(
       m.title ?? existing.title,
       m.case_reference ?? existing.case_reference,
+      m.guarantee_type !== undefined ? m.guarantee_type : (existing.guarantee_type || 'RC'),
       m.status ?? existing.status,
       m.insurance_client ?? existing.insurance_client,
       m.client_contact !== undefined ? m.client_contact : existing.client_contact,
+      m.insurer_company !== undefined ? m.insurer_company : existing.insurer_company,
       m.insured_party !== undefined ? m.insured_party : existing.insured_party,
+      m.insured_contact !== undefined ? m.insured_contact : existing.insured_contact,
       m.insured_reference !== undefined ? m.insured_reference : existing.insured_reference,
       m.broker_name !== undefined ? m.broker_name : existing.broker_name,
       m.broker_reference !== undefined ? m.broker_reference : existing.broker_reference,
+      m.client_lawyer !== undefined ? m.client_lawyer : existing.client_lawyer,
       derivedThirdParties,
       JSON.stringify(parsedAdverse),
       stakeAmount,
       initialStake,
       JSON.stringify(stakeHistory),
       m.court_reference !== undefined ? m.court_reference : existing.court_reference,
+      m.judicial_expert !== undefined ? m.judicial_expert : existing.judicial_expert,
       m.incident_date !== undefined ? m.incident_date : existing.incident_date,
       m.reception_date ?? existing.reception_date,
       m.description !== undefined ? m.description : existing.description,
+      m.preliminary_analysis !== undefined ? m.preliminary_analysis : (existing.preliminary_analysis || ''),
+      m.pv_dommages_date !== undefined ? m.pv_dommages_date : (existing.pv_dommages_date || ''),
+      JSON.stringify(expertiseOps),
       m.current_step !== undefined ? m.current_step : existing.current_step,
       m.next_action !== undefined ? m.next_action : existing.next_action,
       m.next_deadline !== undefined ? m.next_deadline : existing.next_deadline,
@@ -453,7 +488,12 @@ apiRouter.put('/missions/:id', (req, res) => {
       m.custom_vat_rate ?? existing.custom_vat_rate,
       req.params.id
     );
-    res.json({ message: "Dossier mis à jour avec succès", stake_history: stakeHistory, adverse_parties: parsedAdverse });
+    res.json({
+      message: "Dossier mis à jour avec succès",
+      stake_history: stakeHistory,
+      adverse_parties: parsedAdverse,
+      expertise_operations: expertiseOps,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -527,6 +567,18 @@ apiRouter.delete('/activities/:id', (req, res) => {
 });
 
 // ---------------- EXPENSES / FRAIS ----------------
+const DEFAULT_EXPENSE_SUPPLIER: Record<string, string> = {
+  train: 'SNCF Connect',
+  peage: 'Société d’Autoroutes',
+  location_voiture: 'Loueur Véhicule',
+  repas: 'Restaurant / Déplacement',
+  hotel: 'Hôtel Déplacement',
+  parking: 'Parking',
+  taxi: 'Taxi / VTC',
+  peage_parking: 'Parking / Péage',
+  autre: 'Frais de mission',
+};
+
 apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
   const { mission_id, date, category, label, quantity = 1, unit_price, vat_rate: customVatRate, is_refacturable = true } = req.body;
   if (!mission_id || !date || unit_price === undefined) {
@@ -539,12 +591,14 @@ apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
   const defaultExpenseLabels: Record<string, string> = {
     km: 'Frais kilométriques',
     train: 'Frais de déplacement (train)',
-    location_voiture: 'Location de voiture',
-    peage_parking: 'Parking',
+    peage: 'Péage',
+    location_voiture: 'Voiture de location',
+    parking: 'Parking',
+    peage_parking: 'Parking / Péage',
     taxi: 'Taxi',
     repas: 'Repas',
     hotel: 'Hôtel',
-    autre: 'Frais de mission',
+    autre: 'Autre frais',
   };
   const resolvedLabel = (label && String(label).trim()) || defaultExpenseLabels[category] || 'Frais de déplacement';
 
@@ -560,13 +614,41 @@ apiRouter.post('/expenses', upload.single('receipt'), (req, res) => {
   const id = `exp-${uuidv4().slice(0, 8)}`;
   const receipt_filename = req.file ? req.file.filename : null;
   const receipt_original_name = req.file ? req.file.originalname : null;
+  const refact = is_refacturable === false || is_refacturable === 'false' || is_refacturable === 0 ? 0 : 1;
 
   db.prepare(`
     INSERT INTO expenses (id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, status, is_refacturable)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', ?)
-  `).run(id, mission_id, mission.code, date, category, resolvedLabel, qty, up, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, is_refacturable ? 1 : 0);
+  `).run(id, mission_id, mission.code, date, category, resolvedLabel, qty, up, total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, refact);
 
-  res.json({ id, total_ht, vat_amount, total_ttc, receipt_filename, receipt_original_name, message: "Frais enregistré" });
+  // Sync real disbursement expenses (excluding kilometric allowance 'km') into accounting_entries
+  if (category !== 'km') {
+    const month = String(date).slice(0, 7);
+    const party = DEFAULT_EXPENSE_SUPPLIER[category] || 'Frais déplacement mission';
+    db.prepare(`
+      INSERT OR REPLACE INTO accounting_entries (
+        id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+        amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id,
+        receipt_filename, receipt_original_name, comment
+      ) VALUES (?, ?, 'depense', NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'ponctuel', NULL, ?, ?, ?)
+    `).run(
+      `acc-${id}`,
+      month,
+      date,
+      mission.code,
+      resolvedLabel,
+      party,
+      total_ht,
+      vat_rate,
+      vat_amount,
+      total_ttc,
+      receipt_filename,
+      receipt_original_name,
+      `Frais dossier ${mission.code}${refact ? ' (Refacturable client)' : ' (Non refacturable)'}`
+    );
+  }
+
+  res.json({ id, total_ht, vat_amount, total_ttc, receipt_filename, receipt_original_name, message: "Frais enregistré dans le dossier et synchronisé en comptabilité" });
 });
 
 apiRouter.put('/expenses/:id', (req, res) => {
@@ -577,15 +659,43 @@ apiRouter.put('/expenses/:id', (req, res) => {
   const qty = req.body.quantity !== undefined ? Number(req.body.quantity) : Number(exp.quantity);
   const up = req.body.unit_price !== undefined ? Number(req.body.unit_price) : Number(exp.unit_price);
   const label = req.body.label !== undefined ? String(req.body.label).trim() : exp.label;
+  const date = req.body.date !== undefined ? String(req.body.date) : exp.date;
+  const category = req.body.category !== undefined ? String(req.body.category) : exp.category;
   const vat_rate = req.body.vat_rate !== undefined ? Number(req.body.vat_rate) : Number(exp.vat_rate ?? 0.20);
   const total_ht = Math.round(qty * up * 100) / 100;
   const vat_amount = Math.round(total_ht * vat_rate * 100) / 100;
   const total_ttc = Math.round((total_ht + vat_amount) * 100) / 100;
 
   db.prepare(`
-    UPDATE expenses SET label = ?, quantity = ?, unit_price = ?, total_ht = ?, vat_rate = ?, vat_amount = ?, total_ttc = ?
+    UPDATE expenses SET date = ?, category = ?, label = ?, quantity = ?, unit_price = ?, total_ht = ?, vat_rate = ?, vat_amount = ?, total_ttc = ?
     WHERE id = ?
-  `).run(label, qty, up, total_ht, vat_rate, vat_amount, total_ttc, req.params.id);
+  `).run(date, category, label, qty, up, total_ht, vat_rate, vat_amount, total_ttc, req.params.id);
+
+  if (category !== 'km') {
+    const month = String(date).slice(0, 7);
+    const party = DEFAULT_EXPENSE_SUPPLIER[category] || 'Frais déplacement mission';
+    db.prepare(`
+      INSERT OR REPLACE INTO accounting_entries (
+        id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+        amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id,
+        receipt_filename, receipt_original_name, comment
+      ) VALUES (?, ?, 'depense', NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'ponctuel', NULL, ?, ?, ?)
+    `).run(
+      `acc-${req.params.id}`,
+      month,
+      date,
+      exp.mission_code,
+      label,
+      party,
+      total_ht,
+      vat_rate,
+      vat_amount,
+      total_ttc,
+      exp.receipt_filename,
+      exp.receipt_original_name,
+      `Frais dossier ${exp.mission_code}`
+    );
+  }
 
   res.json({ id: req.params.id, total_ht, total_ttc, message: "Frais mis à jour" });
 });
@@ -596,12 +706,30 @@ apiRouter.delete('/expenses/:id', (req, res) => {
   if (exp.status === 'facture') return res.status(400).json({ error: "Impossible de supprimer un frais déjà facturé" });
 
   db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM accounting_entries WHERE id = ?').run(`acc-${req.params.id}`);
   res.json({ message: "Frais supprimé" });
 });
 
 // ---------------- INVOICES / HONORAIRES ----------------
+function computeNextGlobalInvoiceNumber(year?: number): string {
+  const targetYear = year || new Date().getFullYear();
+  const rows = db.prepare('SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?').all(`${targetYear}-%`) as { invoice_number: string }[];
+  let maxSeq = 0;
+  for (const r of rows) {
+    const parts = String(r.invoice_number).split('-');
+    const seq = parseInt(parts[1], 10);
+    if (!isNaN(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+  return `${targetYear}-${String(maxSeq + 1).padStart(3, '0')}`;
+}
+
 apiRouter.get('/invoices', (_req, res) => {
-  const invoices = db.prepare('SELECT * FROM invoices ORDER BY date DESC').all() as any[];
+  const invoices = db.prepare(`
+    SELECT * FROM invoices
+    ORDER BY CAST(SUBSTR(invoice_number, 6) AS INTEGER) DESC, date DESC
+  `).all() as any[];
   const enriched = invoices.map(inv => {
     const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id);
     return {
@@ -646,18 +774,8 @@ apiRouter.post('/invoices/prepare', (req, res) => {
   if (!mission) return res.status(404).json({ error: "Mission non trouvée" });
 
   const invoiceId = `inv-${uuidv4().slice(0, 8)}`;
-
-  const currentYear = new Date().getFullYear();
-  const maxInv = db.prepare(`
-    SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1
-  `).get(`${currentYear}-%`) as { invoice_number: string } | undefined;
-
-  let nextNum = `${currentYear}-001`;
-  if (maxInv) {
-    const parts = maxInv.invoice_number.split('-');
-    const seq = parseInt(parts[1], 10) + 1;
-    nextNum = `${currentYear}-${String(seq).padStart(3, '0')}`;
-  }
+  const invoiceYear = date ? parseInt(String(date).slice(0, 4), 10) || new Date().getFullYear() : new Date().getFullYear();
+  const nextNum = computeNextGlobalInvoiceNumber(invoiceYear);
 
   const prepareTransaction = db.transaction(() => {
     let lines: any[] = [];
@@ -989,6 +1107,45 @@ apiRouter.post('/invoices/:id/emit', (req, res) => {
       inv.invoice_number, inv.mission_code, `Note d'honoraires n° ${inv.invoice_number}`,
       inv.client_name, inv.total_ht, inv.vat_amount, inv.total_ttc, inv.subject
     );
+
+    // 4. Sync with mission's Synthesis Table (expertise_operations)
+    const missionRow = db.prepare('SELECT id, stake_amount, expertise_operations FROM missions WHERE id = ?').get(inv.mission_id) as any;
+    if (missionRow) {
+      let ops = parseJsonSafe<any[]>(missionRow.expertise_operations, []);
+      const existingOpIdx = ops.findIndex((o: any) => o.invoice_number === inv.invoice_number);
+      if (existingOpIdx >= 0) {
+        ops[existingOpIdx] = {
+          ...ops[existingOpIdx],
+          invoice_number: inv.invoice_number,
+          invoice_amount_ht: inv.total_ttc || inv.total_ht,
+          invoice_date: inv.date,
+          quantum: ops[existingOpIdx].quantum ?? missionRow.stake_amount ?? null,
+        };
+      } else {
+        const emptySlotIdx = ops.findIndex((o: any) => !o.invoice_number && o.label !== 'Définitif');
+        if (emptySlotIdx >= 0) {
+          ops[emptySlotIdx] = {
+            ...ops[emptySlotIdx],
+            invoice_number: inv.invoice_number,
+            invoice_amount_ht: inv.total_ttc || inv.total_ht,
+            invoice_date: inv.date,
+            quantum: ops[emptySlotIdx].quantum ?? missionRow.stake_amount ?? null,
+          };
+        } else {
+          ops.push({
+            id: `op-${uuidv4().slice(0, 6)}`,
+            label: String(ops.filter((o: any) => o.label !== 'Définitif').length + 1),
+            expertise_date: '',
+            report_date: inv.date,
+            quantum: missionRow.stake_amount ?? null,
+            invoice_number: inv.invoice_number,
+            invoice_amount_ht: inv.total_ttc || inv.total_ht,
+            invoice_date: inv.date,
+          });
+        }
+      }
+      db.prepare('UPDATE missions SET expertise_operations = ? WHERE id = ?').run(JSON.stringify(ops), missionRow.id);
+    }
   });
 
   try {
@@ -1762,15 +1919,67 @@ function ensureRecurringEntriesForMonth(month: string) {
   tx();
 }
 
+function ensureDossierExpensesForMonth(month: string) {
+  const monthExps = db.prepare(`
+    SELECT * FROM expenses
+    WHERE strftime('%Y-%m', date) = ? AND category != 'km'
+  `).all(month) as any[];
+  if (monthExps.length === 0) return;
+
+  const existingEntries = db.prepare("SELECT * FROM accounting_entries WHERE month = ? AND type = 'depense'").all(month) as any[];
+  const insertStmt = db.prepare(`
+    INSERT OR IGNORE INTO accounting_entries (
+      id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+      amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id,
+      receipt_filename, receipt_original_name, comment
+    ) VALUES (?, ?, 'depense', NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'ponctuel', NULL, ?, ?, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    for (const exp of monthExps) {
+      const targetId = `acc-${exp.id}`;
+      const alreadyLinked = existingEntries.some(
+        e =>
+          e.id === targetId ||
+          (e.mission_code === exp.mission_code &&
+            Math.abs(Number(e.amount_ht) - Number(exp.total_ht)) < 0.01 &&
+            e.date === exp.date)
+      );
+      if (!alreadyLinked) {
+        const party = DEFAULT_EXPENSE_SUPPLIER[exp.category] || 'Frais déplacement mission';
+        insertStmt.run(
+          targetId,
+          month,
+          exp.date,
+          exp.mission_code,
+          exp.label,
+          party,
+          exp.total_ht,
+          exp.vat_rate ?? 0,
+          exp.vat_amount ?? 0,
+          exp.total_ttc,
+          exp.receipt_filename || null,
+          exp.receipt_original_name || null,
+          `Frais dossier ${exp.mission_code}${exp.is_refacturable ? ' (Refacturable client)' : ''}`
+        );
+      }
+    }
+  });
+  tx();
+}
+
 apiRouter.get('/compta/entries', (req, res) => {
   const month = (req.query.month as string) || '2026-10';
   ensureRecurringEntriesForMonth(month);
+  ensureDossierExpensesForMonth(month);
 
   const entries = db.prepare('SELECT * FROM accounting_entries WHERE month = ? ORDER BY date ASC').all(month) as any[];
   const recurringTemplates = db.prepare('SELECT * FROM recurring_expenses ORDER BY day_of_month ASC, object ASC').all() as any[];
 
-  // Calculate totals & detailed TVA breakdown
+  // Calculate totals & detailed TVA breakdown + distinction Frais Entreprise vs Frais Dossiers
   let totDepenseHT = 0, totDepenseTVA = 0, totDepenseTTC = 0;
+  let fraisEntrepriseHT = 0, fraisEntrepriseTVA = 0, fraisEntrepriseTTC = 0;
+  let fraisDossiersHT = 0, fraisDossiersTVA = 0, fraisDossiersTTC = 0;
   let totRecetteHT = 0, totRecetteTVA = 0, totRecetteTTC = 0;
 
   const vatBuckets: Record<string, { label: string; rate_label: string; base_ht: number; vat_amount: number; total_ttc: number; count: number }> = {
@@ -1785,6 +1994,16 @@ apiRouter.get('/compta/entries', (req, res) => {
       totDepenseHT += e.amount_ht;
       totDepenseTVA += e.vat_amount;
       totDepenseTTC += e.amount_ttc;
+
+      if (e.mission_code && String(e.mission_code).trim()) {
+        fraisDossiersHT += e.amount_ht;
+        fraisDossiersTVA += e.vat_amount;
+        fraisDossiersTTC += e.amount_ttc;
+      } else {
+        fraisEntrepriseHT += e.amount_ht;
+        fraisEntrepriseTVA += e.vat_amount;
+        fraisEntrepriseTTC += e.amount_ttc;
+      }
 
       if (!e.vat_amount || Math.abs(e.vat_amount) < 0.005) {
         vatBuckets.exonere_0.base_ht += e.amount_ht;
@@ -1832,6 +2051,12 @@ apiRouter.get('/compta/entries', (req, res) => {
       depenses_ht: Math.round(totDepenseHT * 100) / 100,
       depenses_tva: Math.round(totDepenseTVA * 100) / 100,
       depenses_ttc: Math.round(totDepenseTTC * 100) / 100,
+      frais_entreprise_ht: Math.round(fraisEntrepriseHT * 100) / 100,
+      frais_entreprise_tva: Math.round(fraisEntrepriseTVA * 100) / 100,
+      frais_entreprise_ttc: Math.round(fraisEntrepriseTTC * 100) / 100,
+      frais_dossiers_ht: Math.round(fraisDossiersHT * 100) / 100,
+      frais_dossiers_tva: Math.round(fraisDossiersTVA * 100) / 100,
+      frais_dossiers_ttc: Math.round(fraisDossiersTTC * 100) / 100,
       recettes_ht: Math.round(totRecetteHT * 100) / 100,
       recettes_tva: Math.round(totRecetteTVA * 100) / 100,
       recettes_ttc: Math.round(totRecetteTTC * 100) / 100,
@@ -1905,6 +2130,37 @@ apiRouter.post('/compta/entries', upload.single('receipt'), (req, res) => {
     receipt_original_name,
     comment || null
   );
+
+  // If this expense is linked to a mission_code, also create a refacturable expense in the mission's dossier if not already present
+  if (type === 'depense' && mission_code && String(mission_code).trim()) {
+    const cleanCode = String(mission_code).trim().toUpperCase();
+    const missionRow = db.prepare('SELECT id, code FROM missions WHERE UPPER(code) = ?').get(cleanCode) as any;
+    if (missionRow) {
+      const existingExp = db.prepare('SELECT id FROM expenses WHERE mission_id = ? AND date = ? AND ABS(total_ht - ?) < 0.01').get(missionRow.id, date, ht);
+      if (!existingExp) {
+        const expId = `exp-${id.replace(/^acc-/, '')}`;
+        const inferredCat = /sncf|train|tgv/i.test(`${object} ${party}`)
+          ? 'train'
+          : /h[oô]tel/i.test(`${object} ${party}`)
+          ? 'hotel'
+          : /repas|restau/i.test(`${object} ${party}`)
+          ? 'repas'
+          : /p[eé]age/i.test(`${object} ${party}`)
+          ? 'peage'
+          : /parking|paybyphone/i.test(`${object} ${party}`)
+          ? 'parking'
+          : /taxi|uber|g7/i.test(`${object} ${party}`)
+          ? 'taxi'
+          : 'autre';
+        db.prepare(`
+          INSERT OR IGNORE INTO expenses (
+            id, mission_id, mission_code, date, category, label, quantity, unit_price,
+            total_ht, vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, status, is_refacturable
+          ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'a_facturer', 1)
+        `).run(expId, missionRow.id, missionRow.code, date, inferredCat, object, ht, ht, Number(vat_rate) || 0, vat, ttc, receipt_filename, receipt_original_name);
+      }
+    }
+  }
 
   res.json({
     id,
