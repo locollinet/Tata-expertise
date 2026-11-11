@@ -3917,13 +3917,14 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
     const safeCode = (mission.code || 'Dossier').replace(/[^a-zA-Z0-9_-]/g, '_');
     const missionFolder = zip.folder(safeCode)!;
 
-    // 6 sous-dossiers canoniques
+    // 7 sous-dossiers canoniques
     const gFolder = missionFolder.folder('01_Page_de_garde')!;
     const cFolder = missionFolder.folder('02_Contrats')!;
     const constFolder = missionFolder.folder('03_Constatations_immediates')!;
     const contradFolder = missionFolder.folder('04_Contradictoire')!;
     const prepFolder = missionFolder.folder('05_Comptes_du_prejudice')!;
     const repFolder = missionFolder.folder('06_Rapports_emis')!;
+    const factFolder = missionFolder.folder('07_Factures_Honoraires')!;
 
     const folderMap: Record<string, JSZip> = {
       garde: gFolder,
@@ -3932,9 +3933,10 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
       contradictoire: contradFolder,
       prejudice: prepFolder,
       rapports: repFolder,
+      factures: factFolder,
     };
 
-    // 1. Factures du dossier -> 01_Page_de_garde/
+    // 1. Factures d'honoraires du dossier -> 07_Factures_Honoraires/
     const invoices = db.prepare('SELECT * FROM invoices WHERE our_ref = ? OR mission_id = ?').all(mission.code, mission.id) as any[];
     for (const inv of invoices) {
       try {
@@ -3945,7 +3947,7 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
           lines,
         };
         const docxBuffer = await generateInvoiceDocx(fullInv);
-        gFolder.file(`Facture_${inv.invoice_number}.docx`, docxBuffer);
+        factFolder.file(`Facture_${inv.invoice_number}.docx`, docxBuffer);
       } catch (err) {
         console.warn('Erreur génération docx facture zip :', err);
       }

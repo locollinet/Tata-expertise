@@ -152,8 +152,18 @@ export function getMacSubFolderForEvidence(item: {
   const sec = (item.section || '').toLowerCase();
   const name = (item.fileName || '').toLowerCase();
 
-  // 1. Factures d'honoraires / mandat / page de garde
-  if (cat.includes('facture_emise') || cat.includes('mandat') || sec === 'garde' || name.startsWith('facture_')) {
+  // 1. Factures d'honoraires / notes -> 07_Factures_Honoraires
+  if (
+    cat.includes('facture_emise') ||
+    cat === 'facture' ||
+    name.startsWith('facture_') ||
+    name.includes('honoraires')
+  ) {
+    return '07_Factures_Honoraires';
+  }
+
+  // Mandat & fiche de garde
+  if (cat.includes('mandat') || sec === 'garde') {
     return '01_Page_de_garde';
   }
 
