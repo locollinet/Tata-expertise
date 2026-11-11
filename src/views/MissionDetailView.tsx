@@ -24,6 +24,7 @@ import {
   syncComptaFileToMac,
   mirrorEvidenceToFirestore,
   VOLET_TO_MAC_FOLDER,
+  getMacSubFolderForEvidence,
   isLocalSyncConnected,
   getLocalSyncFolderName,
   scanUntrackedMacFilesForMission,
@@ -490,14 +491,21 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       const result = await res.json();
       const createdDocs: MissionDocument[] = result.documents || [];
 
-      const macSubFolder = VOLET_TO_MAC_FOLDER[targetVolet] || '03_Constatations_immediates';
+      const defaultVoletFolder = VOLET_TO_MAC_FOLDER[targetVolet] || '03_Constatations_immediates';
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const pieceNum = createdDocs[i]?.piece_number;
-        const macFileName = pieceNum ? `Piece_${pieceNum}_${f.name}` : f.name;
+        const prefix = pieceNum ? `Piece_${String(pieceNum).padStart(2, '0')}_` : '';
+        const macFileName = `${prefix}${f.name}`;
+        const targetSub = getMacSubFolderForEvidence({
+          category: categoryMap[targetVolet],
+          section: targetVolet,
+          mimeType: f.type,
+          fileName: f.name,
+        });
         await syncFileToLocalMacFolder({
           missionCode: mission.code,
-          subFolder: macSubFolder,
+          subFolder: targetSub,
           fileName: macFileName,
           data: f,
         });
@@ -514,7 +522,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
       setDocOptionalNote('');
       const count = files.length;
-      showToast(`${count} document${count > 1 ? 's' : ''} numéroté${count > 1 ? 's' : ''} et classé${count > 1 ? 's' : ''} dans ${macSubFolder}`);
+      showToast(`${count} document${count > 1 ? 's' : ''} numéroté${count > 1 ? 's' : ''} et classé${count > 1 ? 's' : ''} dans ${defaultVoletFolder}`);
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -1193,6 +1201,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               {mission.code}/{activeVolet === 'garde' ? '01_Page_de_garde & 07_Factures_Honoraires' : currentVoletMeta.macFolder}
             </strong>
           </div>
+
+          <a
+            href={`/api/missions/${mission.id}/export-zip`}
+            download={`${mission.code}_Finder_VP_Expertise.zip`}
+            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-white text-slate-700 text-[11px] font-semibold border border-slate-200 hover:bg-slate-50 transition-colors shadow-2xs"
+            title="Télécharger l'arborescence Finder complète de ce dossier (6 sous-dossiers classés) au format ZIP"
+          >
+            <Download className="w-3.5 h-3.5 text-[#0f3854]" />
+            <span className="hidden sm:inline">Export Finder (.zip)</span>
+          </a>
 
           <button
             type="button"

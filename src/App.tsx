@@ -208,6 +208,7 @@ export function App() {
             onNavigateToMissions={() => handleTabChange('missions')}
             onNavigateToCompta={() => handleTabChange('compta')}
             onOpenCreateMission={() => setIsCreateMissionOpen(true)}
+            onRefreshData={refreshData}
           />
         )}
 

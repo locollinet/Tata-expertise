@@ -2,7 +2,7 @@ import { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, Al
 import fs from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
-import { Invoice, ReportDraft, Attendee, Photo } from '../shared/types.js';
+import type { Invoice, ReportDraft, Attendee, Photo } from '../shared/types.ts';
 
 function escapeXml(str: string | number | null | undefined): string {
   if (str === null || str === undefined) return '';

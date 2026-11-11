@@ -1,6 +1,0 @@
-{
-  "summary":  "Plan révisé intégrant les retours terrain : déclencheur caméra smartphone direct pour reçus et justificatifs, pré-remplissage assisté de la modale de nouveau dossier (sans écriture automatique sauvage), garde-fous sur les PDF (10 Mo max), et confirmation des modèles réels d'API Gemini.",
-  "updatedAt":  "2026-10-28T13:46:18.815842831Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

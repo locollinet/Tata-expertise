@@ -87,6 +87,19 @@ export const api = {
   deleteExpense: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}`, {
     method: 'DELETE',
   }),
+  uploadExpenseReceipt: async (id: string, file: File) => {
+    const formData = new FormData();
+    formData.append('receipt', file);
+    const res = await fetch(`/api/expenses/${id}/receipt`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error("Erreur lors de l'upload du justificatif");
+    return res.json() as Promise<{ message: string; receipt_filename: string; receipt_original_name: string }>;
+  },
+  removeExpenseReceipt: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}/receipt`, {
+    method: 'DELETE',
+  }),
 
   // Invoices
   getInvoices: () => fetchJSON<Invoice[]>('/invoices'),

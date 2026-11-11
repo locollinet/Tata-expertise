@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api.js';
 import { Mission } from '@shared/types.js';
+import { syncFileToLocalMacFolder, syncComptaFileToMac, getMacSubFolderForEvidence } from '../utils/localFolderSync.js';
 
 interface ActionCardData {
   action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note';
@@ -424,6 +425,40 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
       );
 
       onRefreshData?.();
+
+      if (actionCard.filename) {
+        try {
+          const fileRes = await fetch(`/uploads/${actionCard.filename}`);
+          if (fileRes.ok) {
+            const blob = await fileRes.blob();
+            const safeName = actionCard.original_filename || actionCard.filename;
+            const missionCode = actionCard.matched_mission_code || res.mission_code || 'Cabinet_VP';
+
+            if (actionCard.action_type === 'expense') {
+              const month = (actionCard.payload?.date || new Date().toISOString()).slice(0, 7);
+              await syncComptaFileToMac({
+                month,
+                subFolder: 'Justificatifs',
+                fileName: `${actionCard.payload?.date || month}_${missionCode}_${safeName}`,
+                data: blob,
+              });
+            } else {
+              const targetSub = getMacSubFolderForEvidence({
+                category: actionCard.payload?.category || (actionCard.action_type === 'field_photo' ? 'photo_terrain' : 'autre'),
+                fileName: safeName,
+              });
+              await syncFileToLocalMacFolder({
+                missionCode,
+                subFolder: targetSub,
+                fileName: safeName,
+                data: blob,
+              });
+            }
+          }
+        } catch {
+          // Ignore sync failure
+        }
+      }
     } catch (err: any) {
       setMessages((prev) => [
         ...prev,

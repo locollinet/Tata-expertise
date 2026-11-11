@@ -552,6 +552,19 @@ export interface BankReconciliationReport {
   summary_message: string;
 }
 
+export interface MissingReceiptExpense {
+  id: string;
+  mission_id: string;
+  mission_code: string;
+  mission_title: string;
+  date: string;
+  category: string;
+  label: string;
+  total_ttc: number;
+  total_ht: number;
+  is_refacturable: boolean;
+}
+
 export interface DashboardSummary {
   urgent_actions: Array<{
     id: string;
@@ -569,4 +582,5 @@ export interface DashboardSummary {
   monthly_revenue_ht: number;
   latest_invoices: Invoice[];
   upcoming_travels: TravelOrder[];
+  missing_receipts?: MissingReceiptExpense[];
 }

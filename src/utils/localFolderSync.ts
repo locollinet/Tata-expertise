@@ -121,6 +121,95 @@ export function isFileSystemAccessSupported(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 }
 
+export function isInsideIframe(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+export function detectBrowser(): 'chrome' | 'safari' | 'firefox' | 'edge' | 'other' {
+  if (typeof navigator === 'undefined') return 'other';
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('edg/')) return 'edge';
+  if (ua.includes('chrome') && !ua.includes('edg/')) return 'chrome';
+  if (ua.includes('safari') && !ua.includes('chrome')) return 'safari';
+  if (ua.includes('firefox')) return 'firefox';
+  return 'other';
+}
+
+/**
+ * Détermine automatiquement le sous-dossier Mac cohérent (01 à 06) selon la nature du document.
+ */
+export function getMacSubFolderForEvidence(item: {
+  category?: string;
+  section?: DossierVoletKey | string;
+  mimeType?: string;
+  fileName?: string;
+}): MacDossierSubFolder {
+  const cat = (item.category || '').toLowerCase();
+  const sec = (item.section || '').toLowerCase();
+  const name = (item.fileName || '').toLowerCase();
+
+  // 1. Factures d'honoraires / mandat / page de garde
+  if (cat.includes('facture_emise') || cat.includes('mandat') || sec === 'garde' || name.startsWith('facture_')) {
+    return '01_Page_de_garde';
+  }
+
+  // 2. Contrats & polices d'assurance
+  if (cat.includes('contrat') || cat.includes('police') || cat.includes('avenant') || sec === 'contrats') {
+    return '02_Contrats';
+  }
+
+  // 3. Constatations immédiates (photos terrain, constats, relevés jour J, extractions...)
+  if (
+    cat.includes('constat') ||
+    cat.includes('photo') ||
+    cat.includes('extraction') ||
+    cat.includes('releve') ||
+    sec === 'constatations' ||
+    (item.mimeType && item.mimeType.startsWith('image/'))
+  ) {
+    return '03_Constatations_immediates';
+  }
+
+  // 4. Contradictoire (dires, courriers adverses, convocations, correspondances, actes)
+  if (
+    cat.includes('contradictoire') ||
+    cat.includes('dire') ||
+    cat.includes('courrier') ||
+    cat.includes('adverse') ||
+    cat.includes('convocation') ||
+    sec === 'contradictoire'
+  ) {
+    return '04_Contradictoire';
+  }
+
+  // 5. Comptes du préjudice (devis de réparation, factures acquittées, réclamations chiffrées, tableaux)
+  if (
+    cat.includes('prejudice') ||
+    cat.includes('devis') ||
+    cat.includes('reparation') ||
+    cat.includes('chiffrage') ||
+    sec === 'prejudice'
+  ) {
+    return '05_Comptes_du_prejudice';
+  }
+
+  // 6. Rapports émis (rapports préliminaires, notes de synthèse, rapports définitifs)
+  if (
+    cat.includes('rapport') ||
+    cat.includes('synthese') ||
+    sec === 'rapports' ||
+    name.includes('rapport')
+  ) {
+    return '06_Rapports_emis';
+  }
+
+  return '03_Constatations_immediates';
+}
+
 export function enableAutoDownloadSync(): { connected: boolean; folderName: string; mode: 'safari_auto' } {
   const name = 'iCloud Drive (Copie auto)';
   localStorage.setItem('vp_local_sync_folder_name', name);
@@ -224,6 +313,57 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
         if (m.code) {
           await ensureMissionFolderOnMac(m.code);
           missionsSynced++;
+
+          // 1b. Synchroniser les photos de terrain et documents de chaque dossier
+          try {
+            const detailRes = await fetch(`/api/missions/${m.id}`);
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              if (Array.isArray(detail.photos)) {
+                for (const photo of detail.photos) {
+                  if (photo.filename) {
+                    try {
+                      const fileRes = await fetch(`/uploads/${photo.filename}`);
+                      if (fileRes.ok) {
+                        const blob = await fileRes.blob();
+                        const safeName = photo.original_name || photo.filename;
+                        await syncFileToLocalMacFolder({
+                          missionCode: m.code,
+                          subFolder: '03_Constatations_immediates',
+                          fileName: safeName,
+                          data: blob,
+                        });
+                        filesSynced++;
+                      }
+                    } catch {}
+                  }
+                }
+              }
+
+              if (Array.isArray(detail.documents)) {
+                for (const doc of detail.documents) {
+                  if (doc.filename) {
+                    try {
+                      const fileRes = await fetch(`/uploads/${doc.filename}`);
+                      if (fileRes.ok) {
+                        const blob = await fileRes.blob();
+                        const safeName = doc.original_name || doc.filename;
+                        const voletKey = (doc.section as DossierVoletKey) || 'constatations';
+                        const targetFolder = VOLET_TO_MAC_FOLDER[voletKey] || '03_Constatations_immediates';
+                        await syncFileToLocalMacFolder({
+                          missionCode: m.code,
+                          subFolder: targetFolder,
+                          fileName: safeName,
+                          data: blob,
+                        });
+                        filesSynced++;
+                      }
+                    } catch {}
+                  }
+                }
+              }
+            }
+          } catch {}
         }
       }
     }
@@ -267,6 +407,33 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
         }
       }
     }
+
+    // 3. Déposer tous les justificatifs de frais dans Compta/<AAAA-MM>/Justificatifs/
+    try {
+      const expRes = await fetch('/api/expenses');
+      if (expRes.ok) {
+        const expenses = await expRes.json();
+        for (const exp of expenses) {
+          if (exp.receipt_filename) {
+            try {
+              const fileRes = await fetch(`/uploads/${exp.receipt_filename}`);
+              if (fileRes.ok) {
+                const blob = await fileRes.blob();
+                const month = (exp.date || '2026-10').slice(0, 7);
+                const safeName = exp.receipt_original_name || exp.receipt_filename;
+                await syncComptaFileToMac({
+                  month,
+                  subFolder: 'Justificatifs',
+                  fileName: `${exp.mission_code || 'Frais'}_${safeName}`,
+                  data: blob,
+                });
+                filesSynced++;
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
   } catch (err) {
     console.warn('Erreur lors de la synchronisation initiale des dossiers existants :', err);
   }
@@ -278,43 +445,59 @@ export async function connectLocalMacFolder(): Promise<{
   folderName: string;
   mode: 'native' | 'safari_auto';
   iframeBlocked?: boolean;
+  browserNotSupported?: boolean;
   missionsSynced?: number;
   filesSynced?: number;
+  error?: string;
 }> {
-  if (isFileSystemAccessSupported()) {
-    try {
-      const dirHandle = await (window as any).showDirectoryPicker({
-        id: 'vp_expertise_icloud',
-        mode: 'readwrite',
-        startIn: 'documents',
-      });
-      await saveDirectoryHandle(dirHandle);
-      localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
-      localStorage.setItem('vp_local_sync_mode', 'native');
-      localStorage.setItem('vp_local_sync_last_at', new Date().toISOString());
-      localStorage.removeItem('vp_local_sync_disabled');
-      window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
+  if (isInsideIframe()) {
+    return {
+      connected: false,
+      folderName: '',
+      mode: 'native',
+      iframeBlocked: true,
+    };
+  }
 
-      const stats = await syncAllExistingMissionsToMac();
+  if (!isFileSystemAccessSupported()) {
+    return {
+      connected: false,
+      folderName: '',
+      mode: 'safari_auto',
+      browserNotSupported: true,
+    };
+  }
 
-      return {
-        connected: true,
-        folderName: dirHandle.name,
-        mode: 'native',
-        missionsSynced: stats.missionsSynced,
-        filesSynced: stats.filesSynced,
-      };
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        return { connected: false, folderName: '', mode: 'native' };
-      }
-      if (err?.name === 'SecurityError' || String(err?.message || '').toLowerCase().includes('sub frame')) {
-        return { connected: false, folderName: '', mode: 'safari_auto', iframeBlocked: true };
-      }
-      throw err;
+  try {
+    const dirHandle = await (window as any).showDirectoryPicker({
+      id: 'vp_expertise_finder',
+      mode: 'readwrite',
+      startIn: 'documents',
+    });
+    await saveDirectoryHandle(dirHandle);
+    localStorage.setItem('vp_local_sync_folder_name', dirHandle.name);
+    localStorage.setItem('vp_local_sync_mode', 'native');
+    localStorage.setItem('vp_local_sync_last_at', new Date().toISOString());
+    localStorage.removeItem('vp_local_sync_disabled');
+    window.dispatchEvent(new CustomEvent('vp-local-sync-changed'));
+
+    const stats = await syncAllExistingMissionsToMac();
+
+    return {
+      connected: true,
+      folderName: dirHandle.name,
+      mode: 'native',
+      missionsSynced: stats.missionsSynced,
+      filesSynced: stats.filesSynced,
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return { connected: false, folderName: '', mode: 'native' };
     }
-  } else {
-    return enableAutoDownloadSync();
+    if (err?.name === 'SecurityError' || String(err?.message || '').toLowerCase().includes('sub frame')) {
+      return { connected: false, folderName: '', mode: 'native', iframeBlocked: true };
+    }
+    return { connected: false, folderName: '', mode: 'native', error: err?.message || String(err) };
   }
 }
 

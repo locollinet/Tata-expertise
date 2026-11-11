@@ -4,9 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { initDatabase, db } from './db.js';
-import { apiRouter } from './api.js';
-import { seedData } from './seed.js';
+import { initDatabase, db } from './db.ts';
+import { apiRouter } from './api.ts';
+import { seedData } from './seed.ts';
 
 dotenv.config();
 

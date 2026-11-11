@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { AccountingEntry, Invoice } from '../shared/types.js';
+import type { AccountingEntry, Invoice } from '../shared/types.ts';
 
 export async function generateMonthlyComptaWorkbook(
   monthLabel: string, // e.g. "Octobre 2026"

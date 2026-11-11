@@ -4,9 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { initDatabase, db } from './server/db.js';
-import { apiRouter } from './server/api.js';
-import { seedData } from './server/seed.js';
+import { initDatabase, db } from './server/db.ts';
+import { apiRouter } from './server/api.ts';
+import { seedData } from './server/seed.ts';
 
 dotenv.config();
 
@@ -17,8 +17,12 @@ function resolvePort(): number {
   if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
     return parseInt(process.argv[portArgIdx + 1], 10);
   }
-  if (process.env.NODE_ENV === 'production') {
-    return parseInt(process.env.PORT || '3000', 10);
+  const portEqArg = process.argv.find((arg) => arg.startsWith('--port='));
+  if (portEqArg) {
+    return parseInt(portEqArg.split('=')[1], 10);
+  }
+  if (process.env.PORT) {
+    return parseInt(process.env.PORT, 10);
   }
   return 3000;
 }
@@ -74,10 +78,12 @@ async function startServer() {
       });
     }
   } else {
+    process.env.DISABLE_HMR = 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
         hmr: false,
+        watch: null,
       },
       appType: 'spa',
     });
@@ -91,10 +97,24 @@ async function startServer() {
   server.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[VP Expertise] Port ${PORT} is already in use.`);
+      process.exit(1);
     } else {
       console.error('[VP Expertise] Server error:', err);
+      process.exit(1);
     }
   });
+
+  const gracefulShutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => {
+      process.exit(0);
+    }, 2000).unref();
+  };
+
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
 }
 
 startServer();

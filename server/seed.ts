@@ -1,4 +1,4 @@
-import { db, initDatabase } from './db.js';
+import { db, initDatabase } from './db.ts';
 import { v4 as uuidv4 } from 'uuid';
 
 initDatabase();

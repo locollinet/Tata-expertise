@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { db } from './db.js';
+import { db } from './db.ts';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
-import { generateInvoiceDocx, generateReportDocx } from './docx.js';
-import { generateMonthlyComptaWorkbook } from './excel.js';
-import { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.js';
+import { generateInvoiceDocx, generateReportDocx } from './docx.ts';
+import { generateMonthlyComptaWorkbook } from './excel.ts';
+import type { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.ts';
 import JSZip from 'jszip';
 
 export const apiRouter = Router();
@@ -155,6 +155,16 @@ apiRouter.get('/dashboard', (_req, res) => {
     SELECT COALESCE(SUM(total_ht), 0) as rev FROM invoices WHERE strftime('%Y-%m', date) = ? AND status != 'annule'
   `).get(currentMonth) as { rev: number };
 
+  // 6. Frais déclarés en attente de justificatif (photos de tickets de train, taxi, hôtel, repas)
+  const missingReceipts = db.prepare(`
+    SELECT e.id, e.mission_id, e.mission_code, e.date, e.category, e.label, e.total_ttc, e.total_ht, e.is_refacturable, m.title as mission_title
+    FROM expenses e
+    JOIN missions m ON e.mission_id = m.id
+    WHERE (e.receipt_filename IS NULL OR e.receipt_filename = '')
+      AND e.status != 'annule'
+    ORDER BY e.date DESC
+  `).all() as any[];
+
   res.json({
     urgent_actions: urgentActions,
     total_unbilled_ht: Math.round(totalUnbilledHT * 100) / 100,
@@ -165,6 +175,7 @@ apiRouter.get('/dashboard', (_req, res) => {
     monthly_revenue_ht: revenueObj.rev,
     latest_invoices: latestInvoices,
     upcoming_travels: upcomingTravels.map(t => ({ ...t, checklist: JSON.parse(t.checklist || '[]') })),
+    missing_receipts: missingReceipts,
   });
 });
 
@@ -708,6 +719,33 @@ apiRouter.delete('/expenses/:id', (req, res) => {
   db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
   db.prepare('DELETE FROM accounting_entries WHERE id = ?').run(`acc-${req.params.id}`);
   res.json({ message: "Frais supprimé" });
+});
+
+apiRouter.post('/expenses/:id/receipt', upload.single('receipt'), (req, res) => {
+  const exp = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id) as any;
+  if (!exp) return res.status(404).json({ error: "Frais introuvable" });
+  if (!req.file) return res.status(400).json({ error: "Aucun fichier reçu" });
+
+  db.prepare(`
+    UPDATE expenses SET receipt_filename = ?, receipt_original_name = ? WHERE id = ?
+  `).run(req.file.filename, req.file.originalname, req.params.id);
+
+  res.json({
+    message: "Justificatif associé avec succès",
+    receipt_filename: req.file.filename,
+    receipt_original_name: req.file.originalname,
+  });
+});
+
+apiRouter.delete('/expenses/:id/receipt', (req, res) => {
+  const exp = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id) as any;
+  if (!exp) return res.status(404).json({ error: "Frais introuvable" });
+
+  db.prepare(`
+    UPDATE expenses SET receipt_filename = NULL, receipt_original_name = NULL WHERE id = ?
+  `).run(req.params.id);
+
+  res.json({ message: "Justificatif retiré" });
 });
 
 // ---------------- INVOICES / HONORAIRES ----------------
@@ -3864,5 +3902,113 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
   } catch (err: any) {
     console.error('[Export ZIP Mac Error]:', err);
     res.status(500).json({ error: err.message || "Erreur lors de la génération de l'archive Mac" });
+  }
+});
+
+// Export ZIP individuel pour un dossier d'expertise avec ses 6 sous-dossiers Finder
+apiRouter.get('/missions/:id/export-zip', async (req, res) => {
+  try {
+    const mission = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.id) as any;
+    if (!mission) {
+      return res.status(404).json({ error: 'Dossier introuvable.' });
+    }
+
+    const zip = new JSZip();
+    const safeCode = (mission.code || 'Dossier').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const missionFolder = zip.folder(safeCode)!;
+
+    // 6 sous-dossiers canoniques
+    const gFolder = missionFolder.folder('01_Page_de_garde')!;
+    const cFolder = missionFolder.folder('02_Contrats')!;
+    const constFolder = missionFolder.folder('03_Constatations_immediates')!;
+    const contradFolder = missionFolder.folder('04_Contradictoire')!;
+    const prepFolder = missionFolder.folder('05_Comptes_du_prejudice')!;
+    const repFolder = missionFolder.folder('06_Rapports_emis')!;
+
+    const folderMap: Record<string, JSZip> = {
+      garde: gFolder,
+      contrats: cFolder,
+      constatations: constFolder,
+      contradictoire: contradFolder,
+      prejudice: prepFolder,
+      rapports: repFolder,
+    };
+
+    // 1. Factures du dossier -> 01_Page_de_garde/
+    const invoices = db.prepare('SELECT * FROM invoices WHERE our_ref = ? OR mission_id = ?').all(mission.code, mission.id) as any[];
+    for (const inv of invoices) {
+      try {
+        const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id) as InvoiceLine[];
+        const fullInv: Invoice = {
+          ...inv,
+          split_details: inv.split_details ? JSON.parse(inv.split_details) : null,
+          lines,
+        };
+        const docxBuffer = await generateInvoiceDocx(fullInv);
+        gFolder.file(`Facture_${inv.invoice_number}.docx`, docxBuffer);
+      } catch (err) {
+        console.warn('Erreur génération docx facture zip :', err);
+      }
+    }
+
+    // 2. Documents classés dans les 6 volets
+    const sectionToKey: Record<string, string> = {
+      contrats: 'contrats',
+      constatations: 'constatations',
+      contradictoire: 'contradictoire',
+      prejudice: 'prejudice',
+      rapports: 'rapports',
+    };
+
+    const documents = db.prepare('SELECT * FROM documents WHERE mission_id = ? OR mission_code = ?').all(mission.id, mission.code) as any[];
+    for (const doc of documents) {
+      if (doc.filename) {
+        const filePath = path.join(uploadsDir, doc.filename);
+        if (fs.existsSync(filePath)) {
+          const key = sectionToKey[doc.section || ''] || 'constatations';
+          const target = folderMap[key] || constFolder;
+          const prefix = doc.piece_number ? `Piece_${String(doc.piece_number).padStart(2, '0')}_` : '';
+          const safeName = (doc.original_name || doc.filename).replace(/[/\\?%*:|"<>]/g, '_');
+          target.file(`${prefix}${safeName}`, fs.readFileSync(filePath));
+        }
+      }
+    }
+
+    // 3. Photos de terrain -> 03_Constatations_immediates/
+    const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ?').all(mission.id) as any[];
+    for (const ph of photos) {
+      if (ph.filename) {
+        const filePath = path.join(uploadsDir, ph.filename);
+        if (fs.existsSync(filePath)) {
+          const safeName = (ph.original_name || ph.filename).replace(/[/\\?%*:|"<>]/g, '_');
+          const prefix = ph.piece_number ? `Piece_${String(ph.piece_number).padStart(2, '0')}_` : '';
+          const fileName = `${prefix}Photo_${safeName}`;
+          // Ne pas dupliquer si déjà présent
+          if (!constFolder.file(fileName)) {
+            constFolder.file(fileName, fs.readFileSync(filePath));
+          }
+        }
+      }
+    }
+
+    // 4. Rapports émis archivés -> 06_Rapports_emis/
+    const issued = db.prepare('SELECT * FROM issued_reports WHERE mission_id = ?').all(mission.id) as any[];
+    for (const rep of issued) {
+      if (rep.filename) {
+        const filePath = path.join(uploadsDir, rep.filename);
+        if (fs.existsSync(filePath)) {
+          const safeName = (rep.filename).replace(/[/\\?%*:|"<>]/g, '_');
+          repFolder.file(safeName, fs.readFileSync(filePath));
+        }
+      }
+    }
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeCode}_Finder_VP_Expertise.zip"`);
+    res.send(zipBuffer);
+  } catch (err: any) {
+    console.error('[Export Mission ZIP Error]:', err);
+    res.status(500).json({ error: err.message || "Erreur lors de l'export du dossier" });
   }
 });

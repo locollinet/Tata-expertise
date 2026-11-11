@@ -20,8 +20,12 @@ import {
   Sparkles,
   ExternalLink,
   Download,
+  Camera,
+  Upload,
 } from 'lucide-react';
-import { DashboardSummary, Mission, DossierVoletKey } from '@shared/types.js';
+import { DashboardSummary, Mission, DossierVoletKey, MissingReceiptExpense } from '@shared/types.js';
+import { api } from '../api.js';
+import { syncComptaFileToMac } from '../utils/localFolderSync.js';
 
 interface TodayViewProps {
   missions?: Mission[];
@@ -33,6 +37,7 @@ interface TodayViewProps {
   onNavigateToMissions?: () => void;
   onNavigateToCompta?: () => void;
   onOpenCreateMission?: () => void;
+  onRefreshData?: () => void;
 }
 
 export const TodayView: React.FC<TodayViewProps> = ({
@@ -45,9 +50,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
   onNavigateToMissions,
   onNavigateToCompta,
   onOpenCreateMission,
+  onRefreshData,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [checklistState, setChecklistState] = useState<Record<string, boolean>>({});
+  const [uploadingExpenseId, setUploadingExpenseId] = useState<string | null>(null);
+  const [justUploadedIds, setJustUploadedIds] = useState<Record<string, boolean>>({});
 
   const formatStake = (amount?: number | null) => {
     if (!amount) return null;
@@ -107,6 +115,27 @@ export const TodayView: React.FC<TodayViewProps> = ({
       const current = prev[id] !== undefined ? prev[id] : initialDone;
       return { ...prev, [id]: !current };
     });
+  };
+
+  const handleAttachReceipt = async (expense: MissingReceiptExpense, file: File) => {
+    try {
+      setUploadingExpenseId(expense.id);
+      await api.uploadExpenseReceipt(expense.id, file);
+      // Auto sync to Mac folder if connected
+      const month = (expense.date || '2026-10').slice(0, 7);
+      await syncComptaFileToMac({
+        month,
+        subFolder: 'Justificatifs',
+        fileName: `${expense.mission_code || 'Frais'}_${file.name}`,
+        data: file,
+      });
+      setJustUploadedIds((prev) => ({ ...prev, [expense.id]: true }));
+      onRefreshData?.();
+    } catch (err: any) {
+      alert("Erreur lors de l'envoi du justificatif : " + (err.message || ''));
+    } finally {
+      setUploadingExpenseId(null);
+    }
   };
 
   const todayDateFormatted = new Intl.DateTimeFormat('fr-FR', {
@@ -579,6 +608,95 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </div>
             </div>
           )}
+
+          {/* Section : Justificatifs de frais en attente (Déclarés vocalement ou saisis sans photo de reçu) */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Paperclip className="w-4 h-4 text-[#0f3854]" />
+                <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                  Justificatifs de frais en attente
+                </h2>
+              </div>
+              <span
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  (summary.missing_receipts || []).length > 0
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                }`}
+              >
+                {(summary.missing_receipts || []).length > 0
+                  ? `${(summary.missing_receipts || []).length} à joindre`
+                  : 'À jour ✓'}
+              </span>
+            </div>
+
+            {(summary.missing_receipts || []).length === 0 ? (
+              <div className="py-4 text-center text-slate-500">
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 mx-auto mb-1" />
+                <p className="text-xs font-medium">Tous vos frais ont leur justificatif photo rattaché.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Frais pointés (notes vocales iPhone ou saisies) sans ticket rattaché. Joignez le ticket en 1 clic :
+                </p>
+                {(summary.missing_receipts || []).slice(0, 4).map((exp) => {
+                  const isUploaded = justUploadedIds[exp.id];
+                  return (
+                    <div
+                      key={exp.id}
+                      className="p-3 bg-slate-50/70 hover:bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between gap-3 text-xs transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-1.5">
+                          <span className="font-bold text-[#0f3854] font-mono text-[11px] bg-sky-50 px-1.5 py-0.5 rounded border border-sky-100">
+                            {exp.mission_code}
+                          </span>
+                          <span className="text-slate-400 text-[10px]">
+                            {exp.date ? exp.date.split('-').reverse().join('/') : ''}
+                          </span>
+                        </div>
+                        <p className="font-semibold text-slate-800 text-xs mt-0.5 truncate">
+                          {exp.label}
+                        </p>
+                        <span className="text-[11px] font-bold text-slate-600 block mt-0.5">
+                          {exp.total_ttc ? exp.total_ttc.toFixed(2).replace('.', ',') : '0,00'} € TTC
+                        </span>
+                      </div>
+
+                      <div className="shrink-0 flex items-center">
+                        {isUploaded ? (
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Joint ✓</span>
+                          </span>
+                        ) : (
+                          <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-sky-50 text-[#0f3854] border border-sky-200/90 hover:border-[#0f3854] rounded-lg text-xs font-semibold shadow-2xs transition-all cursor-pointer">
+                            <Camera className="w-3.5 h-3.5 text-[#0f3854]" />
+                            <span>
+                              {uploadingExpenseId === exp.id ? 'Envoi...' : '📷 Ticket'}
+                            </span>
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              capture="environment"
+                              className="hidden"
+                              disabled={uploadingExpenseId === exp.id}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleAttachReceipt(exp, file);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Section E : Dernières notes d'honoraires émises */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
