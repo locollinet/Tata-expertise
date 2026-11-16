@@ -396,8 +396,9 @@ export const Header: React.FC<HeaderProps> = ({
               <div>📁 {syncFolderName || 'Rocco_VP_Expertise'}/</div>
               <div className="pl-4">├── 📁 <span className="text-sky-300 font-bold">01_Dossiers_Expertise/</span></div>
               <div className="pl-8">└── 📁 VP2026922/</div>
-              <div className="pl-12 text-slate-300">├── 01_Page_de_garde/ · 02_Contrats/ · 03_Constatations_immediates/</div>
-              <div className="pl-12 text-slate-300">└── 04_Contradictoire/ · 05_Comptes_du_prejudice/ · 06_Rapports_emis/</div>
+              <div className="pl-12 text-slate-300">├── Éléments de la mission/ · Contrats/ · Préjudice/</div>
+              <div className="pl-12 text-slate-300">├── RCI-Photos/ · Opérations d'expertise/ · Rapports &amp; Courriers/</div>
+              <div className="pl-12 text-purple-300">└── (Si Judiciaire : NAP/ · Rapport-Pré-rapport/ · Dires de partie 1/)</div>
               <div className="pl-4">└── 📁 <span className="text-amber-300 font-bold">02_Frais_Generaux_Compta/</span> (séparé du technique)</div>
               <div className="pl-8 text-slate-300">└── 📁 2026-11/ ➔ Justificatifs/ (notes de frais) + Factures_emises/</div>
             </div>

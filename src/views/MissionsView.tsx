@@ -284,7 +284,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
                   </div>
 
                   <span className="text-xs font-semibold text-[#0f3854] flex items-center group-hover:translate-x-1 transition-transform">
-                    <span>Page de garde</span>
+                    <span>Fiche de présentation</span>
                     <ChevronRight className="w-4 h-4 ml-0.5" />
                   </span>
                 </div>

@@ -1169,7 +1169,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                         type="text"
                                         value={card.payload.recipient_name || card.payload.meeting_place || ''}
                                         onChange={(e) => updateCardField(m.id, 'recipient_name', e.target.value)}
-                                        placeholder="Auto depuis Page de garde"
+                                        placeholder="Auto depuis Fiche de présentation"
                                         className="w-full p-1 border rounded bg-slate-50 text-xs"
                                       />
                                     </div>

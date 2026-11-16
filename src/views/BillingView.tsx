@@ -355,10 +355,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-      // Also sync to local Mac / iCloud Drive folder if connected (Dossier 07_Factures_Honoraires & Compta)
+      // Also sync to local Mac / iCloud Drive folder if connected (Dossier Factures Honoraires & Compta)
       await syncFileToLocalMacFolder({
         missionCode: inv.mission_code,
-        subFolder: '07_Factures_Honoraires',
+        subFolder: 'Factures Honoraires',
         fileName,
         data: blob,
       });

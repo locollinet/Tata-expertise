@@ -183,7 +183,7 @@ export const CreateMissionModal: React.FC<CreateMissionModalProps> = ({
         custom_travel_rate: 135,
         custom_km_rate: 0.95,
       });
-      await ensureMissionFolderOnMac(code.trim());
+      await ensureMissionFolderOnMac(code.trim(), Boolean(courtReference.trim() || judicialExpert.trim()));
       onSuccess(res.id);
       onClose();
     } catch (err: any) {

@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 import { initDatabase, db } from '../server/db.ts';
 import { apiRouter } from '../server/api.ts';
 import { generateDeliverableDocx, buildDeliverableDefaults } from '../server/docx.ts';
-import { mapMacFolderToSectionAndCategory } from '../shared/folderMapping.ts';
+import { mapMacFolderToSectionAndCategory, resolveValentineExportFolder, VALENTINE_FOLDERS } from '../shared/folderMapping.ts';
 
 initDatabase();
 
@@ -177,11 +177,21 @@ test("Mapping bidirectionnel des vrais sous-dossiers iCloud, mode Judiciaire et 
   });
   assert.equal(mapMacFolderToSectionAndCategory('Préjudice', 'facture.pdf').section, 'prejudice');
   assert.deepEqual(mapMacFolderToSectionAndCategory('RCI-Photos', 'photo1.jpg'), {
-    section: 'constatations', category: 'photo_terrain', subSection: 'jour_j',
+    section: 'constatations', category: 'photo_terrain', subSection: 'rci_photos',
   });
   assert.deepEqual(mapMacFolderToSectionAndCategory("Opérations d'expertise", 'relevé.pdf'), {
-    section: 'constatations', category: 'note_technique', subSection: 'visite_terrain',
+    section: 'constatations', category: 'note_technique', subSection: 'operations',
   });
+
+  // Vérification export vers les vrais dossiers de Valentine
+  assert.equal(resolveValentineExportFolder({ section: 'contrats', subSection: 'elements_mission' }), VALENTINE_FOLDERS.elements_mission);
+  assert.equal(resolveValentineExportFolder({ section: 'contrats' }), VALENTINE_FOLDERS.contrats);
+  assert.equal(resolveValentineExportFolder({ section: 'constatations', mimeType: 'image/jpeg' }), VALENTINE_FOLDERS.rci_photos);
+  assert.equal(resolveValentineExportFolder({ section: 'constatations', subSection: 'operations' }), VALENTINE_FOLDERS.operations);
+  assert.equal(resolveValentineExportFolder({ section: 'prejudice' }), VALENTINE_FOLDERS.prejudice);
+  assert.equal(resolveValentineExportFolder({ subSection: 'nap', category: 'judicial_nap' }), VALENTINE_FOLDERS.nap);
+  assert.equal(resolveValentineExportFolder({ subSection: 'pre_rapport', category: 'judicial_pre_rapport' }), VALENTINE_FOLDERS.pre_rapport);
+  assert.equal(resolveValentineExportFolder({ subSection: 'dires', category: 'judicial_dire', documentGroupLabel: 'Dires de partie 2' }), 'Dires de partie 2');
 
   // Mode Judiciaire
   assert.deepEqual(mapMacFolderToSectionAndCategory('NAP', 'nap1.pdf'), {
@@ -313,6 +323,21 @@ test("Endpoints API : Judiciaire, lot Dire + N annexes, feuille d'émargement, n
     assert.equal(roccoJson.action?.action_type, 'deliverable_draft');
     assert.equal(roccoJson.action?.payload?.deliverable_type, 'convocation');
     assert.equal(roccoJson.action?.payload?.meeting_time, '14h30');
+
+    // 8. Export ZIP du dossier utilisant la vraie nomenclature Valentine + compartiments Judiciaires
+    const zipRes = await fetch(`${baseUrl}/missions/${createdMissionId}/export-zip`);
+    assert.equal(zipRes.status, 200);
+    const zipBuf = Buffer.from(await zipRes.arrayBuffer());
+    const exportedZip = await JSZip.loadAsync(zipBuf);
+    const zipPaths = Object.keys(exportedZip.files);
+    assert.ok(zipPaths.some((p) => p.includes('Éléments de la mission/')), 'ZIP doit contenir Éléments de la mission');
+    assert.ok(zipPaths.some((p) => p.includes('Contrats/')), 'ZIP doit contenir Contrats');
+    assert.ok(zipPaths.some((p) => p.includes('RCI-Photos/')), 'ZIP doit contenir RCI-Photos');
+    assert.ok(zipPaths.some((p) => p.includes("Opérations d'expertise/")), "ZIP doit contenir Opérations d'expertise");
+    assert.ok(zipPaths.some((p) => p.includes('Préjudice/')), 'ZIP doit contenir Préjudice');
+    assert.ok(zipPaths.some((p) => p.includes('NAP/')), 'Dossier judiciaire ZIP doit contenir NAP');
+    assert.ok(zipPaths.some((p) => p.includes('Rapport-Pré-rapport/')), 'Dossier judiciaire ZIP doit contenir Rapport-Pré-rapport');
+    assert.ok(zipPaths.some((p) => p.includes('Dire Partie 1 + 2 annexes/') && p.includes('Dire_Partie1.txt')), 'ZIP doit grouper le Dire et ses annexes dans le bon dossier');
   } finally {
     if (createdMissionId) {
       // Clean up synthetic test files created in uploadsDir for this mission

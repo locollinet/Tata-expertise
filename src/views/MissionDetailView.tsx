@@ -29,6 +29,8 @@ import {
   isLocalSyncConnected,
   getLocalSyncFolderName,
   scanUntrackedMacFilesForMission,
+  ensureMissionFolderOnMac,
+  VALENTINE_FOLDERS,
   UntrackedMacFile,
 } from '../utils/localFolderSync.js';
 
@@ -51,12 +53,12 @@ const VOLETS_CONFIG: Array<{
   label: string;
   macFolder: string;
 }> = [
-  { key: 'garde', num: '01', label: 'Page de garde', macFolder: '01_Page_de_garde' },
-  { key: 'contrats', num: '02', label: 'Contrats & Mission', macFolder: '02_Contrats' },
-  { key: 'constatations', num: '03', label: 'Constatations', macFolder: '03_Constatations_immediates' },
-  { key: 'contradictoire', num: '04', label: 'Contradictoire', macFolder: '04_Contradictoire' },
-  { key: 'prejudice', num: '05', label: 'Comptes du préjudice', macFolder: '05_Comptes_du_prejudice' },
-  { key: 'rapports', num: '06', label: 'Word & Rapports', macFolder: '06_Rapports_emis' },
+  { key: 'garde', num: '01', label: 'Fiche de présentation', macFolder: VALENTINE_FOLDERS.elements_mission },
+  { key: 'contrats', num: '02', label: 'Éléments mission & Contrats', macFolder: `${VALENTINE_FOLDERS.elements_mission} / ${VALENTINE_FOLDERS.contrats}` },
+  { key: 'constatations', num: '03', label: 'RCI-Photos & Opérations', macFolder: `${VALENTINE_FOLDERS.rci_photos} / ${VALENTINE_FOLDERS.operations}` },
+  { key: 'contradictoire', num: '04', label: 'Contradictoire', macFolder: VALENTINE_FOLDERS.operations },
+  { key: 'prejudice', num: '05', label: 'Préjudice', macFolder: VALENTINE_FOLDERS.prejudice },
+  { key: 'rapports', num: '06', label: 'Mes Livrables (.docx)', macFolder: VALENTINE_FOLDERS.livrables },
 ];
 
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
@@ -160,7 +162,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [docOptionalNote, setDocOptionalNote] = useState('');
   const [docGroupLabel, setDocGroupLabel] = useState('');
   const [docSourceOrigin, setDocSourceOrigin] = useState('');
-  const [constatSubSection, setConstatSubSection] = useState<'jour_j' | 'visite_terrain' | 'extractions'>('visite_terrain');
+  const [contratsFilter, setContratsFilter] = useState<'all' | 'elements_mission' | 'contrats'>('all');
+  const [constatSubSection, setConstatSubSection] = useState<'rci_photos' | 'operations'>('rci_photos');
   const [judicialFilter, setJudicialFilter] = useState<'all' | 'nap' | 'pre_rapport' | 'dires'>('all');
 
   // Volet 1 (Page de garde — Synthesis Table)
@@ -558,15 +561,17 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       const result = await res.json();
       const createdDocs: MissionDocument[] = result.documents || [];
 
-      const defaultVoletFolder = VOLET_TO_MAC_FOLDER[targetVolet] || '03_Constatations_immediates';
+      const defaultVoletFolder = VOLET_TO_MAC_FOLDER[targetVolet] || VALENTINE_FOLDERS.rci_photos;
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const pieceNum = createdDocs[i]?.piece_number;
         const prefix = pieceNum ? `Piece_${String(pieceNum).padStart(2, '0')}_` : '';
         const macFileName = `${prefix}${f.name}`;
         const targetSub = getMacSubFolderForEvidence({
-          category: categoryMap[targetVolet],
+          category: catOverride,
           section: targetVolet,
+          subSection: subSec,
+          documentGroupLabel: docGroupLabel.trim(),
           mimeType: f.type,
           fileName: f.name,
         });
@@ -638,8 +643,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         expertise_operations: expertiseOperationsEdit,
         adverse_parties: cleanedParties,
       });
+      void ensureMissionFolderOnMac(
+        missionCodeEdit.trim(),
+        isJudicialEdit || Boolean(courtReferenceEdit.trim() || judicialExpertEdit.trim())
+      );
       setEditingParties(false);
-      showToast('Fiche de synthèse (Synthesis Table) enregistrée.');
+      showToast('Fiche de présentation enregistrée.');
       loadData();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -762,7 +771,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
       await syncFileToLocalMacFolder({
         missionCode: mission.code,
-        subFolder: '07_Factures_Honoraires',
+        subFolder: VALENTINE_FOLDERS.honoraires,
         fileName,
         data: blob,
       });
@@ -846,7 +855,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       if (repFile) {
         await syncFileToLocalMacFolder({
           missionCode: mission.code,
-          subFolder: '06_Rapports_emis',
+          subFolder: VALENTINE_FOLDERS.livrables,
           fileName: `${repDate}_${repFile.name}`,
           data: repFile,
         });
@@ -957,8 +966,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       await syncFileToLocalMacFolder({
         missionCode: mission.code,
         subFolder: delivType === 'mise_en_cause' || delivType === 'convocation' || delivType === 'mec_convocation' || delivType === 'courrier_position'
-          ? '04_Contradictoire'
-          : '06_Rapports_emis',
+          ? VALENTINE_FOLDERS.operations
+          : VALENTINE_FOLDERS.livrables,
         fileName,
         data: blob,
       });
@@ -1209,7 +1218,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       )}
                       {doc.sub_section === 'pre_rapport' && (
                         <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold">
-                          ⚖️ Pré-rapport
+                          ⚖️ Rapport-Pré-rapport
                         </span>
                       )}
                       {doc.caption && doc.caption !== doc.original_name
@@ -1231,11 +1240,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           try {
                             await api.updateDocument(doc.id, { section: newSection });
                             const voletLabels: Record<string, string> = {
-                              contrats: 'Volet 02 (Contrats)',
-                              constatations: 'Volet 03 (Constatations)',
+                              contrats: 'Volet 02 (Éléments mission & Contrats)',
+                              constatations: 'Volet 03 (RCI-Photos & Opérations)',
                               contradictoire: 'Volet 04 (Contradictoire)',
-                              prejudice: 'Volet 05 (Comptes du préjudice)',
-                              rapports: 'Volet 06 (Rapports émis)',
+                              prejudice: 'Volet 05 (Préjudice)',
+                              rapports: 'Volet 06 (Mes Livrables)',
                             };
                             showToast(`Pièce ${doc.piece_number || ''} reclassée dans ${voletLabels[newSection] || newSection}`);
                             await loadData();
@@ -1249,11 +1258,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       className="text-[11px] font-medium text-slate-700 bg-white border border-slate-200 rounded-lg py-1 px-2 hover:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] transition-all cursor-pointer"
                       title="Changer le volet de classement sans supprimer le fichier"
                     >
-                      <option value="contrats">📁 02. Contrats</option>
-                      <option value="constatations">📁 03. Constatations</option>
+                      <option value="contrats">📁 02. Éléments mission &amp; Contrats</option>
+                      <option value="constatations">📁 03. RCI-Photos &amp; Opérations</option>
                       <option value="contradictoire">📁 04. Contradictoire</option>
                       <option value="prejudice">📁 05. Préjudice</option>
-                      <option value="rapports">📁 06. Rapports émis</option>
+                      <option value="rapports">📁 06. Mes Livrables</option>
                     </select>
                   </td>
                   <td className="py-2.5 px-3.5 text-right whitespace-nowrap space-x-2">
@@ -1350,9 +1359,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 type="text"
                 value={docGroupLabel}
                 onChange={(e) => setDocGroupLabel(e.target.value)}
-                placeholder="Lot (ex: Dire 1 + annexes)"
+                placeholder="Lot (ex: Dires de partie 1)"
                 className="text-xs rounded-lg border-indigo-200 bg-indigo-50/40 px-2.5 py-1.5 border w-36 sm:w-44 focus:border-[#0f3854]"
-                title="Permet de regrouper ensemble un Dire et ses N annexes"
+                title="Regroupe un Dire et ses annexes dans le tableau et le sous-dossier Finder"
               />
             )}
             <label className="px-3 py-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center space-x-1.5 shadow-2xs transition-colors">
@@ -1485,7 +1494,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             <FolderOpen className="w-3.5 h-3.5 text-[#0f3854] shrink-0" />
             <span className="hidden sm:inline">Finder Mac :</span>
             <strong className="font-mono text-slate-800">
-              {mission.code}/{activeVolet === 'garde' ? '01_Page_de_garde & 07_Factures_Honoraires' : currentVoletMeta.macFolder}
+              {mission.code}/{activeVolet === 'garde' ? `${VALENTINE_FOLDERS.elements_mission} & ${VALENTINE_FOLDERS.honoraires}` : currentVoletMeta.macFolder}
             </strong>
           </div>
 
@@ -2951,7 +2960,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       </h3>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Toutes les notes d'honoraires émises sur {mission.code} (classées dans Finder sous <code className="font-mono text-slate-700">07_Factures_Honoraires</code>).
+                      Toutes les notes d'honoraires émises sur {mission.code} (classées dans Finder sous <code className="font-mono text-slate-700">Factures Honoraires</code>).
                     </p>
                   </div>
 
@@ -3063,26 +3072,65 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
           )}
 
           {/* =====================================================================
-              VOLET 2 : 02. CONTRATS
+              VOLET 2 : 02. ÉLÉMENTS DE LA MISSION & CONTRATS
              ===================================================================== */}
           {activeVolet === 'contrats' && (
             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">
-                  Contrats & Éléments de la mission
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Lettre de mission, éléments transmis par le mandant, polices d'assurance, conditions générales et conventions.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Éléments de la mission & Contrats
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Lettre/ordre de mission, pièces transmises au départ, polices d'assurance, conditions générales et conventions.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+                  {[
+                    { id: 'all', label: 'Tout' },
+                    { id: 'elements_mission', label: 'Éléments de la mission' },
+                    { id: 'contrats', label: 'Contrats' },
+                  ].map((cf) => (
+                    <button
+                      key={cf.id}
+                      type="button"
+                      onClick={() => setContratsFilter(cf.id as any)}
+                      className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                        contratsFilter === cf.id
+                          ? 'bg-white text-[#0f3854] font-bold shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {cf.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {renderVoletDropzone('contrats', 'Contrats, éléments de la mission, polices')}
-              {renderPieceTable(docsContrats, 'Aucun contrat ou élément de mission déposé dans ce dossier.')}
+              {renderVoletDropzone(
+                'contrats',
+                contratsFilter === 'elements_mission'
+                  ? 'Éléments de la mission'
+                  : contratsFilter === 'contrats'
+                    ? 'Contrats, polices, conventions'
+                    : 'Éléments de la mission ou Contrats',
+                contratsFilter === 'all' ? undefined : contratsFilter
+              )}
+              {renderPieceTable(
+                contratsFilter === 'all'
+                  ? docsContrats
+                  : docsContrats.filter((d) =>
+                      contratsFilter === 'elements_mission'
+                        ? d.sub_section === 'elements_mission'
+                        : d.sub_section !== 'elements_mission'
+                    ),
+                'Aucun document déposé dans cette rubrique.'
+              )}
             </div>
           )}
 
           {/* =====================================================================
-              VOLET 3 : 03. CONSTATATIONS
+              VOLET 3 : 03. RCI-PHOTOS & OPÉRATIONS D'EXPERTISE
              ===================================================================== */}
           {activeVolet === 'constatations' && (
             <div className="space-y-5">
@@ -3090,24 +3138,23 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-bold text-slate-900">
-                      Constatations immédiates & Données terrain
+                      RCI-Photos & Opérations d'expertise
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Photos en vrac (sans légende obligatoire), extractions techniques (enregistreurs, bandes) et relevés du jour J.
+                      Photos terrain en vrac (sans légende obligatoire), RCI, extractions techniques et relevés d'opérations.
                     </p>
                   </div>
 
                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
                     {[
-                      { id: 'jour_j', label: 'Jour J' },
-                      { id: 'visite_terrain', label: 'Photos terrain' },
-                      { id: 'extractions', label: 'Extractions techniques & Relevés' },
+                      { id: 'rci_photos', label: 'RCI-Photos' },
+                      { id: 'operations', label: "Opérations d'expertise" },
                     ].map((st) => (
                       <button
                         key={st.id}
                         type="button"
                         onClick={() => setConstatSubSection(st.id as any)}
-                        className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+                        className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
                           constatSubSection === st.id
                             ? 'bg-white text-[#0f3854] font-bold shadow-2xs'
                             : 'text-slate-600 hover:text-slate-900'
@@ -3119,7 +3166,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </div>
                 </div>
 
-                {renderVoletDropzone('constatations', constatSubSection.replace('_', ' '), constatSubSection)}
+                {renderVoletDropzone(
+                  'constatations',
+                  constatSubSection === 'rci_photos' ? 'RCI-Photos (vrac ou sélection)' : "Opérations d'expertise & relevés",
+                  constatSubSection
+                )}
                 {renderPieceTable(docsConstatations, 'Aucun document de constatation déposé.')}
 
                 {/* Galerie Photos avec toggle 1-clic pour la grille 2 colonnes Word */}
@@ -3558,7 +3609,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     Courriers contradictoires pré-remplis (Modèle Word + Signature Valentine)
                   </h3>
                   <p className="text-[11px] text-slate-600 mt-0.5">
-                    Les références et parties de votre Page de garde sont reprises automatiquement sans double saisie.
+                    Les références et parties de votre Fiche de présentation sont reprises automatiquement sans double saisie.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -3993,7 +4044,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
                       {mission.is_judicial || mission.court_reference || mission.judicial_expert
-                        ? 'Dossier Judiciaire actif : filtrez ou déposez directement par compartiment (NAP, Pré-rapport, Dires + annexes).'
+                        ? 'Dossier Judiciaire actif : filtrez ou déposez directement dans NAP, Rapport-Pré-rapport ou Dires de partie 1, 2, 3...'
                         : 'Mises en cause, convocations, dires + annexes groupées et accusés de réception LRAR.'}
                     </p>
                   </div>
@@ -4002,7 +4053,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       {[
                         { id: 'all', label: 'Tout' },
                         { id: 'nap', label: '⚖️ NAP' },
-                        { id: 'pre_rapport', label: '⚖️ Pré-rapport' },
+                        { id: 'pre_rapport', label: '⚖️ Rapport-Pré-rapport' },
                         { id: 'dires', label: '⚖️ Dires de partie' },
                       ].map((jf) => (
                         <button
@@ -4024,11 +4075,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       type="button"
                       onClick={async () => {
                         await api.updateMission(mission.id, { is_judicial: true });
-                        showToast('Mode Procédure Judiciaire activé (NAP, Pré-rapport, Dires).');
+                        await ensureMissionFolderOnMac(mission.code, true);
+                        showToast('Mode Procédure Judiciaire activé (NAP, Rapport-Pré-rapport, Dires de partie).');
                         loadData();
                       }}
                       className="px-3 py-1.5 rounded-xl border border-purple-200 bg-purple-50/70 hover:bg-purple-100 text-purple-900 text-xs font-semibold shrink-0 cursor-pointer"
-                      title="Activer les compartiments judiciaires (NAP, Pré-rapport, Dires de partie)"
+                      title="Activer et créer les sous-dossiers judiciaires (NAP, Rapport-Pré-rapport, Dires de partie)"
                     >
                       ⚖️ Passer en Judiciaire
                     </button>
@@ -4038,12 +4090,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 {renderVoletDropzone(
                   judicialFilter === 'pre_rapport' ? 'rapports' : 'contradictoire',
                   judicialFilter === 'nap'
-                    ? 'Notes aux parties (NAP)'
+                    ? 'NAP (Notes aux parties)'
                     : judicialFilter === 'pre_rapport'
-                      ? 'Rapport / Pré-rapport judiciaire'
+                      ? 'Rapport-Pré-rapport judiciaire'
                       : judicialFilter === 'dires'
-                        ? 'Dire de partie + annexes (groupables ci-contre)'
-                        : 'Convocations, dires, accusés LRAR',
+                        ? 'Dires de partie 1, 2, 3... (+ annexes)'
+                        : "Opérations d'expertise, convocations, dires, LRAR",
                   judicialFilter === 'all' ? undefined : judicialFilter
                 )}
                 {renderPieceTable(
@@ -4070,10 +4122,10 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold text-slate-900">
-                    Comptes du préjudice
+                    Préjudice (Chiffrage & Justificatifs)
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Tableau de chiffrage contradictoire et pièces justificatives reliées.
+                    Comptes du préjudice contradictoire (réclamé / retenu) et pièces déposées dans le sous-dossier Préjudice.
                   </p>
                 </div>
 
@@ -4339,7 +4391,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <span>Préparer un courrier ou rapport Word (.docx)</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Vos modèles officiels VP Expertise (Chartes Courrier & Rapport + Signature), pré-remplis depuis la Page de garde. Vous finalisez librement dans Word ensuite.
+                      Vos modèles officiels VP Expertise (Chartes Courrier & Rapport + Signature), pré-remplis depuis la Fiche de présentation. Vous finalisez librement dans Word ensuite.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -4357,7 +4409,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       disabled={delivGenerating}
                       onClick={() => handleGenerateDeliverableDocx(true)}
                       className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
-                      title="Télécharge le Word ET l'archive automatiquement dans Rapports émis"
+                      title="Télécharge le Word ET l'archive automatiquement dans Rapports & Courriers"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Télécharger + Archiver</span>
@@ -4368,7 +4420,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 {/* Checklist d'aide intelligente : tout ce qui va être injecté automatiquement */}
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
                   <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
-                    ✓ Page de garde prête ({mission.code})
+                    ✓ Fiche de présentation prête ({mission.code})
                   </span>
                   {(mission.attendees || []).length > 0 ? (
                     <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
@@ -4691,7 +4743,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label className="block font-semibold text-slate-700 mb-1">1. Circonstances / Faits (pré-rempli Page de garde)</label>
+                        <label className="block font-semibold text-slate-700 mb-1">1. Circonstances / Faits (pré-rempli Fiche de présentation)</label>
                         <textarea
                           rows={3}
                           value={delivFactsText}

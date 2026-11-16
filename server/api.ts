@@ -8,6 +8,7 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateInvoiceDocx, generateReportDocx, generateDeliverableDocx, buildDeliverableDefaults, getDeliverableTypeLabel } from './docx.ts';
 import { generateMonthlyComptaWorkbook } from './excel.ts';
 import type { Invoice, InvoiceLine, ReportDraft, Attendee, Photo, DamageLine, DeliverableType, DeliverableRequestPayload } from '../shared/types.ts';
+import { BASE_VALENTINE_FOLDERS, JUDICIAL_VALENTINE_FOLDERS, VALENTINE_FOLDERS, resolveValentineExportFolder } from '../shared/folderMapping.ts';
 import JSZip from 'jszip';
 
 export const apiRouter = Router();
@@ -4252,20 +4253,22 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
     const dossiersFolder = rootFolder.folder('Dossiers')!;
     const comptaFolder = rootFolder.folder('Compta')!;
 
-    // 1. Créer les 6 volets pour tous les dossiers
+    // 1. Créer les sous-dossiers réels de Valentine (+ compartiments judiciaires si dossier judiciaire)
     const allMissions = db.prepare('SELECT * FROM missions').all() as any[];
     for (const m of allMissions) {
       const safeCode = (m.code || 'Dossier').replace(/[^a-zA-Z0-9_-]/g, '_');
       const mFolder = dossiersFolder.folder(safeCode)!;
-      mFolder.folder('01_Page_de_garde');
-      mFolder.folder('02_Contrats');
-      mFolder.folder('03_Constatations_immediates');
-      mFolder.folder('04_Contradictoire');
-      mFolder.folder('05_Comptes_du_prejudice');
-      mFolder.folder('06_Rapports_emis');
+      for (const fName of BASE_VALENTINE_FOLDERS) {
+        mFolder.folder(fName);
+      }
+      if (m.is_judicial || m.court_reference || m.judicial_expert) {
+        for (const jName of JUDICIAL_VALENTINE_FOLDERS) {
+          mFolder.folder(jName);
+        }
+      }
     }
 
-    // 2. Factures : dans Dossiers/<Code>/01_Page_de_garde/ ET dans Compta/<AAAA-MM>/Factures_emises/
+    // 2. Factures : dans Dossiers/<Code>/Factures Honoraires/ ET dans Compta/<AAAA-MM>/Factures_emises/
     const invoices = db.prepare('SELECT * FROM invoices ORDER BY date DESC').all() as any[];
     for (const inv of invoices) {
       const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id) as InvoiceLine[];
@@ -4276,20 +4279,12 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
       };
       const docxBuffer = await generateInvoiceDocx(fullInv);
       const safeCode = (inv.our_ref || 'Dossiers').replace(/[^a-zA-Z0-9_-]/g, '_');
-      dossiersFolder.file(`${safeCode}/01_Page_de_garde/Facture_${inv.invoice_number}.docx`, docxBuffer);
+      dossiersFolder.file(`${safeCode}/${VALENTINE_FOLDERS.honoraires}/Facture_${inv.invoice_number}.docx`, docxBuffer);
       const month = (inv.date || '2026-10').slice(0, 7);
       comptaFolder.file(`${month}/Factures_emises/Facture_${inv.invoice_number}.docx`, docxBuffer);
     }
 
-    // 3. Pièces numérotées du dossier dans leur volet respectif (02..06)
-    const sectionToFolder: Record<string, string> = {
-      contrats: '02_Contrats',
-      constatations: '03_Constatations_immediates',
-      contradictoire: '04_Contradictoire',
-      prejudice: '05_Comptes_du_prejudice',
-      rapports: '06_Rapports_emis',
-    };
-
+    // 3. Pièces numérotées du dossier dans leur sous-dossier Valentine respectif
     const documents = db.prepare('SELECT * FROM documents').all() as any[];
     for (const doc of documents) {
       const filePath = path.join(uploadsDir, doc.filename);
@@ -4299,7 +4294,7 @@ apiRouter.get('/sync/export-zip', async (_req, res) => {
           const month = (doc.created_at || '2026-10').slice(0, 7);
           comptaFolder.file(`${month}/Justificatifs/${safeCode}_${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
         } else {
-          const subFolder = sectionToFolder[doc.section || ''] || '03_Constatations_immediates';
+          const subFolder = resolveValentineExportFolder(doc);
           const prefix = doc.piece_number ? `Piece_${String(doc.piece_number).padStart(2, '0')}_` : '';
           dossiersFolder.file(`${safeCode}/${subFolder}/${prefix}${doc.original_name || doc.filename}`, fs.readFileSync(filePath));
         }
@@ -4356,26 +4351,18 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
     const safeCode = (mission.code || 'Dossier').replace(/[^a-zA-Z0-9_-]/g, '_');
     const missionFolder = zip.folder(safeCode)!;
 
-    // 7 sous-dossiers canoniques
-    const gFolder = missionFolder.folder('01_Page_de_garde')!;
-    const cFolder = missionFolder.folder('02_Contrats')!;
-    const constFolder = missionFolder.folder('03_Constatations_immediates')!;
-    const contradFolder = missionFolder.folder('04_Contradictoire')!;
-    const prepFolder = missionFolder.folder('05_Comptes_du_prejudice')!;
-    const repFolder = missionFolder.folder('06_Rapports_emis')!;
-    const factFolder = missionFolder.folder('07_Factures_Honoraires')!;
+    // Sous-dossiers réels de Valentine (+ compartiments judiciaires si actif)
+    for (const fName of BASE_VALENTINE_FOLDERS) {
+      missionFolder.folder(fName);
+    }
+    if (mission.is_judicial || mission.court_reference || mission.judicial_expert) {
+      for (const jName of JUDICIAL_VALENTINE_FOLDERS) {
+        missionFolder.folder(jName);
+      }
+    }
 
-    const folderMap: Record<string, JSZip> = {
-      garde: gFolder,
-      contrats: cFolder,
-      constatations: constFolder,
-      contradictoire: contradFolder,
-      prejudice: prepFolder,
-      rapports: repFolder,
-      factures: factFolder,
-    };
-
-    // 1. Factures d'honoraires du dossier -> 07_Factures_Honoraires/
+    // 1. Factures d'honoraires du dossier -> Factures Honoraires/
+    const factFolder = missionFolder.folder(VALENTINE_FOLDERS.honoraires)!;
     const invoices = db.prepare('SELECT * FROM invoices WHERE our_ref = ? OR mission_id = ?').all(mission.code, mission.id) as any[];
     for (const inv of invoices) {
       try {
@@ -4392,22 +4379,14 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
       }
     }
 
-    // 2. Documents classés dans les 6 volets
-    const sectionToKey: Record<string, string> = {
-      contrats: 'contrats',
-      constatations: 'constatations',
-      contradictoire: 'contradictoire',
-      prejudice: 'prejudice',
-      rapports: 'rapports',
-    };
-
+    // 2. Documents classés dans l'arborescence Valentine (y compris lots Dires de partie X, NAP, Pré-rapport...)
     const documents = db.prepare('SELECT * FROM documents WHERE mission_id = ? OR mission_code = ?').all(mission.id, mission.code) as any[];
     for (const doc of documents) {
       if (doc.filename) {
         const filePath = path.join(uploadsDir, doc.filename);
         if (fs.existsSync(filePath)) {
-          const key = sectionToKey[doc.section || ''] || 'constatations';
-          const target = folderMap[key] || constFolder;
+          const targetFolderName = resolveValentineExportFolder(doc);
+          const target = missionFolder.folder(targetFolderName)!;
           const prefix = doc.piece_number ? `Piece_${String(doc.piece_number).padStart(2, '0')}_` : '';
           const safeName = (doc.original_name || doc.filename).replace(/[/\\?%*:|"<>]/g, '_');
           target.file(`${prefix}${safeName}`, fs.readFileSync(filePath));
@@ -4415,7 +4394,8 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
       }
     }
 
-    // 3. Photos de terrain -> 03_Constatations_immediates/
+    // 3. Photos de terrain -> RCI-Photos/
+    const rciFolder = missionFolder.folder(VALENTINE_FOLDERS.rci_photos)!;
     const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ?').all(mission.id) as any[];
     for (const ph of photos) {
       if (ph.filename) {
@@ -4424,21 +4404,21 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
           const safeName = (ph.original_name || ph.filename).replace(/[/\\?%*:|"<>]/g, '_');
           const prefix = ph.piece_number ? `Piece_${String(ph.piece_number).padStart(2, '0')}_` : '';
           const fileName = `${prefix}Photo_${safeName}`;
-          // Ne pas dupliquer si déjà présent
-          if (!constFolder.file(fileName)) {
-            constFolder.file(fileName, fs.readFileSync(filePath));
+          if (!rciFolder.file(fileName)) {
+            rciFolder.file(fileName, fs.readFileSync(filePath));
           }
         }
       }
     }
 
-    // 4. Rapports émis archivés -> 06_Rapports_emis/
+    // 4. Rapports & Courriers émis archivés -> Rapports & Courriers/
+    const repFolder = missionFolder.folder(VALENTINE_FOLDERS.livrables)!;
     const issued = db.prepare('SELECT * FROM issued_reports WHERE mission_id = ?').all(mission.id) as any[];
     for (const rep of issued) {
       if (rep.filename) {
         const filePath = path.join(uploadsDir, rep.filename);
         if (fs.existsSync(filePath)) {
-          const safeName = (rep.filename).replace(/[/\\?%*:|"<>]/g, '_');
+          const safeName = (rep.original_name || rep.filename).replace(/[/\\?%*:|"<>]/g, '_');
           repFolder.file(safeName, fs.readFileSync(filePath));
         }
       }

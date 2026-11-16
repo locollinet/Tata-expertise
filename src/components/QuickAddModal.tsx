@@ -308,7 +308,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         } else {
           await syncFileToLocalMacFolder({
             missionCode: selectedMission?.code || 'VP_Dossier',
-            subFolder: '03_Constatations_immediates',
+            subFolder: photoType === 'emargement' ? "Opérations d'expertise" : 'RCI-Photos',
             fileName: photoFile.name,
             data: photoFile,
           });

@@ -18,14 +18,32 @@
 import { doc, setDoc } from 'firebase/firestore';
 import { db as firestoreDb, auth } from '../firebase.js';
 import { DossierVoletKey, EvidenceItem } from '@shared/types.js';
-import { mapMacFolderToSectionAndCategory } from '@shared/folderMapping.js';
-export { mapMacFolderToSectionAndCategory };
+import {
+  mapMacFolderToSectionAndCategory,
+  VALENTINE_FOLDERS,
+  BASE_VALENTINE_FOLDERS,
+  JUDICIAL_VALENTINE_FOLDERS,
+  resolveValentineExportFolder,
+} from '@shared/folderMapping.js';
+export { mapMacFolderToSectionAndCategory, VALENTINE_FOLDERS, BASE_VALENTINE_FOLDERS, JUDICIAL_VALENTINE_FOLDERS, resolveValentineExportFolder };
 
 const DB_NAME = 'vp_expertise_local_sync';
 const STORE_NAME = 'handles';
 const HANDLE_KEY = 'icloud_root_dir';
 
 export type MacDossierSubFolder =
+  // Vraie nomenclature iCloud Valentine
+  | 'Éléments de la mission'
+  | 'Contrats'
+  | 'RCI-Photos'
+  | "Opérations d'expertise"
+  | 'Préjudice'
+  | 'Rapports & Courriers'
+  | 'Factures Honoraires'
+  | 'NAP'
+  | 'Rapport-Pré-rapport'
+  | 'Dires de partie 1'
+  // Alias rétrocompatibles 01..07
   | '01_Page_de_garde'
   | '02_Contrats'
   | '03_Constatations_immediates'
@@ -33,41 +51,44 @@ export type MacDossierSubFolder =
   | '05_Comptes_du_prejudice'
   | '06_Rapports_emis'
   | '07_Factures_Honoraires'
-  // Alias rétrocompatibles
   | 'Photos_Terrain'
   | 'Documents_Pieces'
   | 'Justificatifs_Frais'
   | 'Factures'
-  | 'Rapports';
+  | 'Rapports'
+  | string;
 
 export const VOLET_TO_MAC_FOLDER: Record<DossierVoletKey, MacDossierSubFolder> = {
-  garde: '01_Page_de_garde',
-  contrats: '02_Contrats',
-  constatations: '03_Constatations_immediates',
-  contradictoire: '04_Contradictoire',
-  prejudice: '05_Comptes_du_prejudice',
-  rapports: '06_Rapports_emis',
+  garde: VALENTINE_FOLDERS.elements_mission,
+  contrats: VALENTINE_FOLDERS.contrats,
+  constatations: VALENTINE_FOLDERS.rci_photos,
+  contradictoire: VALENTINE_FOLDERS.operations,
+  prejudice: VALENTINE_FOLDERS.prejudice,
+  rapports: VALENTINE_FOLDERS.livrables,
 };
 
-export const ALL_DOSSIER_VOLET_FOLDERS: MacDossierSubFolder[] = [
-  '01_Page_de_garde',
-  '02_Contrats',
-  '03_Constatations_immediates',
-  '04_Contradictoire',
-  '05_Comptes_du_prejudice',
-  '06_Rapports_emis',
-  '07_Factures_Honoraires',
-];
+export const ALL_DOSSIER_VOLET_FOLDERS: readonly string[] = BASE_VALENTINE_FOLDERS;
 
 function resolveCanonicalVoletFolder(subFolder: MacDossierSubFolder): string {
   switch (subFolder) {
-    case 'Factures':
-      return '07_Factures_Honoraires';
+    case '01_Page_de_garde':
+      return VALENTINE_FOLDERS.elements_mission;
+    case '02_Contrats':
+      return VALENTINE_FOLDERS.contrats;
+    case '03_Constatations_immediates':
     case 'Photos_Terrain':
     case 'Documents_Pieces':
-      return '03_Constatations_immediates';
+      return VALENTINE_FOLDERS.rci_photos;
+    case '04_Contradictoire':
+      return VALENTINE_FOLDERS.operations;
+    case '05_Comptes_du_prejudice':
+      return VALENTINE_FOLDERS.prejudice;
+    case '06_Rapports_emis':
     case 'Rapports':
-      return '06_Rapports_emis';
+      return VALENTINE_FOLDERS.livrables;
+    case '07_Factures_Honoraires':
+    case 'Factures':
+      return VALENTINE_FOLDERS.honoraires;
     default:
       return subFolder;
   }
@@ -147,87 +168,12 @@ export function detectBrowser(): 'chrome' | 'safari' | 'firefox' | 'edge' | 'oth
 export function getMacSubFolderForEvidence(item: {
   category?: string;
   section?: DossierVoletKey | string;
+  subSection?: string;
+  documentGroupLabel?: string;
   mimeType?: string;
   fileName?: string;
 }): MacDossierSubFolder {
-  const cat = (item.category || '').toLowerCase();
-  const sec = (item.section || '').toLowerCase();
-  const name = (item.fileName || '').toLowerCase();
-
-  // 1. Factures d'honoraires / notes -> 07_Factures_Honoraires
-  if (
-    cat.includes('facture_emise') ||
-    cat === 'facture' ||
-    name.startsWith('facture_') ||
-    name.includes('honoraires')
-  ) {
-    return '07_Factures_Honoraires';
-  }
-
-  // Mandat & fiche de garde
-  if (cat.includes('mandat') || sec === 'garde') {
-    return '01_Page_de_garde';
-  }
-
-  // 2. Contrats & polices d'assurance
-  if (cat.includes('contrat') || cat.includes('police') || cat.includes('avenant') || sec === 'contrats') {
-    return '02_Contrats';
-  }
-
-  // 3. Constatations immédiates (photos terrain, constats, relevés jour J, extractions...)
-  if (
-    cat.includes('constat') ||
-    cat.includes('photo') ||
-    cat.includes('extraction') ||
-    cat.includes('releve') ||
-    sec === 'constatations' ||
-    (item.mimeType && item.mimeType.startsWith('image/'))
-  ) {
-    return '03_Constatations_immediates';
-  }
-
-  // Judicial & real iCloud sub-folders
-  if (cat === 'judicial_nap' || sec === 'contradictoire' && cat.includes('nap')) {
-    return '04_Contradictoire';
-  }
-  if (cat === 'judicial_pre_rapport') {
-    return '06_Rapports_emis';
-  }
-
-  // 4. Contradictoire (dires, courriers adverses, convocations, correspondances, actes)
-  if (
-    cat.includes('contradictoire') ||
-    cat.includes('dire') ||
-    cat.includes('courrier') ||
-    cat.includes('adverse') ||
-    cat.includes('convocation') ||
-    sec === 'contradictoire'
-  ) {
-    return '04_Contradictoire';
-  }
-
-  // 5. Comptes du préjudice (devis de réparation, factures acquittées, réclamations chiffrées, tableaux)
-  if (
-    cat.includes('prejudice') ||
-    cat.includes('devis') ||
-    cat.includes('reparation') ||
-    cat.includes('chiffrage') ||
-    sec === 'prejudice'
-  ) {
-    return '05_Comptes_du_prejudice';
-  }
-
-  // 6. Rapports émis (rapports préliminaires, notes de synthèse, rapports définitifs)
-  if (
-    cat.includes('rapport') ||
-    cat.includes('synthese') ||
-    sec === 'rapports' ||
-    name.includes('rapport')
-  ) {
-    return '06_Rapports_emis';
-  }
-
-  return '03_Constatations_immediates';
+  return resolveValentineExportFolder(item) as MacDossierSubFolder;
 }
 
 export function enableAutoDownloadSync(): { connected: boolean; folderName: string; mode: 'safari_auto' } {
@@ -280,7 +226,7 @@ export async function getComptaRootHandle(rootHandle: any): Promise<{ handle: an
  * Crée automatiquement le dossier d'un dossier d'expertise dans `01_Dossiers_Expertise/<Code_Dossier>`
  * avec ses 6 sous-dossiers numérotés (01 à 06) + le dossier `02_Frais_Generaux_Compta/` séparé à la racine.
  */
-export async function ensureMissionFolderOnMac(missionCode: string): Promise<boolean> {
+export async function ensureMissionFolderOnMac(missionCode: string, isJudicial = false): Promise<boolean> {
   if (!isFileSystemAccessSupported()) return false;
   try {
     const rootHandle = await getSavedDirectoryHandle();
@@ -298,6 +244,11 @@ export async function ensureMissionFolderOnMac(missionCode: string): Promise<boo
     const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
     for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
       await missionDir.getDirectoryHandle(folder, { create: true });
+    }
+    if (isJudicial) {
+      for (const jFolder of JUDICIAL_VALENTINE_FOLDERS) {
+        await missionDir.getDirectoryHandle(jFolder, { create: true });
+      }
     }
     markSyncSuccess(`${rootHandle.name}/${dossiersName}/${safeMission}`);
     return true;
@@ -331,7 +282,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
       const missions = await missionsRes.json();
       for (const m of missions) {
         if (m.code) {
-          await ensureMissionFolderOnMac(m.code);
+          await ensureMissionFolderOnMac(m.code, Boolean(m.is_judicial || m.court_reference || m.judicial_expert));
           missionsSynced++;
 
           // 1b. Synchroniser les photos de terrain et documents de chaque dossier
@@ -349,7 +300,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
                         const safeName = photo.original_name || photo.filename;
                         await syncFileToLocalMacFolder({
                           missionCode: m.code,
-                          subFolder: '03_Constatations_immediates',
+                          subFolder: VALENTINE_FOLDERS.rci_photos,
                           fileName: safeName,
                           data: blob,
                         });
@@ -368,8 +319,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
                       if (fileRes.ok) {
                         const blob = await fileRes.blob();
                         const safeName = doc.original_name || doc.filename;
-                        const voletKey = (doc.section as DossierVoletKey) || 'constatations';
-                        const targetFolder = VOLET_TO_MAC_FOLDER[voletKey] || '03_Constatations_immediates';
+                        const targetFolder = resolveValentineExportFolder(doc);
                         await syncFileToLocalMacFolder({
                           missionCode: m.code,
                           subFolder: targetFolder,
@@ -388,7 +338,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
       }
     }
 
-    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/07_Factures_Honoraires/ ET dans Compta/<AAAA-MM>/Factures_emises/
+    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/Factures Honoraires/ ET dans Compta/<AAAA-MM>/Factures_emises/
     const invoicesRes = await fetch('/api/invoices');
     if (invoicesRes.ok) {
       const invoices = await invoicesRes.json();
@@ -399,7 +349,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
             const blob = await docxRes.blob();
             await syncFileToLocalMacFolder({
               missionCode: inv.our_ref || 'Cabinet_VP',
-              subFolder: '07_Factures_Honoraires',
+              subFolder: VALENTINE_FOLDERS.honoraires,
               fileName: `Facture_${inv.invoice_number}.docx`,
               data: blob,
             });
@@ -844,7 +794,7 @@ export async function scanUntrackedMacFilesForMission(
       if (lower.startsWith('decompte_prejudice_') && lower.endsWith('.csv')) return true;
       if (lower.startsWith('facture_') && lower.endsWith('.docx')) return true;
       if (lower.startsWith('projet_rapport_') && lower.endsWith('.docx')) return true;
-      if (folderName === '07_Factures_Honoraires') return true;
+      if (folderName === '07_Factures_Honoraires' || folderName === VALENTINE_FOLDERS.honoraires) return true;
       return false;
     };
 
@@ -878,7 +828,7 @@ export async function scanUntrackedMacFilesForMission(
             // Ignore unreadable file
           }
         } else if (entryHandle.kind === 'directory' && !entryName.startsWith('.')) {
-          if (entryName === '07_Factures_Honoraires') continue;
+          if (entryName === '07_Factures_Honoraires' || entryName === VALENTINE_FOLDERS.honoraires) continue;
           await scanDirectoryEntries(entryHandle, folderLabel ? `${folderLabel}/${entryName}` : entryName);
         }
       }

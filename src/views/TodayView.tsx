@@ -268,7 +268,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </div>
                   <div className="shrink-0 flex items-center space-x-2">
                     <span className="text-xs text-[#0f3854] font-semibold group-hover:translate-x-0.5 transition-transform inline-flex items-center">
-                      <span>Page de garde</span>
+                      <span>Fiche de présentation</span>
                       <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
                     </span>
                   </div>
@@ -443,9 +443,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               onNavigateToMission(m.code, 'constatations');
                             }}
                             className="px-2 py-1 bg-slate-100 hover:bg-sky-100 text-slate-700 hover:text-[#0f3854] rounded-lg text-[11px] font-semibold transition-colors"
-                            title="Accès direct Terrain, Photos & Émargement"
+                            title="Accès direct RCI-Photos & Opérations d'expertise"
                           >
-                            📷 Terrain
+                            📷 RCI-Photos
                           </button>
                           <button
                             type="button"
