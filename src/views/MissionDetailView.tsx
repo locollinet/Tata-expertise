@@ -52,11 +52,11 @@ const VOLETS_CONFIG: Array<{
   macFolder: string;
 }> = [
   { key: 'garde', num: '01', label: 'Page de garde', macFolder: '01_Page_de_garde' },
-  { key: 'contrats', num: '02', label: 'Contrats', macFolder: '02_Contrats' },
+  { key: 'contrats', num: '02', label: 'Contrats & Mission', macFolder: '02_Contrats' },
   { key: 'constatations', num: '03', label: 'Constatations', macFolder: '03_Constatations_immediates' },
   { key: 'contradictoire', num: '04', label: 'Contradictoire', macFolder: '04_Contradictoire' },
   { key: 'prejudice', num: '05', label: 'Comptes du préjudice', macFolder: '05_Comptes_du_prejudice' },
-  { key: 'rapports', num: '06', label: 'Rapports émis', macFolder: '06_Rapports_emis' },
+  { key: 'rapports', num: '06', label: 'Word & Rapports', macFolder: '06_Rapports_emis' },
 ];
 
 export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
@@ -298,6 +298,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [delivAnalysisText, setDelivAnalysisText] = useState('');
   const [delivPrejudiceText, setDelivPrejudiceText] = useState('');
   const [delivConclusionText, setDelivConclusionText] = useState('');
+  const [showDelivAdvanced, setShowDelivAdvanced] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ type, message });
@@ -1118,7 +1119,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
   const currentVoletMeta = VOLETS_CONFIG.find((v) => v.key === activeVolet) || VOLETS_CONFIG[0];
 
-  // Table des pièces avec prévisualisation immédiate et reclassement en 1 clic
+  // Table des pièces avec prévisualisation immédiate, regroupement de lots et reclassement en 1 clic
   const renderPieceTable = (docs: MissionDocument[], emptyText: string) => {
     if (docs.length === 0) {
       return (
@@ -1127,6 +1128,24 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         </div>
       );
     }
+    // Sort so grouped lots (e.g. Dire + N annexes) always stay contiguous in display
+    const orderedDocs = [...docs].sort((a, b) => {
+      const ga = a.document_group_label || '';
+      const gb = b.document_group_label || '';
+      if (ga !== gb && (ga || gb)) {
+        if (!ga) return 1;
+        if (!gb) return -1;
+        return ga.localeCompare(gb);
+      }
+      return (a.piece_number || 9999) - (b.piece_number || 9999);
+    });
+    const groupCounts: Record<string, number> = {};
+    for (const d of orderedDocs) {
+      if (d.document_group_label) {
+        groupCounts[d.document_group_label] = (groupCounts[d.document_group_label] || 0) + 1;
+      }
+    }
+
     return (
       <div className="border border-slate-200/90 rounded-xl overflow-hidden bg-white shadow-2xs">
         <table className="w-full text-left text-xs border-collapse">
@@ -1141,10 +1160,20 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {docs.map((doc) => {
+            {orderedDocs.map((doc, idx) => {
               const currentSection = doc.section || activeVolet;
+              const prevGroup = idx > 0 ? orderedDocs[idx - 1].document_group_label : '';
+              const showGroupHeader = Boolean(doc.document_group_label && doc.document_group_label !== prevGroup);
               return (
-                <tr key={doc.id} className="hover:bg-slate-50/80 transition-colors">
+                <React.Fragment key={doc.id}>
+                  {showGroupHeader && (
+                    <tr className="bg-indigo-50/70 border-y border-indigo-200/80">
+                      <td colSpan={6} className="py-1.5 px-3.5 text-[11px] font-bold text-indigo-950">
+                        📦 Lot groupé : {doc.document_group_label} ({groupCounts[doc.document_group_label!]} pièce{groupCounts[doc.document_group_label!] > 1 ? 's' : ''})
+                      </td>
+                    </tr>
+                  )}
+                  <tr className={`hover:bg-slate-50/80 transition-colors ${doc.document_group_label ? 'bg-indigo-50/10' : ''}`}>
                   <td className="py-2.5 px-3.5">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#0f3854]/10 text-[#0f3854] font-mono">
                       Pièce {doc.piece_number || '—'}
@@ -1262,6 +1291,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </button>
                   </td>
                 </tr>
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -1553,6 +1583,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] shrink-0">
                     Finder : {uf.subFolder}
                   </span>
+                  {uf.inferredGroupLabel && (
+                    <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold shrink-0">
+                      📦 Lot : {uf.inferredGroupLabel}
+                    </span>
+                  )}
                   <span className="text-[10px] text-slate-400 shrink-0">
                     ({Math.max(1, Math.round(uf.size / 1024))} Ko)
                   </span>
@@ -1601,6 +1636,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               <span className="px-2.5 py-0.5 rounded-md text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
                 Garantie : {mission.guarantee_type || 'RC'}
               </span>
+              {(mission.is_judicial || mission.court_reference || mission.judicial_expert) && (
+                <span className="px-2 py-0.5 rounded-md text-xs font-extrabold bg-purple-100 text-purple-900 border border-purple-300">
+                  ⚖️ Judiciaire
+                </span>
+              )}
               <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                 Donneur d'ordre : {mission.insurance_client}
               </span>
@@ -1619,8 +1659,18 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             </h1>
           </div>
 
-          {/* Actions Rapides */}
+          {/* Actions Rapides priorisées par cas d'usage */}
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openDeliverableStudio(allPhotos.length > 0 || rawFieldNotes.trim() ? 'constatations' : 'mise_en_cause')}
+              className="px-3.5 py-2 bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-300 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs"
+              title="Préparer directement un courrier ou un rapport Word pré-rempli depuis ce dossier"
+            >
+              <FileText className="w-4 h-4 text-[#0f3854]" />
+              <span>Préparer un Word</span>
+            </button>
+
             <button
               type="button"
               onClick={() => onOpenQuickAdd(mission.id, 'activity')}
@@ -3942,30 +3992,47 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       Pièces du contradictoire, Dires & Annexes ({docsContradictoire.length})
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Mises en cause, convocations, dires + annexes groupées, et compartiments judiciaires (NAP, Pré-rapport).
+                      {mission.is_judicial || mission.court_reference || mission.judicial_expert
+                        ? 'Dossier Judiciaire actif : filtrez ou déposez directement par compartiment (NAP, Pré-rapport, Dires + annexes).'
+                        : 'Mises en cause, convocations, dires + annexes groupées et accusés de réception LRAR.'}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs">
-                    {[
-                      { id: 'all', label: 'Tout' },
-                      { id: 'nap', label: '⚖️ NAP' },
-                      { id: 'pre_rapport', label: '⚖️ Pré-rapport' },
-                      { id: 'dires', label: '⚖️ Dires de partie' },
-                    ].map((jf) => (
-                      <button
-                        key={jf.id}
-                        type="button"
-                        onClick={() => setJudicialFilter(jf.id as any)}
-                        className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                          judicialFilter === jf.id
-                            ? 'bg-white text-[#0f3854] font-bold shadow-2xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        {jf.label}
-                      </button>
-                    ))}
-                  </div>
+                  {mission.is_judicial || mission.court_reference || mission.judicial_expert ? (
+                    <div className="flex flex-wrap items-center gap-1.5 bg-purple-50 border border-purple-200 p-1 rounded-xl text-xs">
+                      {[
+                        { id: 'all', label: 'Tout' },
+                        { id: 'nap', label: '⚖️ NAP' },
+                        { id: 'pre_rapport', label: '⚖️ Pré-rapport' },
+                        { id: 'dires', label: '⚖️ Dires de partie' },
+                      ].map((jf) => (
+                        <button
+                          key={jf.id}
+                          type="button"
+                          onClick={() => setJudicialFilter(jf.id as any)}
+                          className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                            judicialFilter === jf.id
+                              ? 'bg-white text-purple-950 font-bold shadow-2xs'
+                              : 'text-purple-800 hover:text-purple-950'
+                          }`}
+                        >
+                          {jf.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await api.updateMission(mission.id, { is_judicial: true });
+                        showToast('Mode Procédure Judiciaire activé (NAP, Pré-rapport, Dires).');
+                        loadData();
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-purple-200 bg-purple-50/70 hover:bg-purple-100 text-purple-900 text-xs font-semibold shrink-0 cursor-pointer"
+                      title="Activer les compartiments judiciaires (NAP, Pré-rapport, Dires de partie)"
+                    >
+                      ⚖️ Passer en Judiciaire
+                    </button>
+                  )}
                 </div>
 
                 {renderVoletDropzone(
@@ -4298,15 +4365,70 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </div>
                 </div>
 
-                {/* Sélecteur de type parmi les 7+ vrais livrables */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                {/* Checklist d'aide intelligente : tout ce qui va être injecté automatiquement */}
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                    ✓ Page de garde prête ({mission.code})
+                  </span>
+                  {(mission.attendees || []).length > 0 ? (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                      ✓ {(mission.attendees || []).length} présent(s) (tableau 3 cols)
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveVolet('constatations')}
+                      className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-semibold cursor-pointer"
+                    >
+                      ⚠ 0 présent — Scanner l'émargement →
+                    </button>
+                  )}
+                  {allPhotos.filter((p: any) => p.is_selected_for_report).length > 0 ? (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                      ✓ {allPhotos.filter((p: any) => p.is_selected_for_report).length} photo(s) en grille 2 cols
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveVolet('constatations')}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer"
+                    >
+                      + Choisir des photos (Volet 03) →
+                    </button>
+                  )}
+                </div>
+
+                {/* Sélecteur priorisé par étape réelle du dossier */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/80">
                   <div className="space-y-1.5">
-                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Courriers (En-tête latéral)</span>
+                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">1. Ouvrir & Convoquer</span>
                     <div className="flex flex-wrap gap-1.5">
                       {([
                         { id: 'mise_en_cause', label: 'Mise en cause' },
                         { id: 'convocation', label: 'Convocation' },
                         { id: 'mec_convocation', label: 'MEC + Convocation' },
+                      ] as const).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => loadDeliverableDefaults(item.id)}
+                          className={`px-2.5 py-1.5 rounded-lg font-bold border transition-all cursor-pointer ${
+                            delivType === item.id
+                              ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-[#0f3854]'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="font-bold text-[#0f3854] uppercase text-[10px] tracking-wider">2. Après visite & Suivi</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([
+                        { id: 'constatations', label: 'Constatations' },
+                        { id: 'note_situation', label: 'Note de situation' },
                         { id: 'courrier_position', label: 'Courrier de position' },
                       ] as const).map((item) => (
                         <button
@@ -4325,13 +4447,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Rapports & Notes (Page de garde complète)</span>
+                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">3. Clôture / Sur pièces</span>
                     <div className="flex flex-wrap gap-1.5">
                       {([
-                        { id: 'constatations', label: 'Constatations' },
-                        { id: 'note_situation', label: 'Note de situation' },
-                        { id: 'note_technique', label: 'Note technique' },
                         { id: 'rapport_ead', label: 'Rapport d’EAD (Sur pièces)' },
+                        { id: 'note_technique', label: 'Note technique' },
                       ] as const).map((item) => (
                         <button
                           key={item.id}
@@ -4469,7 +4589,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-3 text-xs">
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                       <div>
                         <label className="block font-semibold text-slate-700 mb-1">Date du document</label>
                         <input
@@ -4495,30 +4615,42 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <option value="spontanee">Présence spontanée</option>
                         </select>
                       </div>
-                      {delivPosture === 'convoquee' ? (
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">Convoquée par</label>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Lieu / Site des constatations</label>
+                        <input
+                          type="text"
+                          value={delivMeetingPlace}
+                          onChange={(e) => setDelivMeetingPlace(e.target.value)}
+                          placeholder="Site / Ville / Adresse"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">
+                          {delivPosture === 'convoquee' ? 'Convoquée par' : 'Co-signataire (facultatif)'}
+                        </label>
+                        {delivPosture === 'convoquee' ? (
                           <input
                             type="text"
                             value={delivCaller}
                             onChange={(e) => setDelivCaller(e.target.value)}
                             placeholder="ex: VERALLIA / Confrère"
-                            className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                            className="w-full rounded-lg border-amber-300 p-2 border bg-amber-50/40"
                           />
-                        </div>
-                      ) : (
-                        <div>
-                          <label className="block font-semibold text-slate-700 mb-1">Lieu / Site des constatations</label>
+                        ) : (
                           <input
                             type="text"
-                            value={delivMeetingPlace}
-                            onChange={(e) => setDelivMeetingPlace(e.target.value)}
-                            placeholder="Site / Ville / Adresse"
+                            value={delivCoSigner}
+                            onChange={(e) => setDelivCoSigner(e.target.value)}
+                            placeholder="ex: Alexandre Popineau"
                             className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                           />
-                        </div>
-                      )}
-                      <div>
+                        )}
+                      </div>
+                    </div>
+
+                    {delivPosture === 'convoquee' && (
+                      <div className="max-w-xs">
                         <label className="block font-semibold text-slate-700 mb-1">Co-signataire (facultatif)</label>
                         <input
                           type="text"
@@ -4528,7 +4660,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                         />
                       </div>
-                    </div>
+                    )}
 
                     {/* Options grille photos 2 cols + tableau préjudice */}
                     <div className="flex flex-wrap items-center gap-3 p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
@@ -4577,8 +4709,61 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         />
                       </div>
                     </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setShowDelivAdvanced(!showDelivAdvanced)}
+                        className="text-[11px] font-semibold text-[#0f3854] hover:underline cursor-pointer"
+                      >
+                        {showDelivAdvanced ? '▾ Masquer Analyse / Préjudice / Conclusion' : '▸ Ajuster Analyse / Préjudice / Conclusion avant export (facultatif)'}
+                      </button>
+                      {showDelivAdvanced && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 pt-2 border-t border-slate-100">
+                          <div>
+                            <label className="block font-semibold text-slate-700 mb-1">Analyse / Discussion (à compléter librement dans Word)</label>
+                            <textarea
+                              rows={3}
+                              value={delivAnalysisText}
+                              onChange={(e) => setDelivAnalysisText(e.target.value)}
+                              className="w-full rounded-lg border-slate-200 p-2 border bg-slate-50 focus:bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-semibold text-slate-700 mb-1">Conclusion</label>
+                            <textarea
+                              rows={3}
+                              value={delivConclusionText}
+                              onChange={(e) => setDelivConclusionText(e.target.value)}
+                              className="w-full rounded-lg border-slate-200 p-2 border bg-slate-50 focus:bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
+
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={delivGenerating}
+                    onClick={() => handleGenerateDeliverableDocx(false)}
+                    className="px-4 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{delivGenerating ? 'Génération...' : 'Télécharger Word (.docx)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={delivGenerating}
+                    onClick={() => handleGenerateDeliverableDocx(true)}
+                    className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Télécharger + Archiver</span>
+                  </button>
+                </div>
               </div>
 
               {/* CARTE 2 : ARCHIVE DES RAPPORTS DIFFUSÉS & PACKAGES AVOCATS (.ZIP) */}

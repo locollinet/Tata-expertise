@@ -6,11 +6,11 @@ import {
   Clock, BookOpen, Volume2, Search
 } from 'lucide-react';
 import { api } from '../api.js';
-import { Mission } from '@shared/types.js';
+import { Mission, DeliverableType } from '@shared/types.js';
 import { syncFileToLocalMacFolder, syncComptaFileToMac, getMacSubFolderForEvidence } from '../utils/localFolderSync.js';
 
 interface ActionCardData {
-  action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note' | 'attendance_sheet';
+  action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note' | 'attendance_sheet' | 'deliverable_draft';
   confidence: number;
   matched_mission_id?: string | null;
   matched_mission_code?: string | null;
@@ -34,6 +34,11 @@ interface ActionCardData {
     section?: string;
     hours?: number;
     attendees?: Array<{ name: string; role: string; organization: string; email?: string }>;
+    deliverable_type?: DeliverableType;
+    recipient_name?: string;
+    meeting_date?: string;
+    meeting_time?: string;
+    meeting_place?: string;
     new_mission_title?: string;
     new_mission_case_reference?: string;
     new_mission_client?: string;
@@ -783,6 +788,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     ? 'bg-cyan-100 text-cyan-900 border border-cyan-300'
                                     : card.action_type === 'attendance_sheet'
                                     ? 'bg-teal-100 text-teal-900 border border-teal-300'
+                                    : card.action_type === 'deliverable_draft'
+                                    ? 'bg-sky-100 text-[#0f3854] border border-sky-300'
                                     : card.action_type === 'field_note'
                                     ? 'bg-purple-100 text-purple-900 border border-purple-300'
                                     : card.action_type === 'activity'
@@ -794,6 +801,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                   {card.action_type === 'new_mission' && <FolderPlus className="w-3.5 h-3.5" />}
                                   {card.action_type === 'field_photo' && <ImageIcon className="w-3.5 h-3.5" />}
                                   {card.action_type === 'attendance_sheet' && <FileText className="w-3.5 h-3.5" />}
+                                  {card.action_type === 'deliverable_draft' && <FileText className="w-3.5 h-3.5" />}
                                   {card.action_type === 'field_note' && <BookOpen className="w-3.5 h-3.5" />}
                                   {card.action_type === 'activity' && <Clock className="w-3.5 h-3.5" />}
                                   <span>
@@ -802,6 +810,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     {card.action_type === 'new_mission' && 'Nouveau dossier détecté'}
                                     {card.action_type === 'field_photo' && 'Photo technique de terrain'}
                                     {card.action_type === 'attendance_sheet' && "Feuille d'émargement détectée"}
+                                    {card.action_type === 'deliverable_draft' && 'Livrable Word pré-rempli prêt'}
                                     {card.action_type === 'field_note' && 'Note & analyse technique'}
                                     {card.action_type === 'activity' && 'Pointage de vacation'}
                                   </span>
@@ -1133,6 +1142,41 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                 </div>
                               )}
 
+                              {/* Deliverable Word Specific Preview */}
+                              {card.action_type === 'deliverable_draft' && (
+                                <div className="space-y-2 bg-white p-3 rounded-lg border border-sky-200 text-xs">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Type de livrable</label>
+                                      <select
+                                        value={card.payload.deliverable_type || 'mise_en_cause'}
+                                        onChange={(e) => updateCardField(m.id, 'deliverable_type', e.target.value)}
+                                        className="w-full p-1 border rounded bg-slate-50 font-semibold text-xs"
+                                      >
+                                        <option value="mise_en_cause">Mise en cause</option>
+                                        <option value="convocation">Convocation</option>
+                                        <option value="mec_convocation">MEC + Convocation</option>
+                                        <option value="courrier_position">Courrier de position</option>
+                                        <option value="constatations">Constatations</option>
+                                        <option value="note_situation">Note de situation</option>
+                                        <option value="note_technique">Note technique</option>
+                                        <option value="rapport_ead">Rapport d’EAD</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] text-slate-500 font-semibold uppercase">Destinataire / Lieu</label>
+                                      <input
+                                        type="text"
+                                        value={card.payload.recipient_name || card.payload.meeting_place || ''}
+                                        onChange={(e) => updateCardField(m.id, 'recipient_name', e.target.value)}
+                                        placeholder="Auto depuis Page de garde"
+                                        className="w-full p-1 border rounded bg-slate-50 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
                               {/* New Mission Specific Card */}
                               {card.action_type === 'new_mission' && (
                                 <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
@@ -1158,7 +1202,51 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                   Annuler
                                 </button>
 
-                                {card.action_type === 'new_mission' ? (
+                                {card.action_type === 'deliverable_draft' ? (
+                                  <button
+                                    type="button"
+                                    disabled={submittingActionId === m.id || !card.matched_mission_id}
+                                    onClick={async () => {
+                                      if (!card.matched_mission_id) return;
+                                      setSubmittingActionId(m.id);
+                                      try {
+                                        const { blob, fileName } = await api.generateDeliverableDocx(card.matched_mission_id, {
+                                          deliverable_type: card.payload.deliverable_type || 'mise_en_cause',
+                                          recipient_name: card.payload.recipient_name || undefined,
+                                          meeting_date: card.payload.meeting_date || undefined,
+                                          meeting_time: card.payload.meeting_time || undefined,
+                                          meeting_place: card.payload.meeting_place || undefined,
+                                        });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = fileName;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        setTimeout(() => URL.revokeObjectURL(url), 2000);
+                                        setMessages((prev) =>
+                                          prev.map((msg) =>
+                                            msg.id === m.id
+                                              ? {
+                                                  ...msg,
+                                                  actionCard: { ...card, committed: true, committedMessage: `Word « ${fileName} » téléchargé !` },
+                                                }
+                                              : msg
+                                          )
+                                        );
+                                      } catch (err: any) {
+                                        alert(err.message || 'Erreur lors de la génération Word');
+                                      } finally {
+                                        setSubmittingActionId(null);
+                                      }
+                                    }}
+                                    className="px-3.5 py-1.5 rounded-lg bg-[#0f3854] hover:bg-[#16496d] text-white font-bold transition-all shadow-xs flex items-center space-x-1.5 disabled:opacity-50 cursor-pointer"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>{submittingActionId === m.id ? 'Génération...' : 'Télécharger le Word (.docx)'}</span>
+                                  </button>
+                                ) : card.action_type === 'new_mission' ? (
                                   <button
                                     type="button"
                                     onClick={() => {

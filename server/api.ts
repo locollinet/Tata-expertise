@@ -3698,12 +3698,13 @@ Consignes de classification :
    - Kilométrique : TVA à 0%.
 6. "document" : si c'est un Dire d'avocat, un PV de réunion contradictoire, une convocation, une NAP ou une pièce juridique.
 7. "new_mission" : si c'est une nouvelle ordonnance de référé ou lettre de mission judiciaire pour une affaire inexistante.
+8. "deliverable_draft" : si Valentine demande de préparer/rédiger/générer un courrier ou rapport Word à émettre ("prépare une mise en cause", "convoque à une réunion", "prépare les constatations", "note de situation", "note technique", "rapport EAD"). Indique deliverable_type: "mise_en_cause" | "convocation" | "mec_convocation" | "courrier_position" | "constatations" | "note_situation" | "note_technique" | "rapport_ead".
 
 Rapproche toujours l'action du dossier le plus pertinent de la liste selon les mots-clés (Alstom, Ligne 18, Regiorail, Forwardis, TLA, etc.).
 
 Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni texte additionnel :
 {
-  "action_type": "expense" | "document" | "new_mission" | "activity" | "field_photo" | "field_note" | "attendance_sheet",
+  "action_type": "expense" | "document" | "new_mission" | "activity" | "field_photo" | "field_note" | "attendance_sheet" | "deliverable_draft",
   "confidence": 0.95,
   "matched_mission_id": "id du dossier correspondant ou null",
   "matched_mission_code": "code du dossier correspondant (ex: VP2026922) ou null",
@@ -3722,6 +3723,11 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
     "deadline": "YYYY-MM-DD",
     "caption": "Légende courte facultative si pertinente",
     "attendees": [{"name": "...", "role": "...", "organization": "...", "email": ""}],
+    "deliverable_type": "mise_en_cause" | "convocation" | "mec_convocation" | "courrier_position" | "constatations" | "note_situation" | "note_technique" | "rapport_ead",
+    "recipient_name": "Destinataire si mentionné",
+    "meeting_date": "YYYY-MM-DD",
+    "meeting_time": "10h00",
+    "meeting_place": "Lieu / Adresse si mentionné",
     "section": "section_observations" | "section_analysis" | "section_facts" | "section_conclusions",
     "notes": "Texte factuel nettoyé",
     "hours": 1.5,
@@ -3864,6 +3870,35 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
             date: today,
             caption,
             label: caption,
+          },
+        };
+      } else if (!file && /\b(pr[eé]pare|r[eé]dige|g[eé]n[eè]re|fais|envoi|convoque)\b.*\b(mise en cause|\bmec\b|convocation|constatations|note de situation|note technique|\bead\b|courrier)\b/i.test(lower)) {
+        const dType: DeliverableType = lower.includes('mise en cause') && lower.includes('convoc')
+          ? 'mec_convocation'
+          : lower.includes('convoc') || lower.includes('convoque')
+            ? 'convocation'
+            : lower.includes('mise en cause') || /\bmec\b/.test(lower)
+              ? 'mise_en_cause'
+              : lower.includes('note de situation')
+                ? 'note_situation'
+                : lower.includes('note technique')
+                  ? 'note_technique'
+                  : /\bead\b|sur pi[eè]ces/.test(lower)
+                    ? 'rapport_ead'
+                    : lower.includes('courrier')
+                      ? 'courrier_position'
+                      : 'constatations';
+        extracted = {
+          action_type: 'deliverable_draft',
+          confidence: 0.92,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `Modèle Word "${getDeliverableTypeLabel(dType)}" pré-rempli prêt pour [${matchedMission?.code || ''}]`,
+          payload: {
+            date: today,
+            deliverable_type: dType,
+            meeting_date: today,
+            meeting_time: (lower.match(/(\d{1,2}h(?:\d{2})?)/i)?.[1]) || '10h00',
           },
         };
       } else if (lower.includes('dire') || lower.includes('conclusions') || lower.includes('avocat') || lower.includes('signifi')) {

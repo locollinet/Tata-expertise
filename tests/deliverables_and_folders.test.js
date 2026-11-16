@@ -298,6 +298,21 @@ test("Endpoints API : Judiciaire, lot Dire + N annexes, feuille d'émargement, n
     assert.equal(docxRes.status, 200);
     const ab = await docxRes.arrayBuffer();
     assert.ok(ab.byteLength > 10000);
+
+    // 7. Commande Rocco texte "Prépare une mise en cause..."
+    const roccoRes = await fetch(`${baseUrl}/assistant/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        missionId: createdMissionId,
+        text: `Prépare une convocation pour demain 14h30 sur ${code}`,
+      }),
+    });
+    assert.equal(roccoRes.status, 200);
+    const roccoJson = await roccoRes.json();
+    assert.equal(roccoJson.action?.action_type, 'deliverable_draft');
+    assert.equal(roccoJson.action?.payload?.deliverable_type, 'convocation');
+    assert.equal(roccoJson.action?.payload?.meeting_time, '14h30');
   } finally {
     if (createdMissionId) {
       // Clean up synthetic test files created in uploadsDir for this mission

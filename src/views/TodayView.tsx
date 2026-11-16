@@ -398,6 +398,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
                               <span>{stakeFormatted}</span>
                             </span>
                           )}
+                          {m.is_judicial && (
+                            <span className="text-[10px] font-bold text-purple-900 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded">
+                              ⚖️ Judiciaire
+                            </span>
+                          )}
                         </div>
 
                         <h3 className="text-xs sm:text-sm font-bold text-slate-900 mt-1 leading-snug group-hover:text-[#0f3854] transition-colors line-clamp-1">
@@ -430,10 +435,34 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           </span>
                         </div>
 
-                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 group-hover:bg-[#0f3854] group-hover:text-white rounded-lg text-xs font-semibold text-slate-700 transition-colors">
-                          <span>Page de garde</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </span>
+                        <div className="flex items-center space-x-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onNavigateToMission(m.code, 'constatations');
+                            }}
+                            className="px-2 py-1 bg-slate-100 hover:bg-sky-100 text-slate-700 hover:text-[#0f3854] rounded-lg text-[11px] font-semibold transition-colors"
+                            title="Accès direct Terrain, Photos & Émargement"
+                          >
+                            📷 Terrain
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onNavigateToMission(m.code, 'rapports');
+                            }}
+                            className="px-2 py-1 bg-sky-50 hover:bg-[#0f3854] text-[#0f3854] hover:text-white border border-sky-200 rounded-lg text-[11px] font-bold transition-colors"
+                            title="Préparer directement un Courrier ou Rapport Word (.docx)"
+                          >
+                            📄 Word
+                          </button>
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 group-hover:bg-[#0f3854] group-hover:text-white rounded-lg text-xs font-semibold text-slate-700 transition-colors">
+                            <span>Ouvrir</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
                       </div>
                     </div>
                   );
