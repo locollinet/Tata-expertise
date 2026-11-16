@@ -493,16 +493,16 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
       {/* 1. SECTION PREPARATION DE NOTE D'HONORAIRES */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-          <div className="flex items-center space-x-2.5">
-            <span className="w-2 h-2 rounded-full bg-[#0f3854]"></span>
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="w-2 h-2 rounded-full bg-[#0f3854] shrink-0"></span>
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Nouvelle note d'honoraires</h2>
             <span className="text-[11px] text-slate-400 font-normal">| Facturation au temps réel (lignes archivées et soldées)</span>
           </div>
 
           {/* Mission selection with Search Loupe & Checkbox */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <div className="relative">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 min-w-0">
+            <div className="relative shrink-0">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
@@ -532,7 +532,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   }
                 }}
                 placeholder="Rechercher dossier (ex: 728, Alstom)..."
-                className="text-xs rounded-xl border-slate-300 pl-8 pr-7 py-2 bg-slate-50/80 border focus:bg-white focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] w-full sm:w-64 shadow-2xs transition-all"
+                className="text-xs rounded-xl border-slate-300 pl-8 pr-7 py-2 bg-slate-50/80 border focus:bg-white focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] w-full sm:w-56 shadow-2xs transition-all"
               />
               {missionSearch && (
                 <button
@@ -549,7 +549,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             <select
               value={selectedMissionId}
               onChange={(e) => setSelectedMissionId(e.target.value)}
-              className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] py-2 px-3 bg-white border font-bold text-slate-900 max-w-md truncate cursor-pointer hover:bg-slate-50"
+              className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] focus:ring-1 focus:ring-[#0f3854] py-2 px-3 bg-white border font-bold text-slate-900 flex-1 sm:flex-initial sm:w-80 xl:max-w-sm truncate cursor-pointer hover:bg-slate-50 min-w-[200px]"
             >
               {filteredMissions.length === 0 ? (
                 <option value="" disabled>Aucun dossier trouvé pour « {missionSearch} »</option>
@@ -563,7 +563,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </select>
 
             <label
-              className="inline-flex items-center space-x-1.5 text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer select-none shrink-0 px-1 py-1"
+              className="inline-flex items-center space-x-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer select-none shrink-0 px-1 py-1 whitespace-nowrap"
               title="Inclure également les dossiers clos / archivés"
             >
               <input
@@ -572,7 +572,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 onChange={(e) => setIncludeClosed(e.target.checked)}
                 className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
               />
-              <span className="hidden xl:inline">Inclure clos</span>
+              <span>Inclure clos</span>
             </label>
           </div>
         </div>
@@ -973,7 +973,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
       {/* 2. REGISTRE DES FACTURES EMISES & SUIVI */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
             <div className="flex items-center space-x-2">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
@@ -987,9 +987,9 @@ export const BillingView: React.FC<BillingViewProps> = ({
           </div>
 
           {/* Filtres & Recherche de factures : Loupe + Sélecteur par dossier */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 self-stretch sm:self-auto">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Loupe de recherche de facture */}
-            <div className="relative">
+            <div className="relative flex-1 sm:flex-initial">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
@@ -1011,7 +1011,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </div>
 
             {/* Boutons rapides : Toutes les factures vs Dossier actif + Menu déroulant */}
-            <div className="flex items-center space-x-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {currentMissionCode && (
                 <button
                   type="button"

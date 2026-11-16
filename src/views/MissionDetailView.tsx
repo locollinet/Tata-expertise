@@ -1406,31 +1406,46 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       )}
 
       {/* BANDEAU DE NAVIGATION & COMMUTATEUR RAPIDE DE DOSSIER (Pour 150 dossiers) */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3 sm:p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Partie Gauche : Bouton Retour + Loupe de recherche + Menu déroulant */}
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 flex-1 min-w-0">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs transition-colors shrink-0 cursor-pointer"
-            title="Revenir au registre des dossiers"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span className="whitespace-nowrap">
-              {sourceTab === 'today'
-                ? "Aujourd'hui"
-                : sourceTab === 'billing'
-                ? 'Factures'
-                : 'Dossiers'}
-            </span>
-          </button>
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3 sm:p-3.5 flex flex-col gap-2.5">
+        {/* Ligne 1 : Bouton Retour + Loupe de recherche + Menu déroulant + Inclure clos */}
+        <div className="flex flex-col md:flex-row md:items-center gap-2.5 w-full min-w-0">
+          <div className="flex items-center justify-between md:justify-start gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs transition-colors shrink-0 cursor-pointer"
+              title="Revenir au registre des dossiers"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span className="whitespace-nowrap">
+                {sourceTab === 'today'
+                  ? "Aujourd'hui"
+                  : sourceTab === 'billing'
+                  ? 'Factures'
+                  : 'Dossiers'}
+              </span>
+            </button>
 
-          <div className="h-5 w-px bg-slate-200 hidden sm:block shrink-0" />
+            <label
+              className="md:hidden inline-flex items-center space-x-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer select-none shrink-0 px-1 py-1 whitespace-nowrap"
+              title="Cocher pour afficher également les dossiers d'expertise clos / archivés"
+            >
+              <input
+                type="checkbox"
+                checked={includeClosedInSwitcher}
+                onChange={(e) => setIncludeClosedInSwitcher(e.target.checked)}
+                className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
+              />
+              <span>Inclure clos</span>
+            </label>
+          </div>
+
+          <div className="h-5 w-px bg-slate-200 hidden md:block shrink-0" />
 
           {/* Module de bascule de dossier : Loupe + Menu Déroulant */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 min-w-0">
             {/* Barre de recherche avec loupe */}
-            <div className="relative shrink-0 w-full sm:w-60 lg:w-72">
+            <div className="relative shrink-0 w-full sm:w-56 lg:w-64">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
@@ -1453,7 +1468,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             </div>
 
             {/* Menu déroulant de sélection immédiate */}
-            <div className="relative flex-1 min-w-0">
+            <div className="relative flex-1 min-w-[200px]">
               <select
                 value={mission?.code || mission?.id || missionId}
                 onChange={(e) => handleSelectOtherMission(e.target.value)}
@@ -1465,16 +1480,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 ) : (
                   filteredMissionsForSwitcher.map((m: any) => (
                     <option key={m.id} value={m.code || m.id}>
-                      {m.code} — {m.title.length > 44 ? `${m.title.slice(0, 44)}…` : m.title} ({m.insurance_client}){m.status === 'cloture' ? ' [CLOS]' : ''}
+                      {m.code} — {m.title.length > 48 ? `${m.title.slice(0, 48)}…` : m.title} ({m.insurance_client}){m.status === 'cloture' ? ' [CLOS]' : ''}
                     </option>
                   ))
                 )}
               </select>
             </div>
 
-            {/* Filtre pour inclure les dossiers clos si souhaité */}
+            {/* Filtre pour inclure les dossiers clos si souhaité (Desktop / Tablet) */}
             <label
-              className="inline-flex items-center space-x-1.5 text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer select-none shrink-0 px-1 py-1"
+              className="hidden md:inline-flex items-center space-x-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer select-none shrink-0 px-1.5 py-1 whitespace-nowrap"
               title="Cocher pour afficher également les dossiers d'expertise clos / archivés"
             >
               <input
@@ -1483,69 +1498,71 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 onChange={(e) => setIncludeClosedInSwitcher(e.target.checked)}
                 className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854] w-3.5 h-3.5"
               />
-              <span className="hidden xl:inline">Inclure clos</span>
+              <span>Inclure clos</span>
             </label>
           </div>
         </div>
 
-        {/* Partie Droite : Finder Mac + Scanner écarts + Bouton Archiver / Réouvrir */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0 self-end lg:self-auto text-xs pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
-          <div className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100/90 text-slate-600 text-[11px] border border-slate-200/60 shadow-2xs">
+        {/* Ligne 2 : Finder Mac + Export + Scanner écarts + Bouton Archiver / Réouvrir */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-100 text-xs">
+          <div className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100/90 text-slate-600 text-[11px] border border-slate-200/60 shadow-2xs min-w-0 max-w-full">
             <FolderOpen className="w-3.5 h-3.5 text-[#0f3854] shrink-0" />
-            <span className="hidden sm:inline">Finder Mac :</span>
-            <strong className="font-mono text-slate-800">
+            <span className="hidden sm:inline shrink-0">Finder Mac :</span>
+            <strong className="font-mono text-slate-800 truncate">
               {mission.code}/{activeVolet === 'garde' ? `${VALENTINE_FOLDERS.elements_mission} & ${VALENTINE_FOLDERS.honoraires}` : currentVoletMeta.macFolder}
             </strong>
           </div>
 
-          <a
-            href={`/api/missions/${mission.id}/export-zip`}
-            download={`${mission.code}_Finder_VP_Expertise.zip`}
-            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-white text-slate-700 text-[11px] font-semibold border border-slate-200 hover:bg-slate-50 transition-colors shadow-2xs"
-            title="Télécharger l'arborescence Finder complète de ce dossier (6 sous-dossiers classés) au format ZIP"
-          >
-            <Download className="w-3.5 h-3.5 text-[#0f3854]" />
-            <span className="hidden sm:inline">Export Finder (.zip)</span>
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={`/api/missions/${mission.id}/export-zip`}
+              download={`${mission.code}_Finder_VP_Expertise.zip`}
+              className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-white text-slate-700 text-[11px] font-semibold border border-slate-200 hover:bg-slate-50 transition-colors shadow-2xs"
+              title="Télécharger l'arborescence Finder complète de ce dossier (6 sous-dossiers classés) au format ZIP"
+            >
+              <Download className="w-3.5 h-3.5 text-[#0f3854]" />
+              <span>Export Finder (.zip)</span>
+            </a>
 
-          <button
-            type="button"
-            onClick={() => runFinderDiffScan(mission)}
-            disabled={scanningMacFiles}
-            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 transition-colors shadow-2xs cursor-pointer"
-            title="Scanner le dossier Finder sur votre Mac pour détecter les nouveaux fichiers déposés manuellement et les importer dans l'application"
-          >
-            <RotateCcw className={`w-3 h-3 text-[#0f3854] ${scanningMacFiles ? 'animate-spin' : ''}`} />
-            <span>{scanningMacFiles ? 'Scan Finder...' : 'Scanner Finder Mac'}</span>
-            {untrackedMacFiles.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-extrabold">
-                {untrackedMacFiles.length}
-              </span>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={() => runFinderDiffScan(mission)}
+              disabled={scanningMacFiles}
+              className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 transition-colors shadow-2xs cursor-pointer"
+              title="Scanner le dossier Finder sur votre Mac pour détecter les nouveaux fichiers déposés manuellement et les importer dans l'application"
+            >
+              <RotateCcw className={`w-3 h-3 text-[#0f3854] ${scanningMacFiles ? 'animate-spin' : ''}`} />
+              <span>{scanningMacFiles ? 'Scan Finder...' : 'Scanner Finder Mac'}</span>
+              {untrackedMacFiles.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 leading-none rounded-full bg-amber-500 text-white text-[10px] font-extrabold">
+                  {untrackedMacFiles.length}
+                </span>
+              )}
+            </button>
 
-          <button
-            type="button"
-            onClick={handleToggleMissionStatus}
-            className={`inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors shadow-2xs cursor-pointer ${
-              mission.status === 'cloture'
-                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-            }`}
-            title={mission.status === 'cloture' ? 'Réouvrir ce dossier en cours d\'instruction' : 'Archiver ce dossier'}
-          >
-            {mission.status === 'cloture' ? (
-              <>
-                <RotateCcw className="w-3 h-3 text-amber-700" />
-                <span>Réouvrir</span>
-              </>
-            ) : (
-              <>
-                <Archive className="w-3 h-3 text-slate-500" />
-                <span>Archiver</span>
-              </>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={handleToggleMissionStatus}
+              className={`inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors shadow-2xs cursor-pointer ${
+                mission.status === 'cloture'
+                  ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+              title={mission.status === 'cloture' ? 'Réouvrir ce dossier en cours d\'instruction' : 'Archiver ce dossier'}
+            >
+              {mission.status === 'cloture' ? (
+                <>
+                  <RotateCcw className="w-3 h-3 text-amber-700" />
+                  <span>Réouvrir</span>
+                </>
+              ) : (
+                <>
+                  <Archive className="w-3 h-3 text-slate-500" />
+                  <span>Archiver</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

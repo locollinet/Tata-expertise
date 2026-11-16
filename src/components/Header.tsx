@@ -150,15 +150,15 @@ export const Header: React.FC<HeaderProps> = ({
   ];
 
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
+    <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs w-full overflow-x-clip">
       <div className="max-w-7xl mx-auto px-3 sm:px-5 lg:px-6">
-        <div className="flex items-center justify-between h-16 gap-2 lg:gap-4">
+        <div className="flex items-center justify-between h-16 gap-2 lg:gap-3 min-w-0">
           {/* Brand Logo & Title */}
-          <div className="flex items-center space-x-3 cursor-pointer shrink-0" onClick={() => setActiveTab('today')}>
-            <img src="/logo.png" alt="VP Expertise" className="h-9 w-9 object-contain rounded-md shrink-0" />
+          <div className="flex items-center space-x-2 sm:space-x-2.5 cursor-pointer shrink-0 min-w-0" onClick={() => setActiveTab('today')}>
+            <img src="/logo.png" alt="VP Expertise" className="h-8 w-8 lg:h-9 lg:w-9 object-contain rounded-md shrink-0" />
             <div className="shrink-0 flex flex-col justify-center">
               <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-base tracking-tight text-slate-900 whitespace-nowrap">ROCCO · VP EXPERTISE</span>
+                <span className="font-extrabold text-sm lg:text-base tracking-tight text-slate-900 whitespace-nowrap">ROCCO · VP EXPERTISE</span>
                 <span className="hidden 2xl:inline-block text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium whitespace-nowrap">Valentine Pécheux</span>
               </div>
               <p className="text-[11px] text-slate-500 hidden 2xl:block whitespace-nowrap">Gestion de Dossiers d'Expertise & Facturation</p>
@@ -166,7 +166,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Center Navigation Tabs (Desktop) */}
-          <nav className="hidden md:flex items-center space-x-1 shrink-0">
+          <nav className="hidden md:flex items-center gap-0.5 lg:gap-1 shrink-0">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -174,7 +174,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-colors whitespace-nowrap relative cursor-pointer ${
+                  className={`flex items-center space-x-1.5 px-2.5 lg:px-3 py-1.5 lg:py-2 rounded-lg text-xs lg:text-sm font-semibold transition-colors whitespace-nowrap relative cursor-pointer ${
                     isActive
                       ? 'bg-[#0f3854] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -183,7 +183,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <Icon className="w-4 h-4 shrink-0 pointer-events-none" />
                   <span className="pointer-events-none">{tab.label}</span>
                   {tab.badge && (
-                    <span className={`ml-1 text-[10px] font-bold px-1.5 py-0.2 rounded-full pointer-events-none ${tab.badgeColor}`}>
+                    <span className={`ml-0.5 text-[10px] font-bold px-1.5 py-0.5 leading-none rounded-full pointer-events-none ${tab.badgeColor}`}>
                       {tab.badge}
                     </span>
                   )}
@@ -193,11 +193,11 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Right Actions: Mac Sync Status + Auth + Quick Add */}
-          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+          <div className="flex items-center gap-1.5 lg:gap-2 shrink-0">
             <button
               type="button"
               onClick={handleToggleMacSync}
-              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              className={`flex items-center space-x-1.5 px-2 lg:px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                 syncFolderName
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
                   : 'bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100'
@@ -211,13 +211,18 @@ export const Header: React.FC<HeaderProps> = ({
               <span className={`w-2 h-2 rounded-full shrink-0 ${syncFolderName ? 'bg-emerald-500 animate-pulse' : 'bg-sky-500'}`}></span>
               <FolderSync className={`w-3.5 h-3.5 shrink-0 ${syncFolderName ? 'text-emerald-600' : 'text-sky-600'}`} />
               <span className="hidden lg:inline">
-                {syncFolderName ? `✓ Sauvegardé Mac (${syncFolderName})` : 'Sauvegarde Finder Mac'}
+                {syncFolderName ? '✓ Sauvegardé Mac' : 'Finder Mac'}
               </span>
+              {syncFolderName && (
+                <span className="hidden 2xl:inline max-w-[130px] truncate text-emerald-700 font-medium">
+                  ({syncFolderName})
+                </span>
+              )}
             </button>
 
             {/* User authentication */}
             {user ? (
-              <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1 pr-1.5 sm:pr-2">
+              <div className="flex items-center space-x-1 bg-slate-50 border border-slate-200 rounded-lg p-1 pr-1.5">
                 {user.photoURL ? (
                   <img src={user.photoURL} alt={user.displayName || 'Utilisateur'} className="w-7 h-7 rounded-md object-cover shrink-0" />
                 ) : (
@@ -237,7 +242,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleLogin}
                 disabled={authLoading}
-                className="inline-flex items-center space-x-1.5 px-2 py-1.5 sm:px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap"
+                className="inline-flex items-center space-x-1.5 px-2 py-1.5 lg:px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
                 title="Connexion à votre espace sécurisé"
               >
                 <LogIn className="w-3.5 h-3.5 text-slate-500 shrink-0" />
@@ -248,7 +253,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* AI Assistant Button */}
             <button
               onClick={onOpenAssistant}
-              className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-1.5 sm:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
+              className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-1.5 lg:py-2 rounded-lg border border-cyan-300 bg-cyan-50/90 hover:bg-cyan-100 text-cyan-900 text-xs font-bold transition-all shadow-xs active:scale-95 whitespace-nowrap shrink-0"
               title="Rocco — Votre Assistant IA dévoué"
             >
               <Sparkles className="w-3.5 h-3.5 text-cyan-700 animate-pulse shrink-0" />
@@ -258,10 +263,12 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Quick Add Button */}
             <button
               onClick={onOpenQuickAdd}
-              className="hidden sm:inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-3 py-1.5 sm:py-2 rounded-lg text-xs font-semibold shadow-xs transition-all active:scale-95 whitespace-nowrap shrink-0"
+              className="hidden sm:inline-flex items-center space-x-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white px-2.5 lg:px-3 py-1.5 lg:py-2 rounded-lg text-xs font-semibold shadow-xs transition-all active:scale-95 whitespace-nowrap shrink-0"
             >
               <Plus className="w-4 h-4 shrink-0" />
-              <span>Pointer / Ajouter</span>
+              <span>
+                Pointer<span className="hidden lg:inline"> / Ajouter</span>
+              </span>
             </button>
           </div>
         </div>
