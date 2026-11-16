@@ -10,7 +10,7 @@ import { Mission } from '@shared/types.js';
 import { syncFileToLocalMacFolder, syncComptaFileToMac, getMacSubFolderForEvidence } from '../utils/localFolderSync.js';
 
 interface ActionCardData {
-  action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note';
+  action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note' | 'attendance_sheet';
   confidence: number;
   matched_mission_id?: string | null;
   matched_mission_code?: string | null;
@@ -33,6 +33,7 @@ interface ActionCardData {
     caption?: string;
     section?: string;
     hours?: number;
+    attendees?: Array<{ name: string; role: string; organization: string; email?: string }>;
     new_mission_title?: string;
     new_mission_case_reference?: string;
     new_mission_client?: string;
@@ -780,6 +781,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                     : card.action_type === 'field_photo'
                                     ? 'bg-cyan-100 text-cyan-900 border border-cyan-300'
+                                    : card.action_type === 'attendance_sheet'
+                                    ? 'bg-teal-100 text-teal-900 border border-teal-300'
                                     : card.action_type === 'field_note'
                                     ? 'bg-purple-100 text-purple-900 border border-purple-300'
                                     : card.action_type === 'activity'
@@ -790,6 +793,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                   {card.action_type === 'document' && <FileText className="w-3.5 h-3.5" />}
                                   {card.action_type === 'new_mission' && <FolderPlus className="w-3.5 h-3.5" />}
                                   {card.action_type === 'field_photo' && <ImageIcon className="w-3.5 h-3.5" />}
+                                  {card.action_type === 'attendance_sheet' && <FileText className="w-3.5 h-3.5" />}
                                   {card.action_type === 'field_note' && <BookOpen className="w-3.5 h-3.5" />}
                                   {card.action_type === 'activity' && <Clock className="w-3.5 h-3.5" />}
                                   <span>
@@ -797,6 +801,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     {card.action_type === 'document' && 'Pièce de procédure détectée'}
                                     {card.action_type === 'new_mission' && 'Nouveau dossier détecté'}
                                     {card.action_type === 'field_photo' && 'Photo technique de terrain'}
+                                    {card.action_type === 'attendance_sheet' && "Feuille d'émargement détectée"}
                                     {card.action_type === 'field_note' && 'Note & analyse technique'}
                                     {card.action_type === 'activity' && 'Pointage de vacation'}
                                   </span>
@@ -903,15 +908,37 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                     </div>
                                   )}
                                   <div>
-                                    <label className="block text-[10px] text-slate-500 font-semibold uppercase">Légende technique d'expertise</label>
+                                    <label className="block text-[10px] text-slate-500 font-semibold uppercase">Légende (facultative)</label>
                                     <input
                                       type="text"
                                       value={card.payload.caption || card.payload.label || ''}
                                       onChange={(e) => updateCardField(m.id, 'caption', e.target.value)}
-                                      placeholder="ex: Bogie avant gauche — Fissure transversale sur le longeron..."
+                                      placeholder="Facultatif — laisser vide ou saisir une légende"
                                       className="w-full text-xs p-1.5 border rounded bg-slate-50/50 font-medium"
                                     />
                                   </div>
+                                </div>
+                              )}
+
+                              {/* Attendance Sheet Specific Preview */}
+                              {card.action_type === 'attendance_sheet' && (
+                                <div className="space-y-1.5 bg-white p-3 rounded-lg border border-slate-200">
+                                  <span className="block text-[10px] text-teal-800 font-bold uppercase">
+                                    Participants lus ({(card.payload.attendees || []).length}) — Tableau 3 colonnes Word :
+                                  </span>
+                                  {(card.payload.attendees || []).length === 0 ? (
+                                    <p className="text-[11px] text-slate-400 italic">Aucun nom lisible détecté.</p>
+                                  ) : (
+                                    <div className="divide-y divide-slate-100 text-[11px]">
+                                      {(card.payload.attendees || []).map((a, idx) => (
+                                        <div key={idx} className="py-1 flex justify-between gap-2">
+                                          <span className="font-bold text-slate-800">{a.name}</span>
+                                          <span className="text-slate-500">{a.role || '—'}</span>
+                                          <span className="font-medium text-[#0f3854]">{a.organization || '—'}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
 

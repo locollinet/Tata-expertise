@@ -108,6 +108,8 @@ export interface Mission {
   stake_history?: StakeEntry[]; // Historique de l'évolution de l'enjeu
   court_reference?: string; // Tribunal Ex: Tribunal Judiciaire de Nanterre
   judicial_expert?: string; // Expert judiciaire désigné (si expertise judiciaire)
+  is_judicial?: boolean; // Mode dossier judiciaire (débloque NAP, Pré-rapport, Dires de partie 1..N)
+  co_signer?: string; // Co-signataire éventuel (ex: Alexandre Popineau)
   incident_date?: string;
   reception_date: string;
   description: string; // Briève description
@@ -352,6 +354,8 @@ export interface Attendee {
   present_on_site: boolean;
   present_remote: boolean;
   presence_type?: 'site' | 'visio';
+  meeting_label?: string; // Ex: "Constatations du 29/10/2026"
+  meeting_date?: string; // YYYY-MM-DD ou JJ/MM/AAAA
 }
 
 export interface Photo {
@@ -377,6 +381,9 @@ export type DocumentCategory =
   | 'emargement_pv'
   | 'note_technique'
   | 'procedure_dires'
+  | 'judicial_nap'
+  | 'judicial_pre_rapport'
+  | 'judicial_dire'
   | 'courrier_adverse'
   | 'justificatif_prejudice'
   | 'devis_facture'
@@ -399,6 +406,9 @@ export interface MissionDocument {
   file_size: number;
   category: DocumentCategory;
   caption: string;
+  document_group_id?: string; // Regrouper Dire + N annexes
+  document_group_label?: string; // Ex: "Dire Partie 1 du 12/10 + 4 annexes"
+  source_origin?: string; // Ex: "Assuré", "Partie adverse", "Atelier"
   is_selected_for_report: boolean;
   created_at: string;
 }
@@ -583,4 +593,43 @@ export interface DashboardSummary {
   latest_invoices: Invoice[];
   upcoming_travels: TravelOrder[];
   missing_receipts?: MissingReceiptExpense[];
+}
+
+export type DeliverableType =
+  | 'mise_en_cause'
+  | 'convocation'
+  | 'mec_convocation'
+  | 'courrier_position'
+  | 'constatations'
+  | 'note_situation'
+  | 'note_technique'
+  | 'rapport_ead';
+
+export interface DeliverableRequestPayload {
+  deliverable_type: DeliverableType;
+  doc_date?: string;
+  recipient_name?: string;
+  recipient_address?: string;
+  recipient_email?: string;
+  copy_emails?: string;
+  subject?: string;
+  convocation_posture?: 'convoque' | 'convoquee' | 'spontanee';
+  convocation_caller?: string;
+  meeting_date?: string;
+  meeting_time?: string;
+  meeting_place?: string;
+  meeting_address?: string;
+  include_epi?: boolean;
+  include_photos?: boolean;
+  include_damage_table?: boolean;
+  co_signer?: string;
+  body_text?: string;
+  facts_text?: string;
+  context_text?: string;
+  observations_text?: string;
+  analysis_text?: string;
+  prejudice_text?: string;
+  conclusion_text?: string;
+  attendee_filter_meeting?: string;
+  archive_as_issued?: boolean;
 }

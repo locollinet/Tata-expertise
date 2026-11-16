@@ -2,7 +2,16 @@ import { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, Al
 import fs from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
-import type { Invoice, ReportDraft, Attendee, Photo } from '../shared/types.ts';
+import type {
+  Invoice,
+  ReportDraft,
+  Attendee,
+  Photo,
+  Mission,
+  DamageLine,
+  DeliverableType,
+  DeliverableRequestPayload,
+} from '../shared/types.ts';
 
 function escapeXml(str: string | number | null | undefined): string {
   if (str === null || str === undefined) return '';
@@ -950,179 +959,732 @@ export async function generateInvoiceDocx(invoice: Invoice): Promise<Buffer> {
   return await Packer.toBuffer(doc);
 }
 
+const FRENCH_MONTHS = [
+  'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+  'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
+];
+
+function formatDateLongFr(isoOrRaw?: string): string {
+  const s = String(isoOrRaw || '').trim();
+  if (!s) {
+    const now = new Date();
+    return `${now.getDate()} ${FRENCH_MONTHS[now.getMonth()]} ${now.getFullYear()}`;
+  }
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const y = isoMatch[1];
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    return `${d === 1 ? '1er' : d} ${FRENCH_MONTHS[m - 1] || ''} ${y}`.trim();
+  }
+  const frMatch = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (frMatch) {
+    const d = parseInt(frMatch[1], 10);
+    const m = parseInt(frMatch[2], 10);
+    const y = frMatch[3];
+    return `${d === 1 ? '1er' : d} ${FRENCH_MONTHS[m - 1] || ''} ${y}`.trim();
+  }
+  return s;
+}
+
+function formatDateCompact(isoOrRaw?: string): string {
+  const s = String(isoOrRaw || '').trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}${iso[2]}${iso[1]}`;
+  const fr = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (fr) return `${fr[1]}${fr[2]}${fr[3]}`;
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${dd}${mm}${now.getFullYear()}`;
+}
+
+function readImageDimensionsPx(buf: Buffer): { width: number; height: number; ext: 'png' | 'jpeg' | 'webp' } {
+  // PNG header
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    const width = buf.readUInt32BE(16) || 800;
+    const height = buf.readUInt32BE(20) || 600;
+    return { width, height, ext: 'png' };
+  }
+  // JPEG SOF scanner
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 8 < buf.length) {
+      if (buf[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = buf[i + 1];
+      if (marker === 0xd9 || marker === 0xda) break;
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        const height = buf.readUInt16BE(i + 5) || 600;
+        const width = buf.readUInt16BE(i + 7) || 800;
+        return { width, height, ext: 'jpeg' };
+      }
+      const segLen = buf.readUInt16BE(i + 2);
+      if (segLen < 2) break;
+      i += 2 + segLen;
+    }
+    return { width: 1200, height: 900, ext: 'jpeg' };
+  }
+  return { width: 1200, height: 900, ext: 'jpeg' };
+}
+
+function isLetterDeliverable(type: DeliverableType): boolean {
+  return type === 'mise_en_cause' || type === 'convocation' || type === 'mec_convocation' || type === 'courrier_position';
+}
+
+export function getDeliverableTypeLabel(type: DeliverableType): string {
+  switch (type) {
+    case 'mise_en_cause': return 'Mise en cause';
+    case 'convocation': return 'Convocation (Appel à expertise)';
+    case 'mec_convocation': return 'Mise en cause - Appel à expertise';
+    case 'courrier_position': return 'Courrier de position';
+    case 'constatations': return 'Constatations contradictoires';
+    case 'note_situation': return 'Note de situation';
+    case 'note_technique': return 'Note technique';
+    case 'rapport_ead': return 'Expertise sur pièces (EAD)';
+    default: return 'Document d’expertise';
+  }
+}
+
+export function buildDeliverableDefaults(
+  mission: Partial<Mission>,
+  options: Partial<DeliverableRequestPayload> = {},
+  attendees: Attendee[] = [],
+  damageLines: DamageLine[] = [],
+  draft?: Partial<ReportDraft> | null
+) {
+  const deliverableType: DeliverableType = (options.deliverable_type || 'constatations') as DeliverableType;
+  const docDateIso = options.doc_date || new Date().toISOString().slice(0, 10);
+  const docDateLong = formatDateLongFr(docDateIso);
+  const incidentDateLong = mission.incident_date ? formatDateLongFr(mission.incident_date) : 'XX XXXX XXXX';
+
+  const firstAdverse = Array.isArray(mission.adverse_parties) && mission.adverse_parties.length > 0
+    ? mission.adverse_parties[0]
+    : null;
+
+  const clientLabel = (mission.insured_party && mission.insured_party !== '= Client' && mission.insured_party !== 'N/A')
+    ? `${mission.insured_party}${mission.insurance_client ? ` (${mission.insurance_client})` : ''}`
+    : (mission.insurance_client || 'nos mandants');
+
+  const guaranteeTxt = mission.guarantee_type ? `garantie ${mission.guarantee_type}` : 'police d’assurance';
+
+  // Recipient defaults for letters
+  const defaultRecipientName = options.recipient_name?.trim() ||
+    [
+      firstAdverse?.party_name,
+      firstAdverse?.insurer_name ? `Assureur : ${firstAdverse.insurer_name}` : '',
+      firstAdverse?.expert_firm ? `${firstAdverse.expert_firm}${firstAdverse.expert_name ? ` — ${firstAdverse.expert_name}` : ''}` : '',
+    ].filter(Boolean).join('\n') ||
+    (mission.third_parties || 'Partie mise en cause / Destinataire');
+
+  const defaultSubject = options.subject?.trim() || (() => {
+    switch (deliverableType) {
+      case 'mise_en_cause': return 'Mise en cause';
+      case 'convocation': return 'Appel à expertise contradictoire';
+      case 'mec_convocation': return 'Mise en cause - Appel à expertise';
+      case 'courrier_position': return 'Observations complémentaires / Position';
+      case 'constatations': return `CONSTATATIONS DU ${docDateLong.toUpperCase()}`;
+      case 'note_situation': return `NOTE DE SITUATION`;
+      case 'note_technique': return `NOTE TECHNIQUE`;
+      case 'rapport_ead': return `EXPERTISE SUR PIÈCES`;
+      default: return 'DOCUMENT D’EXPERTISE';
+    }
+  })();
+
+  const mandateIntro = `Nous intervenons en qualité d’experte à la demande de ${mission.insurance_client || '[Mandant]'}${
+    mission.client_contact ? ` en la personne de ${mission.client_contact}` : ''
+  }, et pour compte des assureurs, au titre d’un sinistre susceptible de mettre en jeu la ${guaranteeTxt}${
+    mission.insured_party && mission.insured_party !== 'N/A' && mission.insured_party !== '= Client'
+      ? ` de ${mission.insured_party}`
+      : ''
+  }.${mission.court_reference ? ` La présente procédure s’inscrit dans le cadre de l’instance devant ${mission.court_reference}${mission.judicial_expert ? ` (Expert judiciaire désigné : ${mission.judicial_expert})` : ''}.` : ''}`;
+
+  const factsDefault = draft?.section_facts?.trim() ||
+    (mission.description?.trim()
+      ? `Le ${incidentDateLong}, ${mission.description.trim().replace(/^le\s+\d+[^,]*,\s*/i, '')}`
+      : `Sinistre survenu le ${incidentDateLong} — circonstances détaillées à compléter.`);
+
+  const contextLines: string[] = [];
+  if (mission.insured_party && mission.insured_party !== 'N/A') {
+    contextLines.push(`${mission.insured_party} intervient en qualité d’assuré / exploitant.`);
+  }
+  if (mission.insurer_company || mission.insurance_client) {
+    contextLines.push(`Donneur d’ordre / Compagnie : ${mission.insurer_company || mission.insurance_client}${mission.case_reference ? ` (Réf. ${mission.case_reference})` : ''}.`);
+  }
+  if (mission.broker_name && mission.broker_name !== 'N/A') {
+    contextLines.push(`Courtier : ${mission.broker_name}${mission.broker_reference ? ` (Réf. ${mission.broker_reference})` : ''}.`);
+  }
+  for (const adv of mission.adverse_parties || []) {
+    if (!adv.party_name) continue;
+    const extra = [adv.insurer_name, adv.expert_firm, adv.expert_name, adv.lawyer_name ? `Me ${adv.lawyer_name}` : ''].filter(Boolean).join(' — ');
+    contextLines.push(`${adv.party_name}${extra ? ` : ${extra}` : ''}.`);
+  }
+  const contextDefault = contextLines.join('\n') || 'Interactions contractuelles des parties à préciser selon les éléments communiqués.';
+
+  const posture = options.convocation_posture || 'convoque';
+  const callerName = options.convocation_caller?.trim() || mission.insurance_client || 'notre mandant';
+  const meetingDateTxt = options.meeting_date ? formatDateLongFr(options.meeting_date) : docDateLong;
+  const meetingTimeTxt = options.meeting_time?.trim() || '10h00';
+  const meetingPlaceTxt = [options.meeting_place?.trim(), options.meeting_address?.trim()].filter(Boolean).join('\n') || '[Lieu / Adresse des opérations à préciser]';
+
+  let posturePhrase = '';
+  if (posture === 'convoque') {
+    posturePhrase = `Les constatations contradictoires se sont déroulées ${meetingDateTxt} à ${meetingTimeTxt}, à notre initiative, sur le site de :`;
+  } else if (posture === 'convoquee') {
+    posturePhrase = `Les constatations contradictoires se sont déroulées ${meetingDateTxt} à ${meetingTimeTxt}, sur convocation de ${callerName}, sur les lieux du sinistre :`;
+  } else {
+    posturePhrase = `Les constatations se sont déroulées ${meetingDateTxt} à ${meetingTimeTxt}, en présence spontanée des intervenants, à :`;
+  }
+
+  const observationsDefault = draft?.section_observations?.trim() ||
+    draft?.raw_field_notes?.trim() ||
+    'Constatations matérielles relevées lors de l’examen contradictoire :\n[Compléter / affiner les relevés techniques dans Word]';
+
+  const analysisDefault = draft?.section_analysis?.trim() ||
+    mission.preliminary_analysis?.trim() ||
+    '[Section d’analyse technique et d’examen des causes réservée à l’experte dans Word]';
+
+  const claimedTotal = damageLines.reduce((s, d) => s + Number(d.claimed_amount_ht ?? d.claimed_amount ?? 0), 0);
+  const retainedTotal = damageLines.reduce((s, d) => s + Number(d.retained_amount_ht ?? d.retained_amount ?? 0), 0);
+  const prejudiceDefault = damageLines.length > 0
+    ? `Au stade actuel des justifications communiquées, le préjudice déclaré s’élève à ${formatFrCurrency(claimedTotal)} HT pour un montant retenu de ${formatFrCurrency(retainedTotal)} HT (détail ci-dessous).`
+    : mission.stake_amount
+      ? `En première instance, le préjudice est estimé à titre conservatoire à ${formatFrCurrency(mission.stake_amount)} HT, sous réserve des justificatifs définitifs.`
+      : 'En l’attente de la communication des devis et factures définitifs de remise en état.';
+
+  const conclusionDefault = draft?.section_conclusions?.trim() ||
+    '[Conclusions provisoires / définitives et avis sur responsabilités à compléter dans Word]';
+
+  // Default letter body
+  const letterParagraphs: string[] = [
+    `Nous intervenons en qualité d’experte, agissant pour le compte de ${clientLabel}, dans le cadre de l’affaire en objet, tous droits et moyens réservés.`,
+    factsDefault,
+  ];
+  if (deliverableType === 'mise_en_cause' || deliverableType === 'mec_convocation') {
+    letterParagraphs.push(
+      `La responsabilité de ${firstAdverse?.party_name || 'votre société'} est susceptible d’être engagée dans la survenance de cet événement.`
+    );
+  }
+  if (deliverableType === 'mise_en_cause') {
+    letterParagraphs.push(
+      'Nous vous remercions dès à présent de bien vouloir prendre toutes les mesures conservatoires permettant de préserver le contradictoire.',
+      'Nous vous invitons à ouvrir un dossier de sinistre et à nous communiquer la référence correspondante ainsi que le nom du gestionnaire en charge du dossier.',
+      'Nous ne manquerons pas de vous tenir informés de l’avancement des opérations et vous présenterons le quantum du préjudice dès qu’il sera consolidé.'
+    );
+  } else if (deliverableType === 'convocation' || deliverableType === 'mec_convocation') {
+    letterParagraphs.push(
+      'Nous vous remercions dès à présent de bien vouloir prendre toutes les mesures qui permettront de préserver le contradictoire en ce qui concerne les investigations à mener.',
+      `Nous procéderons aux opérations d’expertise contradictoire le ${meetingDateTxt} à ${meetingTimeTxt} à l’adresse suivante :\n${meetingPlaceTxt}`,
+      'Nous vous invitons à être présent ou à vous faire représenter et à répercuter la présente convocation à l’égard de vos éventuels sous-traitants ou autres tiers concernés.',
+      'Il vous est loisible d’effectuer une déclaration de sinistre auprès de votre compagnie d’assurance qui pourra missionner l’expert de son choix.',
+      'Dans le cas où vous n’assisteriez pas, ou ne seriez pas représenté à la réunion, vous vous exposeriez à ce que les constatations matérielles et l’évaluation des dommages faites à titre contradictoire vous soient opposables.'
+    );
+    if (options.include_epi !== false) {
+      letterParagraphs.push(
+        'Le jour de la réunion, les présents devront être équipés des EPI habituels (chaussures de sécurité, gilet haute visibilité et casque de sécurité).'
+      );
+    }
+  } else if (deliverableType === 'courrier_position') {
+    letterParagraphs.push(
+      observationsDefault,
+      prejudiceDefault
+    );
+  }
+
+  const copyEmailsDefault = options.copy_emails !== undefined
+    ? options.copy_emails
+    : attendees.map((a) => a.email).filter(Boolean).join('\n');
+
+  return {
+    deliverable_type: deliverableType,
+    doc_date: docDateIso,
+    doc_date_long: docDateLong,
+    subject: defaultSubject,
+    recipient_name: defaultRecipientName,
+    recipient_email: options.recipient_email || '',
+    copy_emails: copyEmailsDefault,
+    body_text: options.body_text ?? letterParagraphs.join('\n\n'),
+    mandate_intro: mandateIntro,
+    facts_text: options.facts_text ?? factsDefault,
+    context_text: options.context_text ?? contextDefault,
+    posture_phrase: posturePhrase,
+    meeting_place: meetingPlaceTxt,
+    observations_text: options.observations_text ?? observationsDefault,
+    analysis_text: options.analysis_text ?? analysisDefault,
+    prejudice_text: options.prejudice_text ?? prejudiceDefault,
+    conclusion_text: options.conclusion_text ?? conclusionDefault,
+    co_signer: options.co_signer ?? mission.co_signer ?? '',
+    cover_title: deliverableType === 'constatations'
+      ? `CONSTATATIONS DU ${docDateLong.toUpperCase()}`
+      : deliverableType === 'note_situation'
+        ? 'NOTE DE SITUATION'
+        : deliverableType === 'note_technique'
+          ? 'NOTE TECHNIQUE'
+          : 'EXPERTISE SUR PIÈCES',
+    cover_incident_date: `SINISTRE DU ${incidentDateLong.toUpperCase()}`,
+    attendees_count: attendees.length,
+    damage_lines_count: damageLines.length,
+  };
+}
+
+function makeCourrierParagraphXml(
+  text: string,
+  opts: {
+    indentLeft?: number;
+    jc?: 'both' | 'right' | 'center' | 'left';
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    size?: number;
+    spaceBefore?: number;
+    spaceAfter?: number;
+    line?: number;
+    prefixLabel?: string;
+  } = {}
+): string {
+  const sz = opts.size ?? 20;
+  const color = opts.color ?? '404040';
+  const line = opts.line ?? 276;
+  const ind = opts.indentLeft !== undefined ? `<w:ind w:left="${opts.indentLeft}"/>` : '';
+  const jc = opts.jc ? `<w:jc w:val="${opts.jc}"/>` : '';
+  const spacing = `<w:spacing${opts.spaceBefore !== undefined ? ` w:before="${opts.spaceBefore}"` : ''}${opts.spaceAfter !== undefined ? ` w:after="${opts.spaceAfter}"` : ''} w:line="${line}" w:lineRule="auto"/>`;
+  const rPrBase = `<w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="${color}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>${opts.italic ? '<w:i/>' : ''}`;
+  const prefixRun = opts.prefixLabel
+    ? `<w:r><w:rPr>${rPrBase}<w:b/></w:rPr><w:t xml:space="preserve">${escapeXml(opts.prefixLabel)}</w:t></w:r>`
+    : '';
+  const mainRun = `<w:r><w:rPr>${rPrBase}${opts.bold ? '<w:b/>' : ''}</w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
+  return `<w:p><w:pPr>${spacing}${ind}${jc}<w:rPr>${rPrBase}</w:rPr></w:pPr>${prefixRun}${mainRun}</w:p>`;
+}
+
+function makeReportParagraphXml(
+  text: string,
+  style: 'VPETitre1' | 'VPETitre2' | 'VPETexte' | 'VPEListe',
+  opts: { pageBreakBefore?: boolean; bold?: boolean; italic?: boolean; jc?: 'center' | 'both' | 'left' | 'right'; indentLeft?: number; spaceBefore?: number; spaceAfter?: number } = {}
+): string {
+  const pPrInner = [
+    `<w:pStyle w:val="${style}"/>`,
+    opts.pageBreakBefore ? '<w:pageBreakBefore/>' : '',
+    (opts.spaceBefore !== undefined || opts.spaceAfter !== undefined)
+      ? `<w:spacing${opts.spaceBefore !== undefined ? ` w:before="${opts.spaceBefore}"` : ''}${opts.spaceAfter !== undefined ? ` w:after="${opts.spaceAfter}"` : ''}/>`
+      : '',
+    opts.indentLeft !== undefined ? `<w:ind w:left="${opts.indentLeft}"/>` : '',
+    opts.jc ? `<w:jc w:val="${opts.jc}"/>` : '',
+  ].filter(Boolean).join('');
+  const rPrInner = [
+    `<w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/>`,
+    opts.bold ? '<w:b/>' : '',
+    opts.italic ? '<w:i/>' : '',
+  ].filter(Boolean).join('');
+  return `<w:p><w:pPr>${pPrInner}</w:pPr><w:r>${rPrInner ? `<w:rPr>${rPrInner}</w:rPr>` : ''}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+}
+
+function makeSignatureDrawingXml(embedId: string, cx: number, cy: number, indentLeft: number): string {
+  return `<w:p><w:pPr><w:spacing w:before="120" w:after="40"/><w:ind w:left="${indentLeft}"/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="901" name="Signature VP"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="901" name="signature_vp.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${embedId}" cstate="print"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+}
+
+function makeStyledTableXml(
+  headers: string[],
+  colWidths: number[],
+  rows: string[][]
+): string {
+  const totalWidth = colWidths.reduce((s, w) => s + w, 0);
+  const gridCols = colWidths.map((w) => `<w:gridCol w:w="${w}"/>`).join('');
+  const borders = `<w:tblBorders>
+    <w:top w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+    <w:left w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+    <w:bottom w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+    <w:right w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+    <w:insideH w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+    <w:insideV w:val="single" w:sz="4" w:space="0" w:color="0D688D"/>
+  </w:tblBorders>`;
+
+  const headerRowXml = `<w:tr><w:trPr><w:tblHeader/><w:trHeight w:hRule="atLeast" w:val="360"/></w:trPr>${headers
+    .map(
+      (h, idx) =>
+        `<w:tc><w:tcPr><w:tcW w:w="${colWidths[idx]}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="F1F7FA"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="006A8E"/><w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${escapeXml(h)}</w:t></w:r></w:p></w:tc>`
+    )
+    .join('')}</w:tr>`;
+
+  const bodyRowsXml = rows
+    .map(
+      (r) =>
+        `<w:tr><w:trPr><w:trHeight w:hRule="atLeast" w:val="320"/></w:trPr>${r
+          .map(
+            (cell, idx) =>
+              `<w:tc><w:tcPr><w:tcW w:w="${colWidths[idx]}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:color w:val="404040"/><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${escapeXml(cell)}</w:t></w:r></w:p></w:tc>`
+          )
+          .join('')}</w:tr>`
+    )
+    .join('');
+
+  return `<w:tbl><w:tblPr><w:tblStyle w:val="Grilledutableau"/><w:tblW w:w="${totalWidth}" w:type="dxa"/>${borders}</w:tblPr><w:tblGrid>${gridCols}</w:tblGrid>${headerRowXml}${bodyRowsXml}</w:tbl>`;
+}
+
+function resolvePhotoBufferOnDisk(photo: Photo): Buffer | null {
+  const cleanFilename = path.basename(photo.filename || '');
+  if (!cleanFilename) return null;
+  const candidatePaths = [
+    process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR, cleanFilename) : '',
+    path.resolve(process.cwd(), 'data/uploads', cleanFilename),
+    path.resolve(process.cwd(), 'public/uploads', cleanFilename),
+    path.resolve(process.cwd(), 'uploads', cleanFilename),
+  ].filter(Boolean);
+  const hit = candidatePaths.find((p) => fs.existsSync(p));
+  if (!hit) return null;
+  try {
+    return fs.readFileSync(hit);
+  } catch {
+    return null;
+  }
+}
+
+function isUsefulPhotoCaption(caption?: string): boolean {
+  const c = String(caption || '').trim();
+  if (!c) return false;
+  if (/^(img|dsc|pxl|photo|capture|screenshot)[_-]?\d*\.(jpe?g|png|webp|heic)$/i.test(c)) return false;
+  if (/^photo-\d+\.(jpe?g|png|webp)$/i.test(c)) return false;
+  return true;
+}
+
+export interface GenerateDeliverableParams {
+  mission: Partial<Mission>;
+  options: DeliverableRequestPayload;
+  attendees?: Attendee[];
+  photos?: Photo[];
+  damageLines?: DamageLine[];
+  draft?: Partial<ReportDraft> | null;
+}
+
+export async function generateDeliverableDocx({
+  mission,
+  options,
+  attendees = [],
+  photos = [],
+  damageLines = [],
+  draft = null,
+}: GenerateDeliverableParams): Promise<Buffer> {
+  const defaults = buildDeliverableDefaults(mission, options, attendees, damageLines, draft);
+  const type = defaults.deliverable_type;
+
+  // 1. BRANCHE COURRIERS (Mise en cause / Convocation / MEC + Convocation / Position)
+  if (isLetterDeliverable(type)) {
+    const tplPath = path.resolve(process.cwd(), 'server/assets/template_courrier.docx');
+    const zip = await JSZip.loadAsync(fs.readFileSync(tplPath));
+    let docXml = await zip.file('word/document.xml')!.async('string');
+
+    const bodyParts: string[] = [];
+    // Bloc destinataire (indented 2977)
+    const recipientLines = (defaults.recipient_name || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (const line of recipientLines) {
+      bodyParts.push(makeCourrierParagraphXml(line, { indentLeft: 2977, spaceAfter: 0 }));
+    }
+    if (options.recipient_email?.trim()) {
+      bodyParts.push(makeCourrierParagraphXml(options.recipient_email.trim(), { indentLeft: 2977, color: '0563C1', spaceAfter: 120 }));
+    } else {
+      bodyParts.push(makeCourrierParagraphXml('', { indentLeft: 2977, spaceAfter: 120 }));
+    }
+
+    bodyParts.push(makeCourrierParagraphXml('Envoi par courriel et courrier recommandé AR', { indentLeft: 2552, spaceBefore: 80, spaceAfter: 180 }));
+    bodyParts.push(makeCourrierParagraphXml(mission.code || '', { prefixLabel: 'N/Réf. : ', spaceAfter: 20 }));
+    if (mission.case_reference) {
+      bodyParts.push(makeCourrierParagraphXml(mission.case_reference, { prefixLabel: 'V/Réf. : ', spaceAfter: 20 }));
+    }
+    bodyParts.push(makeCourrierParagraphXml(mission.title || '', { prefixLabel: 'Affaire : ', spaceAfter: 20 }));
+    bodyParts.push(makeCourrierParagraphXml(defaults.subject, { prefixLabel: 'Objet : ', bold: true, spaceAfter: 180 }));
+    bodyParts.push(makeCourrierParagraphXml(`Asnières-sur-Seine, le ${defaults.doc_date_long}`, { jc: 'right', spaceAfter: 180 }));
+    bodyParts.push(makeCourrierParagraphXml('Madame, Monsieur,', { jc: 'both', spaceAfter: 140 }));
+
+    // Paragraphes du corps
+    const rawParas = defaults.body_text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    for (const para of rawParas) {
+      const subLines = para.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      // Detect centered meeting place block right after address header
+      const isAddressBlock = subLines.length >= 2 && /à l’adresse suivante\s*:$/i.test(subLines[0]);
+      if (isAddressBlock) {
+        bodyParts.push(makeCourrierParagraphXml(subLines[0], { jc: 'both', spaceAfter: 80 }));
+        for (const addrLine of subLines.slice(1)) {
+          bodyParts.push(makeCourrierParagraphXml(addrLine, { jc: 'center', bold: false, spaceAfter: 20 }));
+        }
+        bodyParts.push(makeCourrierParagraphXml('', { spaceAfter: 80 }));
+      } else {
+        for (const l of subLines) {
+          bodyParts.push(makeCourrierParagraphXml(l, { jc: 'both', spaceAfter: 120 }));
+        }
+      }
+    }
+
+    bodyParts.push(
+      makeCourrierParagraphXml(
+        'Nous vous prions d’agréer, Madame, Monsieur, l’expression de nos salutations distinguées.',
+        { jc: 'both', spaceBefore: 120, spaceAfter: 80 }
+      )
+    );
+
+    // Signature PNG embedded as rId8 in template_courrier.docx (1370906 x 508662 EMU)
+    bodyParts.push(makeSignatureDrawingXml('rId8', 1370906, 508662, 3544));
+    bodyParts.push(
+      makeCourrierParagraphXml(
+        defaults.co_signer ? `Valentine Pécheux & ${defaults.co_signer}` : 'Valentine Pécheux',
+        { indentLeft: 3544, bold: true, spaceAfter: 160 }
+      )
+    );
+
+    const copyLines = (defaults.copy_emails || '').split(/\r?\n|,|;/).map((s) => s.trim()).filter(Boolean);
+    if (copyLines.length > 0) {
+      copyLines.forEach((email, idx) => {
+        bodyParts.push(
+          makeCourrierParagraphXml(email, {
+            prefixLabel: idx === 0 ? 'Copie : ' : '            ',
+            color: '0563C1',
+            spaceAfter: 20,
+          })
+        );
+      });
+    }
+
+    docXml = docXml.replace('{{COURRIER_BODY_XML}}', bodyParts.join(''));
+    zip.file('word/document.xml', docXml);
+    return await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  }
+
+  // 2. BRANCHE RAPPORTS & NOTES (Constatations / Note de situation / Note technique / EAD)
+  const tplPath = path.resolve(process.cwd(), 'server/assets/template_rapport.docx');
+  const zip = await JSZip.loadAsync(fs.readFileSync(tplPath));
+  let docXml = await zip.file('word/document.xml')!.async('string');
+  let relsXml = await zip.file('word/_rels/document.xml.rels')!.async('string');
+  let ctXml = await zip.file('[Content_Types].xml')!.async('string');
+  let footer1Xml = zip.file('word/footer1.xml') ? await zip.file('word/footer1.xml')!.async('string') : '';
+
+  // Fill cover & running footer tokens
+  const docTag = type === 'constatations'
+    ? 'CONSTATATIONS'
+    : type === 'note_situation'
+      ? 'NOTE_SITUATION'
+      : type === 'note_technique'
+        ? 'NOTE_TECHNIQUE'
+        : 'EAD';
+  docXml = docXml
+    .replace(/\{\{COVER_AFFAIRE\}\}/g, escapeXml(mission.title || ''))
+    .replace(/\{\{COVER_V_REF\}\}/g, escapeXml(mission.case_reference || '—'))
+    .replace(/\{\{COVER_N_REF\}\}/g, escapeXml(mission.code || ''))
+    .replace(/\{\{COVER_DOC_TITLE\}\}/g, escapeXml(defaults.cover_title))
+    .replace(/\{\{COVER_INCIDENT_DATE\}\}/g, escapeXml(defaults.cover_incident_date));
+
+  if (footer1Xml) {
+    footer1Xml = footer1Xml
+      .replace(/\{\{FOOTER_CODE\}\}/g, escapeXml(mission.code || ''))
+      .replace(/\{\{FOOTER_CLIENT_REF\}\}/g, escapeXml(mission.case_reference || '—'))
+      .replace(/\{\{FOOTER_DOC_TAG\}\}/g, escapeXml(docTag))
+      .replace(/\{\{FOOTER_DATE\}\}/g, escapeXml(formatDateCompact(defaults.doc_date)));
+    zip.file('word/footer1.xml', footer1Xml);
+  }
+
+  const bodyParts: string[] = [];
+
+  // 1. INTRODUCTION (Page 2 start)
+  bodyParts.push(makeReportParagraphXml('INTRODUCTION', 'VPETitre1', { pageBreakBefore: true }));
+  bodyParts.push(makeReportParagraphXml(defaults.mandate_intro, 'VPETexte'));
+  bodyParts.push(
+    makeReportParagraphXml(
+      'Le présent document est établi tous droits et moyens de nos requérants réservés et sous toutes réserves des conditions et clauses de la police d’assurance.',
+      'VPETexte'
+    )
+  );
+  bodyParts.push(makeReportParagraphXml('Circonstances de l’affaire', 'VPETitre2'));
+  for (const line of defaults.facts_text.split(/\r?\n/).filter((l) => l.trim())) {
+    bodyParts.push(makeReportParagraphXml(line.trim(), 'VPETexte'));
+  }
+
+  bodyParts.push(makeReportParagraphXml('Libellé de la présente mission', 'VPETitre2'));
+  const missionScopeItems = [
+    'Prendre connaissance du dossier et des pièces communiquées,',
+    'Participer aux opérations d’expertise contradictoire,',
+    'Déterminer les causes et origines du sinistre,',
+    'Évaluer le quantum du préjudice,',
+    'Rédiger le présent document et formaliser l’avis technique.',
+  ];
+  for (const item of missionScopeItems) {
+    bodyParts.push(makeReportParagraphXml(item, 'VPEListe'));
+  }
+
+  // 2. ÉLÉMENTS CONTEXTUELS
+  bodyParts.push(makeReportParagraphXml('ÉLÉMENTS CONTEXTUELS DE L’EXPERTISE', 'VPETitre1'));
+  bodyParts.push(makeReportParagraphXml('Documents communiqués', 'VPETitre2'));
+  bodyParts.push(makeReportParagraphXml('Les éléments techniques et contractuels nous ont été remis par nos mandants et les parties.', 'VPETexte'));
+  bodyParts.push(makeReportParagraphXml('Interactions contractuelles des parties', 'VPETitre2'));
+  for (const line of defaults.context_text.split(/\r?\n/).filter((l) => l.trim())) {
+    bodyParts.push(makeReportParagraphXml(line.trim(), 'VPETexte'));
+  }
+
+  // 3. DÉROULEMENT & PARTICIPANTS (3-column exact table: Nom | Qualité | Partie représentée)
+  const filteredAttendees = options.attendee_filter_meeting
+    ? attendees.filter((a) => !a.meeting_label || a.meeting_label === options.attendee_filter_meeting)
+    : attendees;
+
+  if (type === 'constatations' || type === 'note_situation' || filteredAttendees.length > 0) {
+    bodyParts.push(makeReportParagraphXml('DÉROULEMENT DE L’EXPERTISE', 'VPETitre1'));
+    bodyParts.push(makeReportParagraphXml(defaults.posture_phrase, 'VPETexte'));
+    for (const loc of defaults.meeting_place.split(/\r?\n/).filter((l) => l.trim())) {
+      bodyParts.push(makeReportParagraphXml(loc.trim(), 'VPETexte', { jc: 'center', spaceAfter: 40 }));
+    }
+    bodyParts.push(makeReportParagraphXml('Présents :', 'VPETexte', { spaceBefore: 120, spaceAfter: 80 }));
+    if (filteredAttendees.length > 0) {
+      bodyParts.push(
+        makeStyledTableXml(
+          ['Nom', 'Qualité', 'Partie représentée'],
+          [2689, 4110, 1994],
+          filteredAttendees.map((a) => [
+            a.name || '—',
+            a.role || (a.present_remote && !a.present_on_site ? 'Participant (Visio)' : '—'),
+            a.organization || '—',
+          ])
+        )
+      );
+      bodyParts.push(makeReportParagraphXml('', 'VPETexte', { spaceAfter: 120 }));
+    } else {
+      bodyParts.push(makeReportParagraphXml('Liste des présents à compléter ou scanner depuis la feuille d’émargement.', 'VPETexte', { italic: true }));
+    }
+  }
+
+  // 4. CONSTATATIONS & GRILLE PHOTOS 2 COLONNES
+  bodyParts.push(makeReportParagraphXml(type === 'rapport_ead' ? 'EXPERTISE SUR PIÈCES' : 'CONSTATATIONS', 'VPETitre1'));
+  for (const obsLine of defaults.observations_text.split(/\r?\n/).filter((l) => l.trim())) {
+    bodyParts.push(makeReportParagraphXml(obsLine.trim(), 'VPETexte'));
+  }
+
+  const selectedPhotos = (options.include_photos === false ? [] : photos).filter((p) => p.is_selected_for_report);
+  if (selectedPhotos.length > 0) {
+    bodyParts.push(makeReportParagraphXml('Photographies et illustrations terrain', 'VPETitre2'));
+    let nextPhotoId = 500;
+    const ensureExtInCt = (ext: string) => {
+      if (!ctXml.includes(`Extension="${ext}"`)) {
+        const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+        ctXml = ctXml.replace('</Types>', `<Default Extension="${ext}" ContentType="${mime}"/></Types>`);
+      }
+    };
+
+    // Build 2-column borderless photo grid (4535 twips per col matching VP2026649_Constatations_V3VP.docx)
+    const gridRows: string[] = [];
+    const colWidthEmu = 2784475; // exact width from VP2026649 (~292 px)
+    for (let i = 0; i < selectedPhotos.length; i += 2) {
+      const pair = [selectedPhotos[i], selectedPhotos[i + 1]];
+      const cellsXml = pair.map((ph) => {
+        if (!ph) {
+          return `<w:tc><w:tcPr><w:tcW w:w="4535" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="VPETexte"/></w:pPr></w:p></w:tc>`;
+        }
+        const buf = resolvePhotoBufferOnDisk(ph);
+        if (!buf) {
+          return `<w:tc><w:tcPr><w:tcW w:w="4535" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:jc w:val="center"/></w:pPr><w:r><w:t>[Photo : ${escapeXml(ph.original_name)}]</w:t></w:r></w:p></w:tc>`;
+        }
+        const dims = readImageDimensionsPx(buf);
+        const ext = dims.ext === 'png' ? 'png' : 'jpeg';
+        ensureExtInCt(ext);
+        nextPhotoId++;
+        const rId = `rIdPhoto${nextPhotoId}`;
+        const mediaName = `photo_${nextPhotoId}.${ext}`;
+        zip.file(`word/media/${mediaName}`, buf);
+        relsXml = relsXml.replace(
+          '</Relationships>',
+          `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${mediaName}"/></Relationships>`
+        );
+        const cy = Math.round((colWidthEmu * dims.height) / Math.max(1, dims.width));
+        const imgXml = `<w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:spacing w:after="40"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${colWidthEmu}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${nextPhotoId}" name="${escapeXml(mediaName)}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${nextPhotoId}" name="${escapeXml(mediaName)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rId}" cstate="print"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${colWidthEmu}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+        const captionXml = isUsefulPhotoCaption(ph.caption)
+          ? `<w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:spacing w:after="120"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:i/><w:sz w:val="18"/></w:rPr><w:t>${escapeXml(ph.caption)}</w:t></w:r></w:p>`
+          : `<w:p><w:pPr><w:pStyle w:val="VPETexte"/><w:spacing w:after="120"/></w:pPr></w:p>`;
+        return `<w:tc><w:tcPr><w:tcW w:w="4535" w:type="dxa"/><w:tcMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar><w:vAlign w:val="top"/></w:tcPr>${imgXml}${captionXml}</w:tc>`;
+      });
+      gridRows.push(`<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>${cellsXml.join('')}</w:tr>`);
+    }
+
+    bodyParts.push(
+      `<w:tbl><w:tblPr><w:tblStyle w:val="Grilledutableau"/><w:tblW w:w="9070" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders><w:top w:val="none"/><w:left w:val="none"/><w:bottom w:val="none"/><w:right w:val="none"/><w:insideH w:val="none"/><w:insideV w:val="none"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="4535"/><w:gridCol w:w="4535"/></w:tblGrid>${gridRows.join('')}</w:tbl>`
+    );
+  }
+
+  // 5. ANALYSE – DISCUSSION (Espace réservé à l'experte dans Word)
+  bodyParts.push(makeReportParagraphXml('ANALYSE – DISCUSSION', 'VPETitre1'));
+  for (const aLine of defaults.analysis_text.split(/\r?\n/).filter((l) => l.trim())) {
+    bodyParts.push(makeReportParagraphXml(aLine.trim(), 'VPETexte', { italic: !draft?.section_analysis && !mission.preliminary_analysis }));
+  }
+
+  // 6. ÉVALUATION DU PRÉJUDICE
+  bodyParts.push(makeReportParagraphXml('ÉVALUATION DU PRÉJUDICE', 'VPETitre1'));
+  bodyParts.push(makeReportParagraphXml(defaults.prejudice_text, 'VPETexte'));
+  if (options.include_damage_table !== false && damageLines.length > 0) {
+    const claimedTot = damageLines.reduce((s, l) => s + Number(l.claimed_amount_ht ?? l.claimed_amount ?? 0), 0);
+    const retainedTot = damageLines.reduce((s, l) => s + Number(l.retained_amount_ht ?? l.retained_amount ?? 0), 0);
+    const dmgRows = damageLines.map((l) => [
+      l.label || '—',
+      formatFrCurrency(Number(l.claimed_amount_ht ?? l.claimed_amount ?? 0)),
+      formatFrCurrency(Number(l.retained_amount_ht ?? l.retained_amount ?? 0)),
+      l.comment || l.notes || '—',
+    ]);
+    dmgRows.push(['TOTAL PRÉJUDICE HT', formatFrCurrency(claimedTot), formatFrCurrency(retainedTot), '']);
+    bodyParts.push(
+      makeStyledTableXml(
+        ['Poste / Désignation', 'Réclamé HT', 'Retenu HT', 'Observations'],
+        [3200, 1600, 1600, 2670],
+        dmgRows
+      )
+    );
+    bodyParts.push(makeReportParagraphXml('', 'VPETexte', { spaceAfter: 120 }));
+  }
+
+  // 7. CONCLUSION & SIGNATURE VP
+  bodyParts.push(makeReportParagraphXml('CONCLUSION', 'VPETitre1'));
+  for (const cLine of defaults.conclusion_text.split(/\r?\n/).filter((l) => l.trim())) {
+    bodyParts.push(makeReportParagraphXml(cLine.trim(), 'VPETexte', { italic: !draft?.section_conclusions }));
+  }
+  bodyParts.push(
+    makeReportParagraphXml(`Fait à Asnières-sur-Seine, le ${defaults.doc_date_long}`, 'VPETexte', { spaceBefore: 160, spaceAfter: 80 })
+  );
+  // Signature rId8 present in template_rapport.docx
+  bodyParts.push(makeSignatureDrawingXml('rId8', 1370906, 508662, 4961));
+  bodyParts.push(
+    makeReportParagraphXml(
+      defaults.co_signer ? `Valentine Pécheux & ${defaults.co_signer}` : 'Valentine Pécheux',
+      'VPETexte',
+      { indentLeft: 4961, bold: true, spaceAfter: 0 }
+    )
+  );
+
+  docXml = docXml.replace('{{RAPPORT_BODY_XML}}', bodyParts.join(''));
+  zip.file('word/document.xml', docXml);
+  zip.file('word/_rels/document.xml.rels', relsXml);
+  zip.file('[Content_Types].xml', ctXml);
+
+  return await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
 export async function generateReportDocx(
   draft: ReportDraft,
   missionTitle: string,
   caseRef: string,
   attendees: Attendee[] = [],
-  photos: Photo[] = []
+  photos: Photo[] = [],
+  missionOverride?: Partial<Mission>,
+  damageLines: DamageLine[] = []
 ): Promise<Buffer> {
-  const children: (Paragraph | Table)[] = [
-    new Paragraph({
-      heading: HeadingLevel.TITLE,
-      children: [
-        new TextRun({ text: "VP EXPERTISE — RAPPORT D'EXPERTISE TECHNIQUE", bold: true, size: 32, color: "0F3854" }),
-      ],
-    }),
-    new Paragraph({
-      spacing: { after: 200 },
-      children: [
-        new TextRun({ text: `Dossier : ${draft.mission_code} — ${missionTitle}`, bold: true, size: 24 }),
-      ],
-    }),
-    new Paragraph({
-      spacing: { after: 200 },
-      children: [
-        new TextRun({ text: `Référence sinistre : ${caseRef} | Version de travail : v${draft.version}`, italics: true }),
-      ],
-    }),
-
-    // Section 1 : Rappel des faits
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 100 },
-      children: [new TextRun({ text: "1. Rappel des faits et cadre de la mission", bold: true, color: "0F3854" })],
-    }),
-    new Paragraph({
-      spacing: { after: 150 },
-      children: [new TextRun({ text: draft.section_facts || "Aucun fait renseigné à ce stade." })],
-    }),
-
-    // Section 2 : Participants
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 100 },
-      children: [new TextRun({ text: "2. Participants aux opérations d'expertise", bold: true, color: "0F3854" })],
-    }),
-  ];
-
-  if (attendees.length > 0) {
-    const attendeeRows = [
-      new TableRow({
-        tableHeader: true,
-        children: [
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Nom & Prénom", bold: true })] })], shading: { fill: "F1F5F9" } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Organisme / Partie", bold: true })] })], shading: { fill: "F1F5F9" } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Qualité / Rôle", bold: true })] })], shading: { fill: "F1F5F9" } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Présence", bold: true })] })], shading: { fill: "F1F5F9" } }),
-        ],
-      }),
-      ...attendees.map(a => new TableRow({
-        children: [
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: a.name })] })] }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: a.organization })] })] }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: a.role })] })] }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: a.present_on_site ? "Sur site" : (a.present_remote ? "Visio" : "Excusé") })] })] }),
-        ],
-      })),
-    ];
-    children.push(new Table({ rows: attendeeRows, width: { size: 100, type: WidthType.PERCENTAGE } }));
-  } else {
-    children.push(new Paragraph({ children: [new TextRun({ text: "Aucun participant saisi.", italics: true })] }));
-  }
-
-  // Section 3 : Constatations matérielles
-  children.push(
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 100 },
-      children: [new TextRun({ text: "3. Constatations matérielles et investigations sur site", bold: true, color: "0F3854" })],
-    }),
-    new Paragraph({
-      spacing: { after: 150 },
-      children: [new TextRun({ text: draft.section_observations || "Constatations en attente de formalisation." })],
-    })
-  );
-
-  // Selected photos
-  const selectedPhotos = photos.filter(p => p.is_selected_for_report);
-  if (selectedPhotos.length > 0) {
-    children.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        spacing: { before: 180, after: 80 },
-        children: [new TextRun({ text: "Photographies et pièces justificatives sélectionnées", bold: true })],
-      })
-    );
-    for (const photo of selectedPhotos) {
-      children.push(
-        new Paragraph({
-          spacing: { before: 100, after: 40 },
-          children: [
-            new TextRun({ text: `Cliché : ${photo.caption || photo.original_name}`, bold: true, italics: true }),
-          ],
-        })
-      );
-      // If photo file exists on disk and is readable, embed it
-      const cleanFilename = path.basename(photo.filename);
-      const candidatePaths = [
-        path.resolve(process.cwd(), 'data/uploads', cleanFilename),
-        path.resolve(process.cwd(), 'public/uploads', cleanFilename),
-        path.resolve(process.cwd(), 'uploads', cleanFilename),
-      ];
-      const photoPath = candidatePaths.find(p => fs.existsSync(p));
-      if (photoPath) {
-        try {
-          const imageBuffer = fs.readFileSync(photoPath);
-          children.push(
-            new Paragraph({
-              spacing: { after: 140 },
-              children: [
-                new ImageRun({
-                  data: imageBuffer,
-                  transformation: {
-                    width: 450,
-                    height: 300,
-                  },
-                } as any),
-              ],
-            })
-          );
-        } catch {
-          children.push(new Paragraph({ children: [new TextRun({ text: `[Fichier image : ${photo.original_name}]`, italics: true })] }));
-        }
-      }
-    }
-  }
-
-  // Section 4 : Analyse technique (Experte)
-  children.push(
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 100 },
-      children: [new TextRun({ text: "4. Analyse technique et examen des responsabilités", bold: true, color: "0F3854" })],
-    }),
-    new Paragraph({
-      spacing: { after: 150 },
-      children: [new TextRun({ text: draft.section_analysis || "[Section d'analyse technique réservée à l'experte]", italics: !draft.section_analysis })],
-    }),
-
-    // Section 5 : Synthèse & Conclusions provisoires
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 240, after: 100 },
-      children: [new TextRun({ text: "5. Conclusions provisoires et prochaines démarches", bold: true, color: "0F3854" })],
-    }),
-    new Paragraph({
-      spacing: { after: 200 },
-      children: [new TextRun({ text: draft.section_conclusions || "Conclusions en cours d'élaboration." })],
-    })
-  );
-
-  const doc = new Document({
-    sections: [
-      {
-        headers: {
-          default: createVPHeader(),
-        },
-        footers: {
-          default: createVPFooter(),
-        },
-        children,
-      },
-    ],
+  const mission: Partial<Mission> = missionOverride || {
+    id: draft.mission_id,
+    code: draft.mission_code,
+    title: missionTitle,
+    case_reference: caseRef,
+    insurance_client: 'Mandant',
+  };
+  return generateDeliverableDocx({
+    mission,
+    options: {
+      deliverable_type: 'constatations',
+      include_photos: true,
+      include_damage_table: damageLines.length > 0,
+    },
+    attendees,
+    photos,
+    damageLines,
+    draft,
   });
-
-  const { Packer } = await import('docx');
-  return await Packer.toBuffer(doc);
 }

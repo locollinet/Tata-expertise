@@ -1,4 +1,4 @@
-import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport, DamageLine, IssuedReport } from '@shared/types.js';
+import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport, DamageLine, IssuedReport, DeliverableType, DeliverableRequestPayload } from '@shared/types.js';
 
 const BASE_URL = '/api';
 
@@ -224,6 +224,58 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  addAttendeesBatch: (missionId: string, attendees: Array<Partial<Attendee>>, meetingLabel?: string, meetingDate?: string) =>
+    fetchJSON<{ count: number; ids: string[]; message: string }>(`/missions/${missionId}/attendees/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ attendees, meeting_label: meetingLabel, meeting_date: meetingDate }),
+    }),
+  parseAttendanceSheet: async (missionId: string, file?: File | null, text?: string) => {
+    const fd = new FormData();
+    if (file) fd.append('file', file);
+    if (text) fd.append('text', text);
+    const res = await fetch(`${BASE_URL}/missions/${missionId}/parse-attendance-sheet`, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{
+      model: string;
+      meeting_date?: string;
+      meeting_label?: string;
+      attendees: Array<{ name: string; role: string; organization: string; email?: string; present_on_site?: boolean; present_remote?: boolean }>;
+      note?: string;
+    }>;
+  },
+  cleanFieldNotes: (missionId: string, rawNotes: string) =>
+    fetchJSON<{ cleaned_observations: string; model: string }>(`/missions/${missionId}/clean-notes`, {
+      method: 'POST',
+      body: JSON.stringify({ raw_notes: rawNotes }),
+    }),
+  getDeliverablePreview: (missionId: string, type: DeliverableType, docDate?: string, posture?: string) => {
+    const params = new URLSearchParams({ type });
+    if (docDate) params.set('doc_date', docDate);
+    if (posture) params.set('posture', posture);
+    return fetchJSON<any>(`/missions/${missionId}/deliverable-preview?${params.toString()}`);
+  },
+  generateDeliverableDocx: async (missionId: string, payload: DeliverableRequestPayload) => {
+    const res = await fetch(`${BASE_URL}/missions/${missionId}/deliverable-docx`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur HTTP ${res.status}`);
+    }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^";]+)"?/i);
+    const fileName = m ? m[1] : `VP_Expertise_${payload.deliverable_type}.docx`;
+    const blob = await res.blob();
+    return { blob, fileName };
   },
   deleteAttendee: (id: string) => fetchJSON<{ message: string }>(`/attendees/${id}`, { method: 'DELETE' }),
 

@@ -18,6 +18,8 @@
 import { doc, setDoc } from 'firebase/firestore';
 import { db as firestoreDb, auth } from '../firebase.js';
 import { DossierVoletKey, EvidenceItem } from '@shared/types.js';
+import { mapMacFolderToSectionAndCategory } from '@shared/folderMapping.js';
+export { mapMacFolderToSectionAndCategory };
 
 const DB_NAME = 'vp_expertise_local_sync';
 const STORE_NAME = 'handles';
@@ -182,6 +184,14 @@ export function getMacSubFolderForEvidence(item: {
     (item.mimeType && item.mimeType.startsWith('image/'))
   ) {
     return '03_Constatations_immediates';
+  }
+
+  // Judicial & real iCloud sub-folders
+  if (cat === 'judicial_nap' || sec === 'contradictoire' && cat.includes('nap')) {
+    return '04_Contradictoire';
+  }
+  if (cat === 'judicial_pre_rapport') {
+    return '06_Rapports_emis';
   }
 
   // 4. Contradictoire (dires, courriers adverses, convocations, correspondances, actes)
@@ -772,6 +782,8 @@ export interface UntrackedMacFile {
   subFolder: string;
   inferredSection: DossierVoletKey;
   inferredCategory: string;
+  inferredSubSection?: string;
+  inferredGroupLabel?: string;
   size: number;
   lastModified: number;
 }
@@ -781,23 +793,6 @@ function normalizeFileNameForComparison(name: string): string {
     .trim()
     .replace(/^Pi[eè]ce[_\s-]*n?[°o]?[_\s-]*\d+[_\s-]*/i, '')
     .toLowerCase();
-}
-
-function mapMacFolderToSectionAndCategory(folderName: string): { section: DossierVoletKey; category: string } {
-  const lower = folderName.toLowerCase();
-  if (lower.includes('02_contrat') || lower.includes('contrat')) {
-    return { section: 'contrats', category: 'contrat_client' };
-  }
-  if (lower.includes('04_contradictoire') || lower.includes('contradictoire') || lower.includes('dire')) {
-    return { section: 'contradictoire', category: 'procedure_dires' };
-  }
-  if (lower.includes('05_comptes') || lower.includes('prejudice') || lower.includes('préjudice')) {
-    return { section: 'prejudice', category: 'justificatif_prejudice' };
-  }
-  if (lower.includes('06_rapport') || lower.includes('rapport')) {
-    return { section: 'rapports', category: 'rapport_emis' };
-  }
-  return { section: 'constatations', category: 'note_technique' };
 }
 
 /**
@@ -864,7 +859,7 @@ export async function scanUntrackedMacFilesForMission(
           }
           try {
             const fileObj: File = await entryHandle.getFile();
-            const { section, category } = mapMacFolderToSectionAndCategory(folderLabel);
+            const mapped = mapMacFolderToSectionAndCategory(folderLabel, entryName);
             untracked.push({
               id: `${folderLabel}/${entryName}`,
               file: fileObj,
@@ -872,8 +867,10 @@ export async function scanUntrackedMacFilesForMission(
               cleanName: entryName.replace(/^Pi[eè]ce[_\s-]*n?[°o]?[_\s-]*\d+[_\s-]*/i, ''),
               relativePath: folderLabel ? `${folderLabel}/${entryName}` : entryName,
               subFolder: folderLabel || 'Racine du dossier (En vrac)',
-              inferredSection: section,
-              inferredCategory: category,
+              inferredSection: mapped.section,
+              inferredCategory: mapped.category,
+              inferredSubSection: mapped.subSection,
+              inferredGroupLabel: mapped.groupLabel,
               size: fileObj.size,
               lastModified: fileObj.lastModified,
             });

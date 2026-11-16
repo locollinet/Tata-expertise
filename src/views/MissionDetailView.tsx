@@ -17,6 +17,7 @@ import {
   Mission,
   GuaranteeType,
   ExpertiseOperationRow,
+  DeliverableType,
 } from '@shared/types.js';
 import { MissionRatesSettings } from '../components/MissionRatesSettings.js';
 import {
@@ -157,11 +158,16 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [uploadingDocs, setUploadingDocs] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [docOptionalNote, setDocOptionalNote] = useState('');
+  const [docGroupLabel, setDocGroupLabel] = useState('');
+  const [docSourceOrigin, setDocSourceOrigin] = useState('');
   const [constatSubSection, setConstatSubSection] = useState<'jour_j' | 'visite_terrain' | 'extractions'>('visite_terrain');
+  const [judicialFilter, setJudicialFilter] = useState<'all' | 'nap' | 'pre_rapport' | 'dires'>('all');
 
   // Volet 1 (Page de garde — Synthesis Table)
   const [editingParties, setEditingParties] = useState(false);
   const [guaranteeTypeEdit, setGuaranteeTypeEdit] = useState<string>('RC');
+  const [isJudicialEdit, setIsJudicialEdit] = useState(false);
+  const [coSignerEdit, setCoSignerEdit] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientRef, setClientRef] = useState('');
   const [clientContact, setClientContact] = useState('');
@@ -195,6 +201,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [editingActId, setEditingActId] = useState<string | null>(null);
   const [editActHours, setEditActHours] = useState<string>('');
   const [editingExpId, setEditingExpId] = useState<string | null>(null);
+  const [editExpLabel, setEditExpLabel] = useState<string>('');
   const [editExpQty, setEditExpQty] = useState<string>('');
   const [editExpUnit, setEditExpUnit] = useState<string>('');
   const [showRatesDrawer, setShowRatesDrawer] = useState(false);
@@ -212,8 +219,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [attRole, setAttRole] = useState('');
   const [attPresence, setAttPresence] = useState<'site' | 'visio'>('site');
   const [attEmail, setAttEmail] = useState('');
+  const [showAttScanner, setShowAttScanner] = useState(false);
+  const [attScanText, setAttScanText] = useState('');
+  const [scanningAtt, setScanningAtt] = useState(false);
+  const [parsedAttPreview, setParsedAttPreview] = useState<Array<{ name: string; role: string; organization: string; email?: string }>>([]);
+  const [parsedAttMeetingLabel, setParsedAttMeetingLabel] = useState('');
+  const [parsedAttMeetingDate, setParsedAttMeetingDate] = useState('');
   const [rawFieldNotes, setRawFieldNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
+  const [cleaningNotes, setCleaningNotes] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
 
   // Volet 4 (Contradictoire)
@@ -259,6 +273,32 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
   const [reportAnalysis, setReportAnalysis] = useState('');
   const [reportConc, setReportConc] = useState('');
 
+  // Studio Word Livrables (8 types fidèles aux templates VP Expertise)
+  const [delivType, setDelivType] = useState<DeliverableType>('constatations');
+  const [delivLoading, setDelivLoading] = useState(false);
+  const [delivGenerating, setDelivGenerating] = useState(false);
+  const [delivDate, setDelivDate] = useState(new Date().toISOString().slice(0, 10));
+  const [delivRecipient, setDelivRecipient] = useState('');
+  const [delivRecipientEmail, setDelivRecipientEmail] = useState('');
+  const [delivCopyEmails, setDelivCopyEmails] = useState('');
+  const [delivSubject, setDelivSubject] = useState('');
+  const [delivPosture, setDelivPosture] = useState<'convoque' | 'convoquee' | 'spontanee'>('convoque');
+  const [delivCaller, setDelivCaller] = useState('');
+  const [delivMeetingDate, setDelivMeetingDate] = useState(new Date().toISOString().slice(0, 10));
+  const [delivMeetingTime, setDelivMeetingTime] = useState('10h00');
+  const [delivMeetingPlace, setDelivMeetingPlace] = useState('');
+  const [delivIncludeEpi, setDelivIncludeEpi] = useState(true);
+  const [delivIncludePhotos, setDelivIncludePhotos] = useState(true);
+  const [delivIncludeDamages, setDelivIncludeDamages] = useState(true);
+  const [delivCoSigner, setDelivCoSigner] = useState('');
+  const [delivBodyText, setDelivBodyText] = useState('');
+  const [delivFactsText, setDelivFactsText] = useState('');
+  const [delivContextText, setDelivContextText] = useState('');
+  const [delivObsText, setDelivObsText] = useState('');
+  const [delivAnalysisText, setDelivAnalysisText] = useState('');
+  const [delivPrejudiceText, setDelivPrejudiceText] = useState('');
+  const [delivConclusionText, setDelivConclusionText] = useState('');
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ type, message });
     setTimeout(() => setFeedback(null), 3500);
@@ -279,6 +319,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     setClientLawyer(data.client_lawyer || '');
     setCourtReferenceEdit(data.court_reference || '');
     setJudicialExpertEdit(data.judicial_expert || '');
+    setIsJudicialEdit(Boolean(data.is_judicial || data.court_reference || data.judicial_expert));
+    setCoSignerEdit(data.co_signer || '');
+    setDelivCoSigner(data.co_signer || '');
     setIncidentDateEdit(data.incident_date || '');
     setReceptionDateEdit(data.reception_date || '');
     setDescriptionEdit(data.description || '');
@@ -362,6 +405,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     };
   }, [missionId]);
 
+  useEffect(() => {
+    if (activeVolet === 'rapports' && mission?.id && !delivSubject && !delivLoading) {
+      loadDeliverableDefaults(delivType);
+    }
+  }, [activeVolet, mission?.id]);
+
   if (!mission) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -402,12 +451,13 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     if (!itemsToImport || itemsToImport.length === 0) return;
     setImportingMacFiles(true);
     try {
-      // Group files by target volet so each goes into the right section
-      const byVolet: Record<string, File[]> = {};
+      // Group files by target volet + groupLabel/subSection so Finder subfolders map faithfully (NAP / Dires / Pré-rapport / RCI)
+      const groups: Record<string, { volet: string; items: UntrackedMacFile[] }> = {};
       for (const item of itemsToImport) {
         const targetVolet = untrackedTargetVolets[item.id] || item.inferredSection || 'constatations';
-        if (!byVolet[targetVolet]) byVolet[targetVolet] = [];
-        byVolet[targetVolet].push(item.file);
+        const gKey = `${targetVolet}::${item.inferredSubSection || ''}::${item.inferredGroupLabel || ''}`;
+        if (!groups[gKey]) groups[gKey] = { volet: targetVolet, items: [] };
+        groups[gKey].items.push(item);
       }
 
       const categoryMap: Record<string, string> = {
@@ -420,19 +470,24 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       };
 
       let totalImported = 0;
-      for (const [voletKey, fileList] of Object.entries(byVolet)) {
+      for (const grp of Object.values(groups)) {
+        const first = grp.items[0];
         const formData = new FormData();
-        formData.append('section', voletKey === 'garde' ? 'constatations' : voletKey);
-        formData.append('category', categoryMap[voletKey] || 'autre');
-        for (const f of fileList) {
-          formData.append('files', f);
+        formData.append('section', grp.volet === 'garde' ? 'constatations' : grp.volet);
+        formData.append('category', first.inferredCategory || categoryMap[grp.volet] || 'autre');
+        if (first.inferredSubSection) formData.append('sub_section', first.inferredSubSection);
+        if (first.inferredGroupLabel && grp.items.length > 1) {
+          formData.append('document_group_label', `${first.inferredGroupLabel} (${grp.items.length} fichiers)`);
+        }
+        for (const item of grp.items) {
+          formData.append('files', item.file);
         }
         const res = await fetch(`/api/missions/${mission.id}/documents`, {
           method: 'POST',
           body: formData,
         });
         if (res.ok) {
-          totalImported += fileList.length;
+          totalImported += grp.items.length;
         }
       }
 
@@ -470,11 +525,22 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         rapports: 'rapport_technique',
       };
 
+      const catOverride =
+        subSec === 'nap'
+          ? 'judicial_nap'
+          : subSec === 'pre_rapport'
+            ? 'judicial_pre_rapport'
+            : subSec === 'dires'
+              ? 'judicial_dire'
+              : categoryMap[targetVolet];
+
       const formData = new FormData();
       formData.append('section', sectionMap[targetVolet]);
-      formData.append('category', categoryMap[targetVolet]);
+      formData.append('category', catOverride);
       if (subSec) formData.append('sub_section', subSec);
       if (docOptionalNote.trim()) formData.append('caption', docOptionalNote.trim());
+      if (docGroupLabel.trim()) formData.append('document_group_label', docGroupLabel.trim());
+      if (docSourceOrigin.trim()) formData.append('source_origin', docSourceOrigin.trim());
 
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i]);
@@ -521,6 +587,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
       }
 
       setDocOptionalNote('');
+      setDocGroupLabel('');
+      setDocSourceOrigin('');
       const count = files.length;
       showToast(`${count} document${count > 1 ? 's' : ''} numéroté${count > 1 ? 's' : ''} et classé${count > 1 ? 's' : ''} dans ${defaultVoletFolder}`);
       loadData();
@@ -559,6 +627,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
         client_lawyer: clientLawyer.trim(),
         court_reference: courtReferenceEdit.trim(),
         judicial_expert: judicialExpertEdit.trim(),
+        is_judicial: isJudicialEdit || Boolean(courtReferenceEdit.trim() || judicialExpertEdit.trim()),
+        co_signer: coSignerEdit.trim(),
         incident_date: incidentDateEdit,
         reception_date: receptionDateEdit,
         description: descriptionEdit.trim(),
@@ -575,7 +645,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     }
   };
 
-  const handleSaveOperationsTable = async () => {
+  const handleSaveOperationsTable = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     try {
       await api.updateMission(mission.id, {
         pv_dommages_date: pvDommagesDateEdit.trim(),
@@ -595,7 +666,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     const unit = parseFloat(editExpUnit.replace(',', '.'));
     if (isNaN(qty) || qty <= 0 || isNaN(unit) || unit < 0) return;
     try {
-      await api.updateExpense(expId, { quantity: qty, unit_price: unit });
+      await api.updateExpense(expId, {
+        ...(editExpLabel.trim() ? { label: editExpLabel.trim() } : {}),
+        quantity: qty,
+        unit_price: unit,
+      });
       setEditingExpId(null);
       showToast('Frais mis à jour.');
       loadData();
@@ -809,6 +884,154 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     }
   };
 
+  const loadDeliverableDefaults = async (typeToLoad: DeliverableType, postureToLoad?: 'convoque' | 'convoquee' | 'spontanee') => {
+    if (!mission?.id) return;
+    setDelivType(typeToLoad);
+    setDelivLoading(true);
+    try {
+      const prev = await api.getDeliverablePreview(mission.id, typeToLoad, delivDate, postureToLoad || delivPosture);
+      setDelivSubject(prev.subject || '');
+      setDelivRecipient(prev.recipient_name || '');
+      setDelivRecipientEmail(prev.recipient_email || '');
+      setDelivCopyEmails(prev.copy_emails || '');
+      setDelivBodyText(prev.body_text || '');
+      setDelivFactsText(prev.facts_text || '');
+      setDelivContextText(prev.context_text || '');
+      setDelivObsText(prev.observations_text || '');
+      setDelivAnalysisText(prev.analysis_text || '');
+      setDelivPrejudiceText(prev.prejudice_text || '');
+      setDelivConclusionText(prev.conclusion_text || '');
+      if (prev.co_signer) setDelivCoSigner(prev.co_signer);
+    } catch (err: any) {
+      showToast(err.message || 'Impossible de pré-remplir le modèle', 'error');
+    } finally {
+      setDelivLoading(false);
+    }
+  };
+
+  const openDeliverableStudio = async (typeToLoad: DeliverableType) => {
+    setActiveVolet('rapports');
+    await loadDeliverableDefaults(typeToLoad);
+  };
+
+  const handleGenerateDeliverableDocx = async (archiveAsIssued: boolean) => {
+    if (!mission?.id) return;
+    setDelivGenerating(true);
+    try {
+      const { blob, fileName } = await api.generateDeliverableDocx(mission.id, {
+        deliverable_type: delivType,
+        doc_date: delivDate,
+        recipient_name: delivRecipient,
+        recipient_email: delivRecipientEmail,
+        copy_emails: delivCopyEmails,
+        subject: delivSubject,
+        convocation_posture: delivPosture,
+        convocation_caller: delivCaller,
+        meeting_date: delivMeetingDate,
+        meeting_time: delivMeetingTime,
+        meeting_place: delivMeetingPlace,
+        include_epi: delivIncludeEpi,
+        include_photos: delivIncludePhotos,
+        include_damage_table: delivIncludeDamages,
+        co_signer: delivCoSigner,
+        body_text: delivBodyText,
+        facts_text: delivFactsText,
+        context_text: delivContextText,
+        observations_text: delivObsText,
+        analysis_text: delivAnalysisText,
+        prejudice_text: delivPrejudiceText,
+        conclusion_text: delivConclusionText,
+        archive_as_issued: archiveAsIssued,
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2500);
+
+      await syncFileToLocalMacFolder({
+        missionCode: mission.code,
+        subFolder: delivType === 'mise_en_cause' || delivType === 'convocation' || delivType === 'mec_convocation' || delivType === 'courrier_position'
+          ? '04_Contradictoire'
+          : '06_Rapports_emis',
+        fileName,
+        data: blob,
+      });
+
+      showToast(archiveAsIssued ? `Word « ${fileName} » généré, téléchargé et archivé !` : `Word « ${fileName} » prêt et téléchargé !`);
+      if (archiveAsIssued) loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Erreur lors de la génération du fichier Word', 'error');
+    } finally {
+      setDelivGenerating(false);
+    }
+  };
+
+  const handleCleanRawNotes = async () => {
+    if (!rawFieldNotes.trim()) {
+      showToast('Saisissez d’abord vos notes brutes de terrain.', 'error');
+      return;
+    }
+    setCleaningNotes(true);
+    try {
+      const res = await api.cleanFieldNotes(mission.id, rawFieldNotes);
+      setReportObs((prev) => (prev ? `${prev}\n\n${res.cleaned_observations}` : res.cleaned_observations));
+      setDelivObsText(res.cleaned_observations);
+      await api.saveReportDraft(mission.id, {
+        section_facts: reportFacts,
+        section_observations: res.cleaned_observations,
+        section_analysis: reportAnalysis,
+        section_conclusions: reportConc,
+        raw_field_notes: rawFieldNotes,
+      });
+      showToast('Notes remises au propre et prêtes pour vos Constatations Word !');
+      loadData();
+    } catch (err: any) {
+      showToast(err.message || 'Erreur de remise au propre', 'error');
+    } finally {
+      setCleaningNotes(false);
+    }
+  };
+
+  const handleScanAttendanceSheet = async (file?: File | null) => {
+    if (!file && !attScanText.trim()) return;
+    setScanningAtt(true);
+    try {
+      const res = await api.parseAttendanceSheet(mission.id, file || null, attScanText);
+      setParsedAttPreview(res.attendees || []);
+      if (res.meeting_label) setParsedAttMeetingLabel(res.meeting_label);
+      if (res.meeting_date) setParsedAttMeetingDate(res.meeting_date);
+      if ((res.attendees || []).length === 0) {
+        showToast(res.note || 'Aucun participant reconnu — complétez ou collez une liste.', 'error');
+      } else {
+        showToast(`${res.attendees.length} participant(s) lu(s) ! Vérifiez puis cliquez sur Confirmer.`);
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Erreur d’analyse de la feuille d’émargement', 'error');
+    } finally {
+      setScanningAtt(false);
+    }
+  };
+
+  const handleConfirmScannedAttendees = async () => {
+    const valid = parsedAttPreview.filter((a) => a.name.trim());
+    if (valid.length === 0) return;
+    try {
+      await api.addAttendeesBatch(mission.id, valid, parsedAttMeetingLabel, parsedAttMeetingDate);
+      setParsedAttPreview([]);
+      setAttScanText('');
+      setShowAttScanner(false);
+      showToast(`${valid.length} participant(s) ajouté(s) au tableau d’émargement !`);
+      loadData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
   const handleCopyAttendees = () => {
     const attendees: any[] = mission.attendees || [];
     if (attendees.length === 0) {
@@ -939,7 +1162,31 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     </button>
                   </td>
                   <td className="py-2.5 px-3.5 text-slate-600">
-                    {doc.caption && doc.caption !== doc.original_name ? doc.caption : <span className="text-slate-300">—</span>}
+                    <div className="space-y-0.5">
+                      {doc.document_group_label && (
+                        <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold">
+                          📦 {doc.document_group_label}
+                        </span>
+                      )}
+                      {doc.source_origin && (
+                        <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                          {doc.source_origin}
+                        </span>
+                      )}
+                      {doc.sub_section === 'nap' && (
+                        <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold">
+                          ⚖️ NAP
+                        </span>
+                      )}
+                      {doc.sub_section === 'pre_rapport' && (
+                        <span className="inline-block px-1.5 py-0.5 mr-1 rounded bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold">
+                          ⚖️ Pré-rapport
+                        </span>
+                      )}
+                      {doc.caption && doc.caption !== doc.original_name
+                        ? <span>{doc.caption}</span>
+                        : (!doc.document_group_label && !doc.source_origin ? <span className="text-slate-300">—</span> : null)}
+                    </div>
                   </td>
                   <td className="py-2.5 px-3.5 text-slate-500 whitespace-nowrap">
                     {(doc.created_at || '').slice(0, 10).split('-').reverse().join('/')}
@@ -1060,14 +1307,24 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <input
               type="text"
               value={docOptionalNote}
               onChange={(e) => setDocOptionalNote(e.target.value)}
               placeholder="Note facultative..."
-              className="text-xs rounded-lg border-slate-300 bg-white px-2.5 py-1.5 border w-36 sm:w-44 focus:border-[#0f3854]"
+              className="text-xs rounded-lg border-slate-300 bg-white px-2.5 py-1.5 border w-32 sm:w-40 focus:border-[#0f3854]"
             />
+            {voletKey === 'contradictoire' && (
+              <input
+                type="text"
+                value={docGroupLabel}
+                onChange={(e) => setDocGroupLabel(e.target.value)}
+                placeholder="Lot (ex: Dire 1 + annexes)"
+                className="text-xs rounded-lg border-indigo-200 bg-indigo-50/40 px-2.5 py-1.5 border w-36 sm:w-44 focus:border-[#0f3854]"
+                title="Permet de regrouper ensemble un Dire et ses N annexes"
+              />
+            )}
             <label className="px-3 py-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center space-x-1.5 shadow-2xs transition-colors">
               <Plus className="w-3.5 h-3.5" />
               <span>{uploadingDocs ? 'Dépôt...' : 'Parcourir'}</span>
@@ -1214,13 +1471,13 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
           <button
             type="button"
-            onClick={() => runFinderDiffScan(false)}
-            disabled={scanningFinder}
+            onClick={() => runFinderDiffScan(mission)}
+            disabled={scanningMacFiles}
             className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 transition-colors shadow-2xs cursor-pointer"
             title="Scanner le dossier Finder sur votre Mac pour détecter les nouveaux fichiers déposés manuellement et les importer dans l'application"
           >
-            <RotateCcw className={`w-3 h-3 text-[#0f3854] ${scanningFinder ? 'animate-spin' : ''}`} />
-            <span>{scanningFinder ? 'Scan Finder...' : 'Scanner Finder Mac'}</span>
+            <RotateCcw className={`w-3 h-3 text-[#0f3854] ${scanningMacFiles ? 'animate-spin' : ''}`} />
+            <span>{scanningMacFiles ? 'Scan Finder...' : 'Scanner Finder Mac'}</span>
             {untrackedMacFiles.length > 0 && (
               <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-extrabold">
                 {untrackedMacFiles.length}
@@ -1271,11 +1528,11 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             <div className="flex items-center space-x-2 shrink-0">
               <button
                 type="button"
-                disabled={importingFinderFiles}
+                disabled={importingMacFiles}
                 onClick={() => handleImportUntrackedMacFiles(untrackedMacFiles)}
                 className="px-3.5 py-1.5 bg-[#0f3854] hover:bg-[#16496d] disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-2xs cursor-pointer"
               >
-                {importingFinderFiles ? 'Import en cours...' : `Tout intégrer (${untrackedMacFiles.length})`}
+                {importingMacFiles ? 'Import en cours...' : `Tout intégrer (${untrackedMacFiles.length})`}
               </button>
               <button
                 type="button"
@@ -1303,11 +1560,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 <div className="flex items-center space-x-2 shrink-0">
                   <span className="text-[11px] text-slate-500">Classer dans :</span>
                   <select
-                    value={uf.suggestedVolet}
+                    value={untrackedTargetVolets[uf.id] || uf.inferredSection}
                     onChange={(e) => {
-                      const next = [...untrackedMacFiles];
-                      next[idx] = { ...next[idx], suggestedVolet: e.target.value as VoletKey };
-                      setUntrackedMacFiles(next);
+                      setUntrackedTargetVolets((prev) => ({
+                        ...prev,
+                        [uf.id]: e.target.value as DossierVoletKey,
+                      }));
                     }}
                     className="text-[11px] rounded-lg border border-slate-300 py-1 px-2 bg-slate-50 font-semibold text-slate-800"
                   >
@@ -1319,7 +1577,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </select>
                   <button
                     type="button"
-                    disabled={importingFinderFiles}
+                    disabled={importingMacFiles}
                     onClick={() => handleImportUntrackedMacFiles([uf])}
                     className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] cursor-pointer"
                   >
@@ -1618,8 +1876,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <div>
                         <label className="block font-bold text-amber-900 mb-1">Garantie / Nature *</label>
                         <select
-                          value={guaranteeType}
-                          onChange={(e) => setGuaranteeType(e.target.value as GuaranteeType)}
+                          value={guaranteeTypeEdit}
+                          onChange={(e) => setGuaranteeTypeEdit(e.target.value as GuaranteeType)}
                           className="w-full rounded-lg border-amber-300 p-2 border bg-amber-50/60 font-bold text-amber-950"
                         >
                           <option value="RC">RC (Responsabilité Civile)</option>
@@ -1649,14 +1907,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Ligne 2 : Tribunal & Expert Judiciaire */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                    {/* Ligne 2 : Tribunal, Expert Judiciaire, Mode Judiciaire & Co-signataire */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200 items-end">
                       <div>
                         <label className="block font-medium text-slate-700 mb-1">Tribunal (si judiciaire / référé)</label>
                         <input
                           type="text"
-                          value={courtReference}
-                          onChange={(e) => setCourtReference(e.target.value)}
+                          value={courtReferenceEdit}
+                          onChange={(e) => setCourtReferenceEdit(e.target.value)}
                           placeholder="ex: TJ de Nanterre (RG 26/01420) ou -"
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                         />
@@ -1665,12 +1923,31 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         <label className="block font-medium text-slate-700 mb-1">Expert Judiciaire désigné</label>
                         <input
                           type="text"
-                          value={judicialExpert}
-                          onChange={(e) => setJudicialExpert(e.target.value)}
-                          placeholder="ex: M. Jean-Paul Moreau (Expert près la Cour d'Appel) ou -"
+                          value={judicialExpertEdit}
+                          onChange={(e) => setJudicialExpertEdit(e.target.value)}
+                          placeholder="ex: M. Jean-Paul Moreau ou -"
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                         />
                       </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">Co-signataire éventuel</label>
+                        <input
+                          type="text"
+                          value={coSignerEdit}
+                          onChange={(e) => setCoSignerEdit(e.target.value)}
+                          placeholder="ex: Alexandre Popineau (facultatif)"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <label className="flex items-center space-x-2 p-2 rounded-lg border border-purple-200 bg-purple-50/70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isJudicialEdit}
+                          onChange={(e) => setIsJudicialEdit(e.target.checked)}
+                          className="rounded text-purple-700"
+                        />
+                        <span className="font-bold text-purple-950 text-xs">⚖️ Dossier en Judiciaire (NAP, Pré-rapport, Dires)</span>
+                      </label>
                     </div>
 
                     {/* Ligne 3 : Donneur d'ordre, Interlocuteur, Compagnie, Courtier */}
@@ -1805,8 +2082,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         <label className="block font-bold text-slate-700 mb-1">Briève description du sinistre</label>
                         <textarea
                           rows={2}
-                          value={missionSummaryEdit}
-                          onChange={(e) => setMissionSummaryEdit(e.target.value)}
+                          value={descriptionEdit}
+                          onChange={(e) => setDescriptionEdit(e.target.value)}
                           placeholder="Dommages constatés, contexte technique..."
                           className="w-full rounded-lg border-slate-300 p-2 border bg-white"
                         />
@@ -1815,8 +2092,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                         <label className="block font-bold text-amber-900 mb-1">Analyse préliminaire / Commentaires</label>
                         <textarea
                           rows={2}
-                          value={preliminaryAnalysis}
-                          onChange={(e) => setPreliminaryAnalysis(e.target.value)}
+                          value={preliminaryAnalysisEdit}
+                          onChange={(e) => setPreliminaryAnalysisEdit(e.target.value)}
                           placeholder="Vérifications de garanties, réserves, points de vigilance..."
                           className="w-full rounded-lg border-amber-300 p-2 border bg-amber-50/40"
                         />
@@ -2135,18 +2412,18 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {operationsRows.map((row, idx) => (
-                              <tr key={row.step}>
-                                <td className="p-1.5 text-center font-bold text-slate-800 bg-slate-50">{row.step}</td>
+                            {expertiseOperationsEdit.map((row, idx) => (
+                              <tr key={row.id || row.label || idx}>
+                                <td className="p-1.5 text-center font-bold text-slate-800 bg-slate-50">{row.label}</td>
                                 <td className="p-1.5">
                                   <input
                                     type="text"
                                     placeholder="JJ/MM/AAAA"
-                                    value={row.operation_date || ''}
+                                    value={row.expertise_date || ''}
                                     onChange={(e) => {
-                                      const next = [...operationsRows];
-                                      next[idx] = { ...next[idx], operation_date: e.target.value };
-                                      setOperationsRows(next);
+                                      const next = [...expertiseOperationsEdit];
+                                      next[idx] = { ...next[idx], expertise_date: e.target.value };
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1 bg-amber-50/40 font-medium"
                                   />
@@ -2157,9 +2434,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     placeholder="JJ/MM/AAAA"
                                     value={row.report_date || ''}
                                     onChange={(e) => {
-                                      const next = [...operationsRows];
+                                      const next = [...expertiseOperationsEdit];
                                       next[idx] = { ...next[idx], report_date: e.target.value };
-                                      setOperationsRows(next);
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1 bg-amber-50/40 font-medium"
                                   />
@@ -2171,12 +2448,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     value={row.quantum !== undefined && row.quantum !== null ? String(row.quantum) : ''}
                                     onChange={(e) => {
                                       const val = e.target.value;
-                                      const next = [...operationsRows];
+                                      const next = [...expertiseOperationsEdit];
                                       next[idx] = {
                                         ...next[idx],
                                         quantum: val.trim() === '' ? null : parseFloat(val.replace(',', '.')) || 0,
                                       };
-                                      setOperationsRows(next);
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1 text-right font-mono"
                                   />
@@ -2187,9 +2464,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     placeholder="ex: 2026-071"
                                     value={row.invoice_number || ''}
                                     onChange={(e) => {
-                                      const next = [...operationsRows];
+                                      const next = [...expertiseOperationsEdit];
                                       next[idx] = { ...next[idx], invoice_number: e.target.value };
-                                      setOperationsRows(next);
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1 font-mono font-bold text-[#0f3854]"
                                   />
@@ -2198,15 +2475,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                   <input
                                     type="text"
                                     placeholder="ex: 5105.16"
-                                    value={row.invoice_amount !== undefined && row.invoice_amount !== null ? String(row.invoice_amount) : ''}
+                                    value={row.invoice_amount_ht !== undefined && row.invoice_amount_ht !== null ? String(row.invoice_amount_ht) : ''}
                                     onChange={(e) => {
                                       const val = e.target.value;
-                                      const next = [...operationsRows];
+                                      const next = [...expertiseOperationsEdit];
                                       next[idx] = {
                                         ...next[idx],
-                                        invoice_amount: val.trim() === '' ? null : parseFloat(val.replace(',', '.')) || 0,
+                                        invoice_amount_ht: val.trim() === '' ? null : parseFloat(val.replace(',', '.')) || 0,
                                       };
-                                      setOperationsRows(next);
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1 text-right font-semibold"
                                   />
@@ -2217,9 +2494,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     placeholder="JJ/MM/AAAA"
                                     value={row.invoice_date || ''}
                                     onChange={(e) => {
-                                      const next = [...operationsRows];
+                                      const next = [...expertiseOperationsEdit];
                                       next[idx] = { ...next[idx], invoice_date: e.target.value };
-                                      setOperationsRows(next);
+                                      setExpertiseOperationsEdit(next);
                                     }}
                                     className="w-full border border-slate-200 rounded px-2 py-1"
                                   />
@@ -2236,8 +2513,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           <input
                             type="text"
                             placeholder="ex: 15/11/2026 ou XX/XX/2026"
-                            value={pvDommagesDate}
-                            onChange={(e) => setPvDommagesDate(e.target.value)}
+                            value={pvDommagesDateEdit}
+                            onChange={(e) => setPvDommagesDateEdit(e.target.value)}
                             className="border border-amber-300 bg-amber-50 rounded-lg px-2.5 py-1 font-bold text-slate-900"
                           />
                         </div>
@@ -2274,23 +2551,23 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {operationsRows.map((row) => {
+                            {expertiseOperationsEdit.map((row, idx) => {
                               const hasData =
-                                row.operation_date ||
+                                row.expertise_date ||
                                 row.report_date ||
-                                row.quantum !== null && row.quantum !== undefined ||
+                                (row.quantum !== null && row.quantum !== undefined) ||
                                 row.invoice_number;
-                              const isDefinitif = row.step === 'Définitif';
+                              const isDefinitif = row.label === 'Définitif';
                               return (
                                 <tr
-                                  key={row.step}
+                                  key={row.id || row.label || idx}
                                   className={`${isDefinitif ? 'bg-amber-50/60 font-semibold' : hasData ? 'bg-white' : 'bg-slate-50/30 text-slate-400'}`}
                                 >
                                   <td className="py-2 px-3 text-center font-bold text-slate-800 border-r border-slate-100">
-                                    {row.step}
+                                    {row.label}
                                   </td>
                                   <td className="py-2 px-3 text-center font-semibold text-[#0f3854] bg-amber-50/30">
-                                    {row.operation_date || '—'}
+                                    {row.expertise_date || '—'}
                                   </td>
                                   <td className="py-2 px-3 text-center font-semibold text-[#0f3854] bg-amber-50/30">
                                     {row.report_date || '—'}
@@ -2304,8 +2581,8 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     {row.invoice_number || '—'}
                                   </td>
                                   <td className="py-2 px-3 text-right font-bold text-slate-900 bg-amber-50/30">
-                                    {row.invoice_amount !== null && row.invoice_amount !== undefined
-                                      ? `${Number(row.invoice_amount).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`
+                                    {row.invoice_amount_ht !== null && row.invoice_amount_ht !== undefined
+                                      ? `${Number(row.invoice_amount_ht).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`
                                       : '—'}
                                   </td>
                                   <td className="py-2 px-3 text-center text-slate-700 bg-amber-50/30">
@@ -2321,7 +2598,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200/80 text-xs">
                         <span className="font-bold text-slate-800">PV Dommages :</span>
                         <span className="font-mono font-bold text-amber-950">
-                          {mission.pv_dommages_date || pvDommagesDate || 'Non renseigné'}
+                          {mission.pv_dommages_date || pvDommagesDateEdit || 'Non renseigné'}
                         </span>
                       </div>
                     </div>
@@ -2433,7 +2710,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                 {act.status !== 'facture' && (
                                   <button
                                     type="button"
-                                    onClick={() => handleDeleteActivity(act.id)}
+                                    onClick={() => handleDeleteActivity(act.id, act.description || act.category || 'vacation')}
                                     className="text-slate-300 hover:text-rose-600 p-1"
                                     title="Supprimer ce pointage"
                                   >
@@ -2510,14 +2787,14 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                               />
                               <input
                                 type="text"
-                                value={editExpUnitPrice}
-                                onChange={(e) => setEditExpUnitPrice(e.target.value)}
+                                value={editExpUnit}
+                                onChange={(e) => setEditExpUnit(e.target.value)}
                                 placeholder="PU HT"
                                 className="w-20 border border-slate-300 rounded px-1.5 py-1 text-right text-xs font-bold"
                               />
                               <button
                                 type="button"
-                                onClick={() => handleSaveExpenseEdit(exp)}
+                                onClick={() => handleSaveExpenseEdit(exp.id)}
                                 className="px-2 py-1 bg-emerald-700 text-white rounded text-[10px] font-bold"
                               >
                                 OK
@@ -2543,9 +2820,9 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                       Sync Compta
                                     </span>
                                   )}
-                                  {exp.receipt_path && (
+                                  {(exp.receipt_filename || exp.receipt_path) && (
                                     <a
-                                      href={`/uploads/${exp.receipt_path}`}
+                                      href={`/uploads/${exp.receipt_filename || exp.receipt_path}`}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="text-[#0f3854] hover:underline text-[10px] font-bold shrink-0"
@@ -2569,7 +2846,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                     setEditingExpId(exp.id);
                                     setEditExpLabel(exp.label);
                                     setEditExpQty(String(exp.quantity));
-                                    setEditExpUnitPrice(String(exp.unit_price));
+                                    setEditExpUnit(String(exp.unit_price));
                                   }}
                                   className="text-right hover:underline"
                                   title="Cliquer pour modifier ce frais"
@@ -2596,7 +2873,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                                 {exp.status !== 'facture' && (
                                   <button
                                     type="button"
-                                    onClick={() => handleDeleteExpense(exp.id)}
+                                    onClick={() => handleDeleteExpense(exp.id, exp.label)}
                                     className="text-slate-300 hover:text-rose-600 p-1"
                                     title="Supprimer ce frais"
                                   >
@@ -2742,15 +3019,15 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Contrats & Polices d'assurance
+                  Contrats & Éléments de la mission
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Environnement contractuel du sinistre (polices, conditions générales et conventions).
+                  Lettre de mission, éléments transmis par le mandant, polices d'assurance, conditions générales et conventions.
                 </p>
               </div>
 
-              {renderVoletDropzone('contrats', 'Contrats, conventions')}
-              {renderPieceTable(docsContrats, 'Aucun contrat déposé dans ce dossier.')}
+              {renderVoletDropzone('contrats', 'Contrats, éléments de la mission, polices')}
+              {renderPieceTable(docsContrats, 'Aucun contrat ou élément de mission déposé dans ce dossier.')}
             </div>
           )}
 
@@ -2795,35 +3072,79 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 {renderVoletDropzone('constatations', constatSubSection.replace('_', ' '), constatSubSection)}
                 {renderPieceTable(docsConstatations, 'Aucun document de constatation déposé.')}
 
-                {/* Galerie Photos */}
+                {/* Galerie Photos avec toggle 1-clic pour la grille 2 colonnes Word */}
                 {allPhotos.length > 0 && (
-                  <div className="pt-3 border-t border-slate-100 space-y-2">
-                    <span className="text-xs font-bold text-slate-700">Photos terrain ({allPhotos.length})</span>
+                  <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-slate-800">
+                          Photos terrain ({allPhotos.length})
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                          ✓ {allPhotos.filter((p: any) => p.is_selected_for_report).length} incluse(s) au Word
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openDeliverableStudio('constatations')}
+                        className="px-2.5 py-1 rounded-lg bg-[#0f3854]/10 hover:bg-[#0f3854]/20 text-[#0f3854] text-[11px] font-bold cursor-pointer"
+                      >
+                        → Préparer Constatations Word
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      {allPhotos.map((ph: any) => (
-                        <div key={ph.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-1.5 space-y-1 text-xs">
-                          <a href={`/uploads/${ph.filename}`} target="_blank" rel="noreferrer">
-                            <img
-                              src={`/uploads/${ph.filename}`}
-                              alt={ph.caption || 'Photo terrain'}
-                              className="w-full h-24 object-cover rounded-lg"
-                            />
-                          </a>
-                          <div className="flex items-center justify-between px-1">
-                            <span className="text-[11px] text-slate-600 truncate">{ph.caption || ph.filename}</span>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await api.deletePhoto(ph.id);
-                                loadData();
-                              }}
-                              className="text-slate-400 hover:text-rose-600"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                      {allPhotos.map((ph: any) => {
+                        const included = Boolean(ph.is_selected_for_report);
+                        return (
+                          <div
+                            key={ph.id}
+                            className={`border rounded-xl overflow-hidden p-1.5 space-y-1.5 text-xs transition-all ${
+                              included ? 'border-emerald-300 bg-emerald-50/30' : 'border-slate-200 bg-slate-50 opacity-70'
+                            }`}
+                          >
+                            <div className="relative">
+                              <a href={`/uploads/${ph.filename}`} target="_blank" rel="noreferrer">
+                                <img
+                                  src={`/uploads/${ph.filename}`}
+                                  alt={ph.caption || 'Photo terrain'}
+                                  className="w-full h-24 object-cover rounded-lg"
+                                />
+                              </a>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await api.updatePhoto(ph.id, { is_selected_for_report: !included });
+                                  loadData();
+                                }}
+                                className={`absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold shadow cursor-pointer ${
+                                  included
+                                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                    : 'bg-slate-800/80 text-white hover:bg-slate-900'
+                                }`}
+                                title={included ? 'Cliquer pour retirer du Word' : 'Cliquer pour inclure dans le Word'}
+                              >
+                                {included ? '✓ Word' : '+ Inclure'}
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between px-1 gap-1">
+                              <span className="text-[11px] text-slate-600 truncate">
+                                {ph.caption || <span className="italic text-slate-400">Sans légende</span>}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await api.deletePhoto(ph.id);
+                                  loadData();
+                                }}
+                                className="text-slate-400 hover:text-rose-600 shrink-0"
+                                title="Supprimer cette photo"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -2832,12 +3153,24 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               {/* Participants & Notes terrain */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
                       <Users className="w-4 h-4 text-[#0f3854]" />
                       <span>Participants & Émargement ({mission.attendees?.length || 0})</span>
                     </h3>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAttScanner(!showAttScanner);
+                          setShowAddAttendee(false);
+                        }}
+                        className="inline-flex items-center space-x-1 text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                        title="Importer une photo de feuille d'émargement pour remplir le tableau automatiquement"
+                      >
+                        <Camera className="w-3 h-3" />
+                        <span>Scanner émargement</span>
+                      </button>
                       <button
                         type="button"
                         onClick={handleCopyAttendees}
@@ -2849,13 +3182,114 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setShowAddAttendee(!showAddAttendee)}
-                        className="text-xs font-bold text-[#0f3854] hover:underline cursor-pointer"
+                        onClick={() => {
+                          setShowAddAttendee(!showAddAttendee);
+                          setShowAttScanner(false);
+                        }}
+                        className="text-xs font-bold text-[#0f3854] hover:underline cursor-pointer pl-1"
                       >
                         {showAddAttendee ? 'Fermer' : '+ Ajouter'}
                       </button>
                     </div>
                   </div>
+
+                  {showAttScanner && (
+                    <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 space-y-2.5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-bold text-amber-950">📷 Importer une feuille d'émargement (photo, PDF ou liste)</span>
+                        <label className="px-2.5 py-1 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-lg font-bold cursor-pointer text-[11px]">
+                          {scanningAtt ? 'Lecture en cours...' : 'Choisir photo / PDF'}
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleScanAttendanceSheet(f);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div className="flex gap-2">
+                        <textarea
+                          rows={2}
+                          value={attScanText}
+                          onChange={(e) => setAttScanText(e.target.value)}
+                          placeholder="Ou collez une liste brute (ex: Jean Dupont ; Expert assurances ; SARETEC)"
+                          className="flex-1 rounded-lg border border-amber-200 bg-white p-1.5 text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          disabled={scanningAtt || !attScanText.trim()}
+                          onClick={() => handleScanAttendanceSheet(null)}
+                          className="px-2.5 py-1 bg-white border border-amber-300 hover:bg-amber-100 rounded-lg font-bold text-amber-950 shrink-0 disabled:opacity-40"
+                        >
+                          Lire le texte
+                        </button>
+                      </div>
+                      {parsedAttPreview.length > 0 && (
+                        <div className="space-y-2 bg-white p-2.5 rounded-lg border border-amber-200">
+                          <div className="text-[11px] font-bold text-slate-700">
+                            Aperçu du tableau Word (Nom | Qualité | Partie représentée) :
+                          </div>
+                          {parsedAttPreview.map((row, idx) => (
+                            <div key={idx} className="grid grid-cols-3 gap-1.5">
+                              <input
+                                type="text"
+                                value={row.name}
+                                onChange={(e) => {
+                                  const next = [...parsedAttPreview];
+                                  next[idx] = { ...next[idx], name: e.target.value };
+                                  setParsedAttPreview(next);
+                                }}
+                                placeholder="Nom"
+                                className="rounded border border-slate-200 px-1.5 py-1 text-[11px] font-semibold"
+                              />
+                              <input
+                                type="text"
+                                value={row.role}
+                                onChange={(e) => {
+                                  const next = [...parsedAttPreview];
+                                  next[idx] = { ...next[idx], role: e.target.value };
+                                  setParsedAttPreview(next);
+                                }}
+                                placeholder="Qualité"
+                                className="rounded border border-slate-200 px-1.5 py-1 text-[11px]"
+                              />
+                              <input
+                                type="text"
+                                value={row.organization}
+                                onChange={(e) => {
+                                  const next = [...parsedAttPreview];
+                                  next[idx] = { ...next[idx], organization: e.target.value };
+                                  setParsedAttPreview(next);
+                                }}
+                                placeholder="Partie représentée"
+                                className="rounded border border-slate-200 px-1.5 py-1 text-[11px]"
+                              />
+                            </div>
+                          ))}
+                          <div className="flex justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setParsedAttPreview([])}
+                              className="px-2 py-1 text-slate-500 hover:text-slate-700"
+                            >
+                              Annuler
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleConfirmScannedAttendees}
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold"
+                            >
+                              ✓ Ajouter ces {parsedAttPreview.length} participants
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {showAddAttendee && (
                     <form
@@ -3010,24 +3444,50 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
 
                 {/* Notes terrain */}
                 <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-bold text-slate-900">Notes de visite terrain</h3>
-                    <button
-                      type="button"
-                      onClick={handleSaveReportDraft}
-                      disabled={savingNotes}
-                      className="px-3 py-1 bg-[#0f3854] text-white rounded-lg text-xs font-semibold"
-                    >
-                      {savingNotes ? '...' : 'Enregistrer'}
-                    </button>
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={handleCleanRawNotes}
+                        disabled={cleaningNotes || !rawFieldNotes.trim()}
+                        className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-[#0f3854] border border-sky-200 rounded-lg text-xs font-bold disabled:opacity-40 cursor-pointer"
+                        title="Remet au propre vos notes brutes ou dictées sans inventer aucune cause"
+                      >
+                        {cleaningNotes ? 'Mise au propre...' : '✨ Remettre au propre'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveReportDraft}
+                        disabled={savingNotes}
+                        className="px-3 py-1 bg-[#0f3854] text-white rounded-lg text-xs font-semibold"
+                      >
+                        {savingNotes ? '...' : 'Enregistrer'}
+                      </button>
+                    </div>
                   </div>
                   <textarea
                     rows={4}
                     value={rawFieldNotes}
                     onChange={(e) => setRawFieldNotes(e.target.value)}
-                    placeholder="Relevés de cotes, numéros de série, observations brutes..."
+                    placeholder="Notes dictées ou en vrac : relevés de cotes, numéros de série, observations matérielles..."
                     className="w-full text-xs rounded-xl border-slate-200 p-2.5 border bg-slate-50 focus:bg-white"
                   />
+                  {reportObs && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50/50 border border-emerald-200/70 text-[11px] text-slate-700 space-y-1">
+                      <div className="flex items-center justify-between font-bold text-emerald-900">
+                        <span>✓ Observations prêtes pour Constatations Word :</span>
+                        <button
+                          type="button"
+                          onClick={() => openDeliverableStudio('constatations')}
+                          className="text-[#0f3854] hover:underline cursor-pointer"
+                        >
+                          Ouvrir dans Word →
+                        </button>
+                      </div>
+                      <p className="whitespace-pre-line line-clamp-4">{reportObs}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3041,6 +3501,41 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
              ===================================================================== */}
           {activeVolet === 'contradictoire' && (
             <div className="space-y-5">
+              {/* Raccourcis préparation Courriers Word VP Expertise */}
+              <div className="bg-sky-50/70 border border-sky-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold text-[#0f3854]">
+                    Courriers contradictoires pré-remplis (Modèle Word + Signature Valentine)
+                  </h3>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Les références et parties de votre Page de garde sont reprises automatiquement sans double saisie.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openDeliverableStudio('mise_en_cause')}
+                    className="px-3 py-1.5 bg-white hover:bg-sky-100 text-[#0f3854] border border-sky-300 rounded-xl text-xs font-bold shadow-2xs cursor-pointer"
+                  >
+                    + Mise en cause (.docx)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDeliverableStudio('convocation')}
+                    className="px-3 py-1.5 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-xl text-xs font-bold shadow-2xs cursor-pointer"
+                  >
+                    + Convocation (.docx)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDeliverableStudio('courrier_position')}
+                    className="px-3 py-1.5 bg-white hover:bg-sky-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs cursor-pointer"
+                  >
+                    + Courrier de position
+                  </button>
+                </div>
+              </div>
+
               {/* 1. DIRES, CONVOCATIONS & ÉCHANGES CONTRADICTOIRES */}
               <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3439,19 +3934,63 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                 </div>
               </div>
 
-              {/* 3. PIÈCES TRANSMISES & DIRES OFFICIELS */}
+              {/* 3. PIÈCES TRANSMISES & DIRES OFFICIELS (+ COMPARTIMENTS JUDICIAIRES) */}
               <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">
-                    Pièces du contradictoire & Dires formels déposés ({docsContradictoire.length})
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Mises en cause, convocations, dires officiels et accusés de réception LRAR scannés.
-                  </p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Pièces du contradictoire, Dires & Annexes ({docsContradictoire.length})
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Mises en cause, convocations, dires + annexes groupées, et compartiments judiciaires (NAP, Pré-rapport).
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs">
+                    {[
+                      { id: 'all', label: 'Tout' },
+                      { id: 'nap', label: '⚖️ NAP' },
+                      { id: 'pre_rapport', label: '⚖️ Pré-rapport' },
+                      { id: 'dires', label: '⚖️ Dires de partie' },
+                    ].map((jf) => (
+                      <button
+                        key={jf.id}
+                        type="button"
+                        onClick={() => setJudicialFilter(jf.id as any)}
+                        className={`px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                          judicialFilter === jf.id
+                            ? 'bg-white text-[#0f3854] font-bold shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {jf.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {renderVoletDropzone('contradictoire', 'Convocations, dires, accusés LRAR')}
-                {renderPieceTable(docsContradictoire, 'Aucune pièce contradictoire déposée.')}
+                {renderVoletDropzone(
+                  judicialFilter === 'pre_rapport' ? 'rapports' : 'contradictoire',
+                  judicialFilter === 'nap'
+                    ? 'Notes aux parties (NAP)'
+                    : judicialFilter === 'pre_rapport'
+                      ? 'Rapport / Pré-rapport judiciaire'
+                      : judicialFilter === 'dires'
+                        ? 'Dire de partie + annexes (groupables ci-contre)'
+                        : 'Convocations, dires, accusés LRAR',
+                  judicialFilter === 'all' ? undefined : judicialFilter
+                )}
+                {renderPieceTable(
+                  judicialFilter === 'all'
+                    ? docsContradictoire
+                    : judicialFilter === 'pre_rapport'
+                      ? allDocuments.filter((d) => d.sub_section === 'pre_rapport' || d.category === 'judicial_pre_rapport')
+                      : docsContradictoire.filter((d) =>
+                          judicialFilter === 'nap'
+                            ? d.sub_section === 'nap' || d.category === 'judicial_nap'
+                            : d.sub_section === 'dires' || d.category === 'judicial_dire' || d.category === 'procedure_dires'
+                        ),
+                  'Aucune pièce déposée dans ce compartiment.'
+                )}
               </div>
             </div>
           )}
@@ -3723,7 +4262,327 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
               VOLET 6 : 06. RAPPORTS ÉMIS
              ===================================================================== */}
           {activeVolet === 'rapports' && (
-            <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
+            <div className="space-y-5">
+              {/* CARTE 1 : PRÉPARER UN COURRIER OU RAPPORT WORD (.docx) PRÊT POUR MICROSOFT WORD */}
+              <div className="bg-white rounded-2xl border border-[#0f3854]/20 shadow-2xs p-6 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                      <FileText className="w-4 h-4 text-[#0f3854]" />
+                      <span>Préparer un courrier ou rapport Word (.docx)</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Vos modèles officiels VP Expertise (Chartes Courrier & Rapport + Signature), pré-remplis depuis la Page de garde. Vous finalisez librement dans Word ensuite.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={delivGenerating}
+                      onClick={() => handleGenerateDeliverableDocx(false)}
+                      className="px-3.5 py-2 bg-[#0f3854] hover:bg-[#16496d] text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{delivGenerating ? 'Génération...' : 'Télécharger Word (.docx)'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={delivGenerating}
+                      onClick={() => handleGenerateDeliverableDocx(true)}
+                      className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                      title="Télécharge le Word ET l'archive automatiquement dans Rapports émis"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Télécharger + Archiver</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sélecteur de type parmi les 7+ vrais livrables */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+                  <div className="space-y-1.5">
+                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Courriers (En-tête latéral)</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([
+                        { id: 'mise_en_cause', label: 'Mise en cause' },
+                        { id: 'convocation', label: 'Convocation' },
+                        { id: 'mec_convocation', label: 'MEC + Convocation' },
+                        { id: 'courrier_position', label: 'Courrier de position' },
+                      ] as const).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => loadDeliverableDefaults(item.id)}
+                          className={`px-2.5 py-1.5 rounded-lg font-bold border transition-all cursor-pointer ${
+                            delivType === item.id
+                              ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-[#0f3854]'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Rapports & Notes (Page de garde complète)</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([
+                        { id: 'constatations', label: 'Constatations' },
+                        { id: 'note_situation', label: 'Note de situation' },
+                        { id: 'note_technique', label: 'Note technique' },
+                        { id: 'rapport_ead', label: 'Rapport d’EAD (Sur pièces)' },
+                      ] as const).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => loadDeliverableDefaults(item.id)}
+                          className={`px-2.5 py-1.5 rounded-lg font-bold border transition-all cursor-pointer ${
+                            delivType === item.id
+                              ? 'bg-[#0f3854] text-white border-[#0f3854]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-[#0f3854]'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Champs adaptés selon Courrier vs Rapport */}
+                {(['mise_en_cause', 'convocation', 'mec_convocation', 'courrier_position'] as string[]).includes(delivType) ? (
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Objet du courrier</label>
+                        <input
+                          type="text"
+                          value={delivSubject}
+                          onChange={(e) => setDelivSubject(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Date du courrier</label>
+                        <input
+                          type="date"
+                          value={delivDate}
+                          onChange={(e) => setDelivDate(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Email destinataire</label>
+                        <input
+                          type="email"
+                          value={delivRecipientEmail}
+                          onChange={(e) => setDelivRecipientEmail(e.target.value)}
+                          placeholder="ex: corinne.berthelier@reseau.sncf.fr"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Destinataire (bloc adresse)</label>
+                        <textarea
+                          rows={3}
+                          value={delivRecipient}
+                          onChange={(e) => setDelivRecipient(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Copie : (emails séparés par ligne)</label>
+                        <textarea
+                          rows={3}
+                          value={delivCopyEmails}
+                          onChange={(e) => setDelivCopyEmails(e.target.value)}
+                          placeholder="emails en copie..."
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {(delivType === 'convocation' || delivType === 'mec_convocation') && (
+                      <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+                        <div>
+                          <label className="block font-bold text-amber-950 mb-1">Date réunion</label>
+                          <input
+                            type="date"
+                            value={delivMeetingDate}
+                            onChange={(e) => setDelivMeetingDate(e.target.value)}
+                            className="w-full rounded-lg border-amber-200 p-1.5 border bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-bold text-amber-950 mb-1">Heure</label>
+                          <input
+                            type="text"
+                            value={delivMeetingTime}
+                            onChange={(e) => setDelivMeetingTime(e.target.value)}
+                            placeholder="10h00"
+                            className="w-full rounded-lg border-amber-200 p-1.5 border bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-bold text-amber-950 mb-1">Lieu / Adresse</label>
+                          <input
+                            type="text"
+                            value={delivMeetingPlace}
+                            onChange={(e) => setDelivMeetingPlace(e.target.value)}
+                            placeholder="Ateliers / Adresse complète"
+                            className="w-full rounded-lg border-amber-200 p-1.5 border bg-white"
+                          />
+                        </div>
+                        <label className="flex items-center space-x-2 py-1.5 px-2 bg-white rounded-lg border border-amber-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={delivIncludeEpi}
+                            onChange={(e) => setDelivIncludeEpi(e.target.checked)}
+                          />
+                          <span className="font-semibold text-amber-950">Rappel EPI (casque, gilet...)</span>
+                        </label>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="font-semibold text-slate-700">Corps du courrier (pré-rempli — modifiable avant Word)</label>
+                        <button
+                          type="button"
+                          onClick={() => loadDeliverableDefaults(delivType)}
+                          className="text-[11px] text-[#0f3854] hover:underline font-semibold"
+                        >
+                          ↻ Recharger le texte type
+                        </button>
+                      </div>
+                      <textarea
+                        rows={7}
+                        value={delivBodyText}
+                        onChange={(e) => setDelivBodyText(e.target.value)}
+                        className="w-full rounded-xl border-slate-300 p-2.5 border bg-slate-50 focus:bg-white leading-relaxed"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Date du document</label>
+                        <input
+                          type="date"
+                          value={delivDate}
+                          onChange={(e) => setDelivDate(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Posture de convocation</label>
+                        <select
+                          value={delivPosture}
+                          onChange={(e) => {
+                            const p = e.target.value as any;
+                            setDelivPosture(p);
+                            loadDeliverableDefaults(delivType, p);
+                          }}
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white font-semibold"
+                        >
+                          <option value="convoque">À notre initiative (Je convoque)</option>
+                          <option value="convoquee">Sur convocation de...</option>
+                          <option value="spontanee">Présence spontanée</option>
+                        </select>
+                      </div>
+                      {delivPosture === 'convoquee' ? (
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Convoquée par</label>
+                          <input
+                            type="text"
+                            value={delivCaller}
+                            onChange={(e) => setDelivCaller(e.target.value)}
+                            placeholder="ex: VERALLIA / Confrère"
+                            className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">Lieu / Site des constatations</label>
+                          <input
+                            type="text"
+                            value={delivMeetingPlace}
+                            onChange={(e) => setDelivMeetingPlace(e.target.value)}
+                            placeholder="Site / Ville / Adresse"
+                            className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                          />
+                        </div>
+                      )}
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">Co-signataire (facultatif)</label>
+                        <input
+                          type="text"
+                          value={delivCoSigner}
+                          onChange={(e) => setDelivCoSigner(e.target.value)}
+                          placeholder="ex: Alexandre Popineau"
+                          className="w-full rounded-lg border-slate-300 p-2 border bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Options grille photos 2 cols + tableau préjudice */}
+                    <div className="flex flex-wrap items-center gap-3 p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                      <label className="flex items-center space-x-2 cursor-pointer font-semibold text-emerald-950">
+                        <input
+                          type="checkbox"
+                          checked={delivIncludePhotos}
+                          onChange={(e) => setDelivIncludePhotos(e.target.checked)}
+                        />
+                        <span>
+                          Inclure la grille 2 colonnes des photos cochées ({allPhotos.filter((p: any) => p.is_selected_for_report).length} / {allPhotos.length})
+                        </span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer font-semibold text-emerald-950">
+                        <input
+                          type="checkbox"
+                          checked={delivIncludeDamages}
+                          onChange={(e) => setDelivIncludeDamages(e.target.checked)}
+                        />
+                        <span>
+                          Inclure le tableau Comptes du préjudice ({damageLines.length} lignes)
+                        </span>
+                      </label>
+                      <span className="text-[11px] text-slate-600 ml-auto">
+                        Tableau Présents (3 cols) : <strong>{(mission.attendees || []).length}</strong> participant(s)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">1. Circonstances / Faits (pré-rempli Page de garde)</label>
+                        <textarea
+                          rows={3}
+                          value={delivFactsText}
+                          onChange={(e) => setDelivFactsText(e.target.value)}
+                          className="w-full rounded-lg border-slate-200 p-2 border bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-slate-700 mb-1">2. Constatations matérielles (vos notes nettoyées)</label>
+                        <textarea
+                          rows={3}
+                          value={delivObsText}
+                          onChange={(e) => setDelivObsText(e.target.value)}
+                          className="w-full rounded-lg border-slate-200 p-2 border bg-slate-50 focus:bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CARTE 2 : ARCHIVE DES RAPPORTS DIFFUSÉS & PACKAGES AVOCATS (.ZIP) */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold text-slate-900">
@@ -3739,7 +4598,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                     onClick={() => setShowDraftEditor(!showDraftEditor)}
                     className="px-3 py-1.5 border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold"
                   >
-                    {showDraftEditor ? 'Masquer trame' : 'Trame de rapport'}
+                    {showDraftEditor ? 'Masquer notes détaillées' : 'Éditer analyse & conclusions'}
                   </button>
                   <button
                     type="button"
@@ -3992,6 +4851,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
         </section>

@@ -352,6 +352,13 @@ export function initDatabase() {
     "ALTER TABLE documents ADD COLUMN sub_section TEXT DEFAULT ''",
     "ALTER TABLE photos ADD COLUMN piece_number INTEGER",
     "ALTER TABLE photos ADD COLUMN sub_section TEXT DEFAULT 'terrain'",
+    "ALTER TABLE missions ADD COLUMN is_judicial INTEGER DEFAULT 0",
+    "ALTER TABLE missions ADD COLUMN co_signer TEXT DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN document_group_id TEXT DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN document_group_label TEXT DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN source_origin TEXT DEFAULT ''",
+    "ALTER TABLE attendees ADD COLUMN meeting_label TEXT DEFAULT ''",
+    "ALTER TABLE attendees ADD COLUMN meeting_date TEXT DEFAULT ''",
   ];
 
   for (const stmt of alterStatements) {

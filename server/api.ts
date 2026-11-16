@@ -5,9 +5,9 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
-import { generateInvoiceDocx, generateReportDocx } from './docx.ts';
+import { generateInvoiceDocx, generateReportDocx, generateDeliverableDocx, buildDeliverableDefaults, getDeliverableTypeLabel } from './docx.ts';
 import { generateMonthlyComptaWorkbook } from './excel.ts';
-import type { Invoice, InvoiceLine, ReportDraft, Attendee, Photo } from '../shared/types.ts';
+import type { Invoice, InvoiceLine, ReportDraft, Attendee, Photo, DamageLine, DeliverableType, DeliverableRequestPayload } from '../shared/types.ts';
 import JSZip from 'jszip';
 
 export const apiRouter = Router();
@@ -224,6 +224,7 @@ apiRouter.get('/missions', (req, res) => {
       return {
         ...m,
         guarantee_type: m.guarantee_type || 'RC',
+        is_judicial: Boolean(m.is_judicial || m.court_reference || m.judicial_expert),
         adverse_parties,
         stake_history,
         expertise_operations,
@@ -257,7 +258,7 @@ apiRouter.post('/missions', (req, res) => {
     code, title, case_reference, guarantee_type = 'RC', status = 'en_cours', insurance_client, client_contact,
     insurer_company, insured_party, insured_contact, insured_reference, broker_name, broker_reference,
     client_lawyer, third_parties, adverse_parties, stake_amount,
-    court_reference, judicial_expert, incident_date, reception_date = new Date().toISOString().slice(0, 10),
+    court_reference, judicial_expert, is_judicial, co_signer = '', incident_date, reception_date = new Date().toISOString().slice(0, 10),
     description = '', preliminary_analysis = '', pv_dommages_date = '', expertise_operations,
     current_step = '', next_action = '', next_deadline, billing_contact_name,
     billing_address, custom_hourly_rate = 190, custom_travel_rate = 135, custom_km_rate = 0.95
@@ -295,6 +296,7 @@ apiRouter.post('/missions', (req, res) => {
         { id: 'op-def', label: 'Définitif', expertise_date: '', report_date: '', quantum: null, invoice_number: '', invoice_amount_ht: null, invoice_date: '' },
       ];
 
+  const isJudicialFlag = Boolean(is_judicial || court_reference || judicial_expert) ? 1 : 0;
   const id = `m-${uuidv4().slice(0, 8)}`;
   try {
     db.prepare(`
@@ -302,7 +304,7 @@ apiRouter.post('/missions', (req, res) => {
         id, code, title, case_reference, guarantee_type, status, insurance_client, client_contact,
         insurer_company, insured_party, insured_contact, insured_reference, broker_name, broker_reference,
         client_lawyer, third_parties, adverse_parties, stake_amount, initial_stake_amount, stake_history,
-        court_reference, judicial_expert, incident_date, reception_date,
+        court_reference, judicial_expert, is_judicial, co_signer, incident_date, reception_date,
         description, preliminary_analysis, pv_dommages_date, expertise_operations,
         current_step, next_action, next_deadline, billing_contact_name,
         billing_address, custom_hourly_rate, custom_travel_rate, custom_km_rate
@@ -310,7 +312,7 @@ apiRouter.post('/missions', (req, res) => {
         ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?
@@ -319,7 +321,7 @@ apiRouter.post('/missions', (req, res) => {
       id, code, title, case_reference, guarantee_type || 'RC', status, insurance_client, client_contact || null,
       insurer_company || null, insured_party || null, insured_contact || null, insured_reference || null, broker_name || null, broker_reference || null,
       client_lawyer || null, derivedThirdParties || null, JSON.stringify(parsedAdverse), numericStake, numericStake, JSON.stringify(initialHistory),
-      court_reference || null, judicial_expert || null, incident_date || null, reception_date,
+      court_reference || null, judicial_expert || null, isJudicialFlag, co_signer || '', incident_date || null, reception_date,
       description, preliminary_analysis || '', pv_dommages_date || '', JSON.stringify(defaultOps),
       current_step || '', next_action || '', next_deadline || null, billing_contact_name || null,
       billing_address || null, custom_hourly_rate, custom_travel_rate, custom_km_rate
@@ -373,6 +375,7 @@ apiRouter.get('/missions/:id', (req, res) => {
   res.json({
     ...mission,
     guarantee_type: mission.guarantee_type || 'RC',
+    is_judicial: Boolean(mission.is_judicial || mission.court_reference || mission.judicial_expert),
     adverse_parties: parseJsonSafe<any[]>(mission.adverse_parties, []),
     stake_history: parseJsonSafe<any[]>(mission.stake_history, []),
     expertise_operations: parseJsonSafe<any[]>(mission.expertise_operations, []),
@@ -454,7 +457,7 @@ apiRouter.put('/missions/:id', (req, res) => {
         insurer_company = ?, insured_party = ?, insured_contact = ?, insured_reference = ?, broker_name = ?, broker_reference = ?,
         client_lawyer = ?, third_parties = ?, adverse_parties = ?,
         stake_amount = ?, initial_stake_amount = ?, stake_history = ?,
-        court_reference = ?, judicial_expert = ?, incident_date = ?, reception_date = ?,
+        court_reference = ?, judicial_expert = ?, is_judicial = ?, co_signer = ?, incident_date = ?, reception_date = ?,
         description = ?, preliminary_analysis = ?, pv_dommages_date = ?, expertise_operations = ?,
         current_step = ?, next_action = ?, next_deadline = ?, billing_contact_name = ?,
         billing_address = ?, custom_hourly_rate = ?, custom_travel_rate = ?, custom_km_rate = ?,
@@ -481,6 +484,8 @@ apiRouter.put('/missions/:id', (req, res) => {
       JSON.stringify(stakeHistory),
       m.court_reference !== undefined ? m.court_reference : existing.court_reference,
       m.judicial_expert !== undefined ? m.judicial_expert : existing.judicial_expert,
+      m.is_judicial !== undefined ? (m.is_judicial ? 1 : 0) : (existing.is_judicial ? 1 : 0),
+      m.co_signer !== undefined ? m.co_signer : (existing.co_signer || ''),
       m.incident_date !== undefined ? m.incident_date : existing.incident_date,
       m.reception_date ?? existing.reception_date,
       m.description !== undefined ? m.description : existing.description,
@@ -1312,10 +1317,118 @@ apiRouter.put('/reports/:missionId', (req, res) => {
   res.json({ message: "Brouillon de rapport mis à jour" });
 });
 
-apiRouter.get('/reports/:missionId/docx', async (req, res) => {
-  const mission = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.missionId) as any;
-  if (!mission) return res.status(404).json({ error: "Mission non trouvée" });
+function hydrateMissionForDeliverable(rawMission: any) {
+  return {
+    ...rawMission,
+    guarantee_type: rawMission.guarantee_type || 'RC',
+    is_judicial: Boolean(rawMission.is_judicial || rawMission.court_reference || rawMission.judicial_expert),
+    adverse_parties: parseJsonSafe<any[]>(rawMission.adverse_parties, []),
+    stake_history: parseJsonSafe<any[]>(rawMission.stake_history, []),
+    expertise_operations: parseJsonSafe<any[]>(rawMission.expertise_operations, []),
+  };
+}
 
+function getDeliverableFilePrefix(type: DeliverableType): string {
+  switch (type) {
+    case 'mise_en_cause': return 'MEC';
+    case 'convocation': return 'Convocation';
+    case 'mec_convocation': return 'MEC_Convocation';
+    case 'courrier_position': return 'Courrier';
+    case 'constatations': return 'Constatations';
+    case 'note_situation': return 'Note_Situation';
+    case 'note_technique': return 'Note_Technique';
+    case 'rapport_ead': return 'EAD';
+    default: return 'Document';
+  }
+}
+
+apiRouter.get('/missions/:id/deliverable-preview', (req, res) => {
+  const rawMission = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!rawMission) return res.status(404).json({ error: "Mission non trouvée" });
+
+  const mission = hydrateMissionForDeliverable(rawMission);
+  const type = (String(req.query.type || 'constatations') as DeliverableType);
+  const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id) as Attendee[];
+  const damageLines = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id) as any[];
+  const draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id) as ReportDraft | undefined;
+
+  const defaults = buildDeliverableDefaults(
+    mission,
+    {
+      deliverable_type: type,
+      doc_date: req.query.doc_date ? String(req.query.doc_date) : undefined,
+      convocation_posture: (req.query.posture as any) || undefined,
+    },
+    attendees,
+    damageLines.map((d) => ({ ...d, piece_numbers: parseJsonSafe<number[]>(d.piece_numbers, []) })),
+    draft || null
+  );
+  res.json(defaults);
+});
+
+apiRouter.post('/missions/:id/deliverable-docx', async (req, res) => {
+  const rawMission = db.prepare('SELECT * FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!rawMission) return res.status(404).json({ error: "Mission non trouvée" });
+
+  const mission = hydrateMissionForDeliverable(rawMission);
+  const payload = (req.body || {}) as DeliverableRequestPayload;
+  const type = (payload.deliverable_type || 'constatations') as DeliverableType;
+  const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id) as Attendee[];
+  const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id) as Photo[];
+  const rawDamages = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id) as any[];
+  const damageLines: DamageLine[] = rawDamages.map((d) => ({ ...d, piece_numbers: parseJsonSafe<number[]>(d.piece_numbers, []) }));
+  const draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id) as ReportDraft | undefined;
+
+  try {
+    const buffer = await generateDeliverableDocx({
+      mission,
+      options: payload,
+      attendees,
+      photos,
+      damageLines,
+      draft: draft || null,
+    });
+
+    const dateTag = (payload.doc_date || new Date().toISOString().slice(0, 10)).split('-').reverse().join('');
+    const safeCode = (mission.code || 'VP').replace(/[^a-zA-Z0-9_-]/g, '');
+    const fileName = `${safeCode}_${getDeliverableFilePrefix(type)}_${dateTag}.docx`;
+
+    if (payload.archive_as_issued) {
+      const diskName = `${Date.now()}-${uuidv4().slice(0, 8)}.docx`;
+      fs.writeFileSync(path.join(uploadsDir, diskName), buffer);
+      const repId = `rep-${uuidv4().slice(0, 8)}`;
+      const defaults = buildDeliverableDefaults(mission, payload, attendees, damageLines, draft || null);
+      db.prepare(`
+        INSERT INTO issued_reports (id, mission_id, mission_code, report_type, title, sent_date, recipient, filename, original_name, attached_piece_numbers, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)
+      `).run(
+        repId,
+        mission.id,
+        mission.code,
+        getDeliverableTypeLabel(type),
+        payload.subject?.trim() || `${getDeliverableTypeLabel(type)} — ${mission.title}`,
+        payload.doc_date || new Date().toISOString().slice(0, 10),
+        payload.recipient_name?.split('\n')[0]?.trim() || mission.insurance_client,
+        diskName,
+        fileName,
+        'Généré via le modèle Word VP Expertise'
+      );
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(buffer);
+  } catch (err: any) {
+    console.error('[Deliverable DOCX Error] :', err);
+    res.status(500).json({ error: err.message || "Erreur lors de la génération Word" });
+  }
+});
+
+async function handleLegacyReportDocx(missionId: string, res: any) {
+  const rawMission = db.prepare('SELECT * FROM missions WHERE id = ?').get(missionId) as any;
+  if (!rawMission) return res.status(404).json({ error: "Mission non trouvée" });
+
+  const mission = hydrateMissionForDeliverable(rawMission);
   let draft = db.prepare('SELECT * FROM report_drafts WHERE mission_id = ?').get(mission.id) as any;
   if (!draft) {
     draft = {
@@ -1333,15 +1446,25 @@ apiRouter.get('/reports/:missionId/docx', async (req, res) => {
 
   const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id) as Attendee[];
   const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ? AND is_selected_for_report = 1 ORDER BY order_index ASC').all(mission.id) as Photo[];
+  const rawDamages = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id) as any[];
+  const damageLines: DamageLine[] = rawDamages.map((d) => ({ ...d, piece_numbers: parseJsonSafe<number[]>(d.piece_numbers, []) }));
 
   try {
-    const buffer = await generateReportDocx(draft, mission.title, mission.case_reference, attendees, photos);
+    const buffer = await generateReportDocx(draft, mission.title, mission.case_reference, attendees, photos, mission, damageLines);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename=Projet_Rapport_${mission.code}.docx`);
     res.send(buffer);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+}
+
+apiRouter.get('/reports/:missionId/docx', (req, res) => {
+  handleLegacyReportDocx(req.params.missionId, res);
+});
+
+apiRouter.get('/missions/:id/report-docx', (req, res) => {
+  handleLegacyReportDocx(req.params.id, res);
 });
 
 // ---------------- PHOTOS & TERRAIN ----------------
@@ -1420,17 +1543,20 @@ apiRouter.post('/missions/:id/documents', upload.array('files', 25), (req, res) 
   const section = inferSectionFromCategory(category, req.body.section as string);
   const subSection = (req.body.sub_section as string) || '';
   const customCaption = (req.body.caption as string || '').trim();
+  const groupId = (req.body.document_group_id as string || '').trim() || (files.length > 1 && req.body.document_group_label ? `grp-${uuidv4().slice(0, 8)}` : '');
+  const groupLabel = (req.body.document_group_label as string || '').trim();
+  const sourceOrigin = (req.body.source_origin as string || '').trim();
 
   const insertStmt = db.prepare(`
-    INSERT INTO documents (id, mission_id, mission_code, piece_number, section, sub_section, filename, original_name, mime_type, file_size, category, caption, is_selected_for_report)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO documents (id, mission_id, mission_code, piece_number, section, sub_section, filename, original_name, mime_type, file_size, category, caption, document_group_id, document_group_label, source_origin, is_selected_for_report)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let nextPiece = getNextPieceNumber(req.params.id);
   const createdDocs: any[] = [];
   for (const f of files) {
     const docId = `doc-${uuidv4().slice(0, 8)}`;
-    const isImage = f.mimetype.startsWith('image/');
+    const isImage = f.mimetype.startsWith('image/') || /\.(jpe?g|png|webp|heic)$/i.test(f.originalname);
     const pieceNum = nextPiece++;
     // Caption is never mandatory ("sur le terrain, sous la pluie, pas un titre à chaque photo")
     const captionToStore = customCaption || '';
@@ -1448,6 +1574,9 @@ apiRouter.post('/missions/:id/documents', upload.array('files', 25), (req, res) 
       f.size,
       category,
       captionToStore,
+      groupId,
+      groupLabel,
+      sourceOrigin,
       isImage ? 1 : 0
     );
 
@@ -1469,6 +1598,9 @@ apiRouter.post('/missions/:id/documents', upload.array('files', 25), (req, res) 
       filename: f.filename,
       original_name: f.originalname,
       caption: captionToStore,
+      document_group_id: groupId,
+      document_group_label: groupLabel,
+      source_origin: sourceOrigin,
     });
   }
 
@@ -1476,7 +1608,7 @@ apiRouter.post('/missions/:id/documents', upload.array('files', 25), (req, res) 
 });
 
 apiRouter.put('/documents/:id', (req, res) => {
-  const { caption, category, section, sub_section, piece_number, is_selected_for_report } = req.body;
+  const { caption, category, section, sub_section, piece_number, is_selected_for_report, document_group_id, document_group_label, source_origin } = req.body;
   db.prepare(`
     UPDATE documents SET
       caption = COALESCE(?, caption),
@@ -1484,7 +1616,10 @@ apiRouter.put('/documents/:id', (req, res) => {
       section = COALESCE(?, section),
       sub_section = COALESCE(?, sub_section),
       piece_number = COALESCE(?, piece_number),
-      is_selected_for_report = COALESCE(?, is_selected_for_report)
+      is_selected_for_report = COALESCE(?, is_selected_for_report),
+      document_group_id = COALESCE(?, document_group_id),
+      document_group_label = COALESCE(?, document_group_label),
+      source_origin = COALESCE(?, source_origin)
     WHERE id = ?
   `).run(
     caption !== undefined ? caption : null,
@@ -1493,6 +1628,9 @@ apiRouter.put('/documents/:id', (req, res) => {
     sub_section !== undefined ? sub_section : null,
     piece_number !== undefined ? Number(piece_number) : null,
     is_selected_for_report !== undefined ? (is_selected_for_report ? 1 : 0) : null,
+    document_group_id !== undefined ? document_group_id : null,
+    document_group_label !== undefined ? document_group_label : null,
+    source_origin !== undefined ? source_origin : null,
     req.params.id
   );
   res.json({ message: "Pièce mise à jour" });
@@ -1688,7 +1826,9 @@ apiRouter.get('/issued-reports/:id/package-zip', async (req, res) => {
       };
       const attendees = db.prepare('SELECT * FROM attendees WHERE mission_id = ?').all(mission.id) as Attendee[];
       const photos = db.prepare('SELECT * FROM photos WHERE mission_id = ? AND is_selected_for_report = 1 ORDER BY order_index ASC').all(mission.id) as Photo[];
-      const buffer = await generateReportDocx(draft, mission.title, mission.case_reference, attendees, photos);
+      const rawDamages = db.prepare('SELECT * FROM damage_lines WHERE mission_id = ? ORDER BY order_index ASC').all(mission.id) as any[];
+      const damageLines: DamageLine[] = rawDamages.map((d) => ({ ...d, piece_numbers: parseJsonSafe<number[]>(d.piece_numbers, []) }));
+      const buffer = await generateReportDocx(draft, mission.title, mission.case_reference, attendees, photos, hydrateMissionForDeliverable(mission), damageLines);
       pkgFolder.file(rep.original_name || `${safeTitle}.docx`, buffer);
     }
 
@@ -1733,18 +1873,235 @@ apiRouter.get('/issued-reports/:id/package-zip', async (req, res) => {
 
 // ---------------- ATTENDEES / PRÉSENTS ----------------
 apiRouter.post('/attendees', (req, res) => {
-  const { mission_id, name, organization, role, email, phone, present_on_site = true, present_remote = false } = req.body;
-  if (!mission_id || !name || !organization) {
-    return res.status(400).json({ error: "Mission, nom et organisme requis" });
+  const {
+    mission_id,
+    name,
+    organization = '—',
+    role = '',
+    email,
+    phone,
+    present_on_site = true,
+    present_remote = false,
+    meeting_label = '',
+    meeting_date = '',
+  } = req.body;
+  if (!mission_id || !name) {
+    return res.status(400).json({ error: "Mission et nom du participant requis" });
   }
 
   const id = `att-${uuidv4().slice(0, 8)}`;
   db.prepare(`
-    INSERT INTO attendees (id, mission_id, name, organization, role, email, phone, present_on_site, present_remote)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, mission_id, name, organization, role || '', email || null, phone || null, present_on_site ? 1 : 0, present_remote ? 1 : 0);
+    INSERT INTO attendees (id, mission_id, name, organization, role, email, phone, present_on_site, present_remote, meeting_label, meeting_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    mission_id,
+    String(name).trim(),
+    String(organization || '—').trim(),
+    String(role || '').trim(),
+    email ? String(email).trim() : null,
+    phone ? String(phone).trim() : null,
+    present_on_site ? 1 : 0,
+    present_remote ? 1 : 0,
+    String(meeting_label || '').trim(),
+    String(meeting_date || '').trim()
+  );
 
   res.json({ id, message: "Participant enregistré" });
+});
+
+apiRouter.post('/missions/:id/attendees/batch', (req, res) => {
+  const mission = db.prepare('SELECT id FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
+
+  const attendeesList = Array.isArray(req.body.attendees) ? req.body.attendees : [];
+  if (attendeesList.length === 0) {
+    return res.status(400).json({ error: "Aucun participant à enregistrer" });
+  }
+
+  const insertStmt = db.prepare(`
+    INSERT INTO attendees (id, mission_id, name, organization, role, email, phone, present_on_site, present_remote, meeting_label, meeting_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertedIds: string[] = [];
+  const defaultMeetingLabel = String(req.body.meeting_label || '').trim();
+  const defaultMeetingDate = String(req.body.meeting_date || '').trim();
+
+  for (const a of attendeesList) {
+    if (!a?.name || !String(a.name).trim()) continue;
+    const id = `att-${uuidv4().slice(0, 8)}`;
+    const isRemote = a.presence_type === 'visio' || Boolean(a.present_remote);
+    const isSite = a.present_on_site !== undefined ? Boolean(a.present_on_site) : !isRemote;
+    insertStmt.run(
+      id,
+      mission.id,
+      String(a.name).trim(),
+      String(a.organization || '—').trim(),
+      String(a.role || '').trim(),
+      a.email ? String(a.email).trim() : null,
+      a.phone ? String(a.phone).trim() : null,
+      isSite ? 1 : 0,
+      isRemote ? 1 : 0,
+      String(a.meeting_label || defaultMeetingLabel || '').trim(),
+      String(a.meeting_date || defaultMeetingDate || '').trim()
+    );
+    insertedIds.push(id);
+  }
+
+  res.json({ count: insertedIds.length, ids: insertedIds, message: `${insertedIds.length} participant(s) ajouté(s)` });
+});
+
+function parseAttendanceLinesDeterministically(rawText: string) {
+  const lines = String(rawText || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 2 && !/^(nom|pr[eé]nom|qualit[eé]|partie|soci[eé]t[eé]|feuille|emargement)/i.test(l));
+
+  return lines.map((line) => {
+    const parts = line.split(/\s*[|;\t—–]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+    const emailMatch = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const cleanParts = parts.filter((p) => !emailMatch || p !== emailMatch[0]);
+    return {
+      name: cleanParts[0] || line,
+      role: cleanParts[1] || '',
+      organization: cleanParts[2] || cleanParts[1] || '—',
+      email: emailMatch ? emailMatch[0] : '',
+      present_on_site: true,
+      present_remote: false,
+    };
+  });
+}
+
+apiRouter.post('/missions/:id/parse-attendance-sheet', upload.single('file'), async (req, res) => {
+  const mission = db.prepare('SELECT id, code, title FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
+
+  const file = req.file;
+  const rawTextInput = String(req.body.text || '').trim();
+  if (!file && !rawTextInput) {
+    return res.status(400).json({ error: "Veuillez déposer une photo de feuille d'émargement ou coller du texte." });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
+  if (apiKey && file) {
+    const candidateModels = [
+      process.env.GEMINI_MODEL,
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+    ].filter(Boolean) as string[];
+    const fileBuffer = fs.readFileSync(file.path);
+    const mimeType = file.mimetype || (file.originalname.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+    const prompt = `Tu extrais les participants d'une feuille d'émargement ou liste de présence pour VP EXPERTISE (dossier ${mission.code}).
+Pour chaque ligne lisible, extrais :
+- name : Nom et Prénom complets (sans inventer si illisible)
+- role : Qualité / Fonction exacte (ex: "Expert assurances", "Avocat", "Responsable matériel")
+- organization : Partie représentée / Société / Organisme (ex: "SNCF RÉSEAU", "AXA", "ALSTOM")
+- email : adresse email si mentionnée, sinon ""
+Extrais aussi si visible la date de réunion (YYYY-MM-DD ou "") et un libellé court (ex: "Constatations du 29/10/2026").
+Renvoie UNIQUEMENT un JSON valide :
+{"meeting_date": "", "meeting_label": "", "attendees": [{"name": "...", "role": "...", "organization": "...", "email": ""}]}`;
+
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
+    for (const mName of candidateModels) {
+      try {
+        const resAi: any = await Promise.race([
+          ai.models.generateContent({
+            model: mName,
+            contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: fileBuffer.toString('base64') } }] }],
+            config: { responseMimeType: 'application/json' },
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 20000)),
+        ]);
+        const cleaned = String(resAi.text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (parsed && Array.isArray(parsed.attendees)) {
+          return res.json({
+            model: mName,
+            meeting_date: parsed.meeting_date || '',
+            meeting_label: parsed.meeting_label || '',
+            attendees: parsed.attendees.filter((a: any) => a?.name?.trim()),
+          });
+        }
+      } catch (e: any) {
+        console.warn('[Attendance OCR] Fallback next model:', e.message);
+      }
+    }
+  }
+
+  // Deterministic fallback when offline or text pasted
+  const fallbackText = rawTextInput || (file && !file.mimetype.startsWith('image/') && !file.originalname.endsWith('.pdf')
+    ? fs.readFileSync(file.path, 'utf-8')
+    : '');
+  const attendees = parseAttendanceLinesDeterministically(fallbackText);
+  return res.json({
+    model: 'local_parser',
+    meeting_date: '',
+    meeting_label: '',
+    attendees,
+    note: attendees.length === 0 ? "Clé Gemini non configurée ou image manuscrite : complétez les participants manuellement ou collez une liste texte." : undefined,
+  });
+});
+
+function cleanObservationsDeterministically(raw: string): string {
+  return String(raw || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/^[-•*]\s*/, ''))
+    .filter(Boolean)
+    .map((l) => {
+      const cap = l.charAt(0).toUpperCase() + l.slice(1);
+      return /[.!?;:]$/.test(cap) ? `• ${cap}` : `• ${cap}.`;
+    })
+    .join('\n');
+}
+
+apiRouter.post('/missions/:id/clean-notes', async (req, res) => {
+  const mission = db.prepare('SELECT id, code, title FROM missions WHERE id = ?').get(req.params.id) as any;
+  if (!mission) return res.status(404).json({ error: "Dossier non trouvé" });
+
+  const rawNotes = String(req.body.raw_notes || '').trim();
+  if (!rawNotes) return res.status(400).json({ error: "Aucune note brute fournie." });
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
+  if (apiKey) {
+    const candidateModels = [
+      process.env.GEMINI_MODEL,
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+    ].filter(Boolean) as string[];
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
+    const prompt = `Tu assistes Valentine Pécheux (experte ferroviaire VP EXPERTISE) pour remettre au propre ses notes brutes / dictées vocales de terrain sur le dossier ${mission.code}.
+RÈGLE IMPÉRATIVE :
+- Corrige uniquement l'orthographe, la ponctuation et organise en puces claires et factuelles.
+- NE RÉDIGE JAMAIS les causes du sinistre, ne porte AUCUNE appréciation sur les responsabilités, n'ajoute aucun fait non dicté par Valentine.
+Texte brut à remettre au propre :
+"""
+${rawNotes}
+"""
+Renvoie UNIQUEMENT le texte mis au propre en français professionnel.`;
+
+    for (const mName of candidateModels) {
+      try {
+        const result: any = await Promise.race([
+          ai.models.generateContent({ model: mName, contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 15000)),
+        ]);
+        const cleaned = String(result.text || '').trim();
+        if (cleaned) {
+          return res.json({ cleaned_observations: cleaned, model: mName });
+        }
+      } catch (e: any) {
+        console.warn('[Clean Notes] Fallback:', e.message);
+      }
+    }
+  }
+
+  return res.json({
+    cleaned_observations: cleanObservationsDeterministically(rawNotes),
+    model: 'local_cleanup',
+  });
 });
 
 apiRouter.delete('/attendees/:id', (req, res) => {
@@ -3330,22 +3687,23 @@ Nom du fichier original : "${file.originalname}"
 Nature du fichier : ${isAudio ? 'Enregistrement audio / Note vocale de terrain' : (isImage ? 'Photo / Cliché ou Reçu' : 'Document PDF / Procédure')}
 
 Consignes de classification :
-1. "field_photo" : si l'image est une photo technique de terrain (matériels roulants ferroviaires, bogies, essieux, rails, caténaires, trémies, aiguillages, déformations, fissures, corrosion, pièces mécaniques). Rédige une légende d'expertise rigoureuse pour le rapport Word.
-2. "field_note" : si c'est une note vocale ou un texte décrivant des constatations contradictoires, des analyses techniques d'avarie ou des conclusions de visite. Rédige un texte structuré prêt à insérer dans le rapport (indique target_section: "section_observations" | "section_analysis" | "section_facts" | "section_conclusions"). Si un nombre d'heures est évoqué (ex: "3h de visite"), extrais "hours".
-3. "activity" : si la note vocale ou le texte sert principalement à pointer une vacation (ex: "réunion de 2h sur dossier Alstom").
-4. "expense" : si c'est un ticket de train SNCF, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
+1. "field_photo" : si l'image est une photo technique de terrain (matériels roulants ferroviaires, bogies, essieux, rails, caténaires, trémies, aiguillages, déformations, fissures, corrosion, pièces mécaniques). N'invente ni cause ni responsabilité.
+2. "attendance_sheet" : si l'image/PDF est une feuille d'émargement ou une liste manuscrite/imprimée de participants à une réunion. Remplis "attendees": [{ "name", "role", "organization", "email" }].
+3. "field_note" : si c'est une note vocale ou un texte décrivant des constatations matérielles de visite. Remets au propre factuellement SANS inventer ni causes ni responsabilités ("section_observations"). Si un nombre d'heures est évoqué (ex: "3h de visite"), extrais "hours".
+4. "activity" : si la note vocale ou le texte sert principalement à pointer une vacation (ex: "réunion de 2h sur dossier Alstom").
+5. "expense" : si c'est un ticket de train SNCF, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
    - Billets SNCF/RATP : TVA à 10%.
    - Hôtel & Restauration : TVA à 10%.
    - Péage / Taxi : TVA à 20%.
    - Kilométrique : TVA à 0%.
-5. "document" : si c'est un Dire d'avocat, un PV de réunion contradictoire, une convocation ou une pièce juridique.
-6. "new_mission" : si c'est une nouvelle ordonnance de référé ou lettre de mission judiciaire pour une affaire inexistante.
+6. "document" : si c'est un Dire d'avocat, un PV de réunion contradictoire, une convocation, une NAP ou une pièce juridique.
+7. "new_mission" : si c'est une nouvelle ordonnance de référé ou lettre de mission judiciaire pour une affaire inexistante.
 
 Rapproche toujours l'action du dossier le plus pertinent de la liste selon les mots-clés (Alstom, Ligne 18, Regiorail, Forwardis, TLA, etc.).
 
 Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni texte additionnel :
 {
-  "action_type": "expense" | "document" | "new_mission" | "activity" | "field_photo" | "field_note",
+  "action_type": "expense" | "document" | "new_mission" | "activity" | "field_photo" | "field_note" | "attendance_sheet",
   "confidence": 0.95,
   "matched_mission_id": "id du dossier correspondant ou null",
   "matched_mission_code": "code du dossier correspondant (ex: VP2026922) ou null",
@@ -3362,9 +3720,10 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
     "document_title": "Titre du document",
     "document_category": "dire" | "pv" | "technique" | "autre",
     "deadline": "YYYY-MM-DD",
-    "caption": "Légende technique d'expertise pour la photo de terrain",
+    "caption": "Légende courte facultative si pertinente",
+    "attendees": [{"name": "...", "role": "...", "organization": "...", "email": ""}],
     "section": "section_observations" | "section_analysis" | "section_facts" | "section_conclusions",
-    "notes": "Texte complet de la note technique ou observation contradictoire",
+    "notes": "Texte factuel nettoyé",
     "hours": 1.5,
     "new_mission_title": "Titre",
     "new_mission_case_reference": "Réf",
@@ -3480,15 +3839,27 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
             label: `Vacation d'expertise sur site (${hours} h)`,
           },
         };
+      } else if (isImage && (lower.includes('emargement') || lower.includes('émargement') || lower.includes('presence') || lower.includes('présence'))) {
+        extracted = {
+          action_type: 'attendance_sheet',
+          confidence: 0.90,
+          matched_mission_id: matchedMission?.id || null,
+          matched_mission_code: matchedMission?.code || null,
+          summary: `Feuille d'émargement détectée pour [${matchedMission?.code || ''}]`,
+          payload: {
+            date: today,
+            attendees: instruction ? parseAttendanceLinesDeterministically(instruction) : [],
+          },
+        };
       } else if (isImage && (lower.includes('photo') || lower.includes('terrain') || lower.includes('bogie') || lower.includes('rail') || lower.includes('avarie') || lower.includes('fissure') || lower.includes('trémie') || lower.includes('constat') || !lower.match(/\d+\s*(?:€|eur)/))) {
-        // Photo de terrain technique
-        const caption = instruction || `Examen contradictoire — constatation technique sur le matériel roulant / infrastructure [${matchedMission?.code || ''}]`;
+        // Photo de terrain technique (légende facultative)
+        const caption = instruction ? instruction.trim() : '';
         extracted = {
           action_type: 'field_photo',
           confidence: 0.92,
           matched_mission_id: matchedMission?.id || null,
           matched_mission_code: matchedMission?.code || null,
-          summary: `Photo de terrain technique rattachée à [${matchedMission?.code || ''}] : "${caption}"`,
+          summary: `Photo de terrain prête pour [${matchedMission?.code || ''}]${caption ? ` (${caption})` : ' (sans légende)'}`,
           payload: {
             date: today,
             caption,
@@ -3628,7 +3999,7 @@ apiRouter.post('/assistant/commit-action', (req, res) => {
       const photoId = `photo-${uuidv4().slice(0, 8)}`;
       const docId = `doc-${uuidv4().slice(0, 8)}`;
       const count = db.prepare('SELECT COUNT(*) as c FROM photos WHERE mission_id = ?').get(mission.id) as { c: number };
-      const caption = (payload.caption || payload.label || original_name || "Constat technique sur site").trim();
+      const caption = (payload.caption || payload.label || '').trim();
       const photoFilename = filename || `photo-${Date.now()}.jpg`;
       const origName = original_name || `photo-${Date.now()}.jpg`;
 
@@ -3650,6 +4021,39 @@ apiRouter.post('/assistant/commit-action', (req, res) => {
         id: photoId,
         mission_code: mission.code,
         message: `Photo de terrain ajoutée avec succès au dossier [${mission.code}] et intégrée au projet de rapport.`,
+      });
+    }
+
+    if (action_type === 'attendance_sheet') {
+      if (!mission_id) return res.status(400).json({ error: "Veuillez sélectionner un dossier de rattachement." });
+      const mission = db.prepare('SELECT id, code FROM missions WHERE id = ?').get(mission_id) as any;
+      if (!mission) return res.status(404).json({ error: "Dossier introuvable." });
+
+      const rows = Array.isArray(payload.attendees) ? payload.attendees : [];
+      const stmt = db.prepare(`
+        INSERT INTO attendees (id, mission_id, name, organization, role, email, present_on_site, present_remote, meeting_date)
+        VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)
+      `);
+      let added = 0;
+      for (const a of rows) {
+        if (!a?.name || !String(a.name).trim()) continue;
+        stmt.run(
+          `att-${uuidv4().slice(0, 8)}`,
+          mission.id,
+          String(a.name).trim(),
+          String(a.organization || '—').trim(),
+          String(a.role || '').trim(),
+          a.email ? String(a.email).trim() : null,
+          payload.date || ''
+        );
+        added++;
+      }
+      return res.json({
+        success: true,
+        action_type: 'attendance_sheet',
+        mission_code: mission.code,
+        count: added,
+        message: `${added} participant(s) ajouté(s) depuis la feuille d'émargement dans [${mission.code}].`,
       });
     }
 
