@@ -26,6 +26,7 @@ import {
 import { AccountingEntry, RecurringExpense, RecurringFrequency, BankReconciliationReport, BankStatementItem } from '@shared/types.js';
 import { api } from '../api.js';
 import { syncComptaFileToMac, isLocalSyncConnected, getLocalSyncFolderName } from '../utils/localFolderSync.js';
+import { CloudFileAnchor } from '../components/CloudFileLink.js';
 
 export const ComptaView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState('2026-10');
@@ -963,8 +964,8 @@ export const ComptaView: React.FC = () => {
                           <td className="py-2 px-2.5 text-center whitespace-nowrap">
                             {entry.receipt_filename ? (
                               <div className="inline-flex items-center space-x-1">
-                                <a
-                                  href={`/uploads/${entry.receipt_filename}`}
+                                <CloudFileAnchor
+                                  filename={entry.receipt_filename}
                                   target="_blank"
                                   rel="noreferrer"
                                   title={entry.receipt_original_name || entry.receipt_filename}
@@ -972,7 +973,7 @@ export const ComptaView: React.FC = () => {
                                 >
                                   <Paperclip className="w-3 h-3" />
                                   <span>Voir justif</span>
-                                </a>
+                                </CloudFileAnchor>
                               </div>
                             ) : (
                               <label className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-semibold cursor-pointer">
@@ -1864,15 +1865,15 @@ export const ComptaView: React.FC = () => {
                   📎 Justificatif ({editingEntry.receipt_filename ? 'Remplacer le justificatif existant' : 'Joindre un justificatif'})
                 </label>
                 {editingEntry.receipt_filename && (
-                  <a
-                    href={`/uploads/${editingEntry.receipt_filename}`}
+                  <CloudFileAnchor
+                    filename={editingEntry.receipt_filename}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center space-x-1 text-[11px] font-bold text-emerald-700 hover:underline"
                   >
                     <Paperclip className="w-3 h-3" />
                     <span>Voir le justificatif actuel ({editingEntry.receipt_original_name || editingEntry.receipt_filename})</span>
-                  </a>
+                  </CloudFileAnchor>
                 )}
                 <input
                   type="file"

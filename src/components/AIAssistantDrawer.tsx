@@ -8,6 +8,9 @@ import {
 import { api } from '../api.js';
 import { Mission, DeliverableType } from '@shared/types.js';
 import { syncFileToLocalMacFolder, syncComptaFileToMac, getMacSubFolderForEvidence } from '../utils/localFolderSync.js';
+import { CloudFileAnchor, CloudMediaImg } from './CloudFileLink.js';
+import { uploadFileToCloudStorage, fetchUploadBlobWithCloudFallback } from '../utils/storageSync.js';
+import { scheduleAutoSyncToFirestore } from '../utils/firestoreSync.js';
 
 interface ActionCardData {
   action_type: 'expense' | 'document' | 'new_mission' | 'activity' | 'field_photo' | 'field_note' | 'attendance_sheet' | 'deliverable_draft';
@@ -113,6 +116,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingIngestFilesRef = useRef<Map<string, File>>(new Map());
 
   // Microphone recording handlers
   const startRecording = async () => {
@@ -342,6 +346,9 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
         const res = await api.ingestDocument(formData);
         const action = res.action;
+        if (res.file?.filename) {
+          pendingIngestFilesRef.current.set(res.file.filename, fileToUpload);
+        }
 
         const defaultMissionId = action.matched_mission_id || selectedMissionId || (missions[0] ? missions[0].id : null);
         const defaultMissionCode = action.matched_mission_code || (missions.find(m => m.id === defaultMissionId)?.code) || null;
@@ -434,9 +441,17 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
 
       if (actionCard.filename) {
         try {
-          const fileRes = await fetch(`/uploads/${actionCard.filename}`);
-          if (fileRes.ok) {
-            const blob = await fileRes.blob();
+          const pickedFile = pendingIngestFilesRef.current.get(actionCard.filename);
+          const blob = pickedFile || (await fetchUploadBlobWithCloudFallback(actionCard.filename));
+          if (pickedFile) {
+            await uploadFileToCloudStorage(actionCard.filename, pickedFile, {
+              originalName: actionCard.original_filename || pickedFile.name,
+              missionCode: actionCard.matched_mission_code || res.mission_code,
+            });
+            pendingIngestFilesRef.current.delete(actionCard.filename);
+          }
+          scheduleAutoSyncToFirestore();
+          if (blob) {
             const safeName = actionCard.original_filename || actionCard.filename;
             const missionCode = actionCard.matched_mission_code || res.mission_code || 'Cabinet_VP';
 
@@ -464,6 +479,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
         } catch {
           // Ignore sync failure
         }
+      } else {
+        scheduleAutoSyncToFirestore();
       }
     } catch (err: any) {
       setMessages((prev) => [
@@ -817,8 +834,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                 </span>
 
                                 {card.filename && (
-                                  <a
-                                    href={`/uploads/${card.filename}`}
+                                  <CloudFileAnchor
+                                    filename={card.filename}
                                     target="_blank"
                                     rel="noreferrer"
                                     className="text-[11px] text-[#0f3854] hover:underline font-semibold flex items-center space-x-1"
@@ -826,7 +843,7 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                   >
                                     <span>Voir le fichier</span>
                                     <ChevronRight className="w-3 h-3" />
-                                  </a>
+                                  </CloudFileAnchor>
                                 )}
                               </div>
 
@@ -905,8 +922,8 @@ export const AIAssistantDrawer: React.FC<AIAssistantDrawerProps> = ({
                                 <div className="space-y-2 bg-white p-3 rounded-lg border border-slate-200">
                                   {card.filename && (
                                     <div className="flex items-center space-x-3 pb-2 border-b border-slate-100">
-                                      <img
-                                        src={`/uploads/${card.filename}`}
+                                      <CloudMediaImg
+                                        filename={card.filename}
                                         alt="Aperçu photo terrain"
                                         className="w-16 h-16 rounded-lg object-cover border border-slate-200 shrink-0"
                                       />

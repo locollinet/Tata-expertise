@@ -17,6 +17,7 @@
 
 import { doc, setDoc } from 'firebase/firestore';
 import { db as firestoreDb, auth } from '../firebase.js';
+import { fetchUploadBlobWithCloudFallback } from './storageSync.js';
 import { DossierVoletKey, EvidenceItem } from '@shared/types.js';
 import {
   mapMacFolderToSectionAndCategory,
@@ -314,9 +315,8 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
         for (const exp of expenses) {
           if (exp.receipt_filename) {
             try {
-              const fileRes = await fetch(`/uploads/${exp.receipt_filename}`);
-              if (fileRes.ok) {
-                const blob = await fileRes.blob();
+              const blob = await fetchUploadBlobWithCloudFallback(exp.receipt_filename);
+              if (blob) {
                 const month = (exp.date || new Date().toISOString().slice(0, 7)).slice(0, 7);
                 const safeName = exp.receipt_original_name || exp.receipt_filename;
                 await syncComptaFileToMac({
@@ -452,6 +452,7 @@ export async function mirrorEvidenceToFirestore(params: {
   pieceNumber?: number;
   section?: DossierVoletKey;
   serverFilename?: string;
+  cloudFileUrl?: string | null;
   isSelectedForReport?: boolean;
 }): Promise<void> {
   try {
@@ -460,21 +461,25 @@ export async function mirrorEvidenceToFirestore(params: {
     const uid = user.uid;
     const evidenceId = `evid-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     let fileDataUrl = '';
-    if (params.file.type.startsWith('image/') && params.file.size < 650_000) {
+    if (!params.cloudFileUrl && params.file.type.startsWith('image/') && params.file.size < 650_000) {
       fileDataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
         reader.readAsDataURL(params.file);
       });
     }
+    const resolvedFileUrl =
+      params.cloudFileUrl ||
+      fileDataUrl ||
+      (params.serverFilename ? `/uploads/${params.serverFilename}` : '');
     const evidenceDoc: Record<string, any> = {
       id: evidenceId,
       mission_id: params.missionId,
       mission_code: params.missionCode,
       title: (params.title || params.caption || params.file.name).trim().slice(0, 255),
       type: params.type || (params.file.type.startsWith('image/') ? 'photo' : 'document'),
-      file_url: fileDataUrl || (params.serverFilename ? `/uploads/${params.serverFilename}` : ''),
-      filename: params.file.name.slice(0, 255),
+      file_url: resolvedFileUrl.slice(0, 949999),
+      filename: (params.serverFilename || params.file.name).slice(0, 255),
       file_size: params.file.size,
       mime_type: (params.file.type || 'application/octet-stream').slice(0, 128),
       caption: (params.caption || params.title || '').trim().slice(0, 1000),

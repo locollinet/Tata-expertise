@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, createPartFromUri } from '@google/genai';
 import { generateInvoiceDocx, generateReportDocx, generateDeliverableDocx, buildDeliverableDefaults, getDeliverableTypeLabel } from './docx.ts';
 import { generateMonthlyComptaWorkbook } from './excel.ts';
 import type { Invoice, InvoiceLine, ReportDraft, Attendee, Photo, DamageLine, DeliverableType, DeliverableRequestPayload } from '../shared/types.ts';
@@ -28,6 +28,98 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage });
+const cacheUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+const INLINE_GEMINI_MEDIA_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB (~13.3 MiB base64)
+
+function sanitizeUploadBasename(rawName: unknown): string {
+  if (typeof rawName !== 'string') return '';
+  let cleaned = rawName.split('?')[0].split('#')[0].trim();
+  if (!cleaned || cleaned.includes('..') || cleaned.includes('\\')) return '';
+  if (cleaned.startsWith('/uploads/')) {
+    cleaned = cleaned.slice('/uploads/'.length);
+  }
+  if (!cleaned || cleaned === '.' || cleaned.includes('/') || !/^[a-zA-Z0-9._-]+$/.test(cleaned)) {
+    return '';
+  }
+  return cleaned;
+}
+
+/**
+ * Prepares a Gemini media Part: uses fast inlineData base64 for files <= 10 MiB,
+ * and falls back to the Gemini Files API for large PDFs / audio / high-res scans.
+ */
+async function prepareGeminiMediaPart(
+  ai: GoogleGenAI,
+  filePath: string,
+  mimeType: string
+): Promise<{ part: any; cleanup: () => Promise<void> }> {
+  const fileSize = fs.statSync(filePath).size;
+  if (fileSize <= INLINE_GEMINI_MEDIA_MAX_BYTES) {
+    const fileBuffer = fs.readFileSync(filePath);
+    return {
+      part: {
+        inlineData: {
+          mimeType,
+          data: fileBuffer.toString('base64'),
+        },
+      },
+      cleanup: async () => {},
+    };
+  }
+
+  let uploaded = await ai.files.upload({
+    file: filePath,
+    config: { mimeType },
+  });
+
+  const deadline = Date.now() + 30_000;
+  while (uploaded.state === 'PROCESSING' && Date.now() < deadline && uploaded.name) {
+    await new Promise((r) => setTimeout(r, 1200));
+    uploaded = await ai.files.get({ name: uploaded.name });
+  }
+
+  if (!uploaded.uri || uploaded.state === 'FAILED') {
+    if (uploaded.name) {
+      await ai.files.delete({ name: uploaded.name }).catch(() => {});
+    }
+    throw new Error('Échec de préparation du document volumineux via Gemini Files API.');
+  }
+
+  return {
+    part: createPartFromUri(uploaded.uri, uploaded.mimeType || mimeType),
+    cleanup: async () => {
+      if (uploaded.name) {
+        await ai.files.delete({ name: uploaded.name }).catch(() => {});
+      }
+    },
+  };
+}
+
+apiRouter.post('/uploads/check-missing', (req, res) => {
+  const names = Array.isArray(req.body?.filenames) ? req.body.filenames : [];
+  const missing: string[] = [];
+  for (const raw of names) {
+    const safeName = sanitizeUploadBasename(raw);
+    if (!safeName) continue;
+    if (!fs.existsSync(path.join(uploadsDir, safeName))) {
+      missing.push(safeName);
+    }
+  }
+  res.json({ missing });
+});
+
+apiRouter.post('/uploads/cache', cacheUpload.single('file'), (req, res) => {
+  const safeName = sanitizeUploadBasename(req.body?.filename || req.file?.originalname);
+  if (!safeName || !req.file) {
+    return res.status(400).json({ error: 'Nom de fichier ou contenu invalide.' });
+  }
+  const targetPath = path.join(uploadsDir, safeName);
+  if (!fs.existsSync(targetPath)) {
+    fs.writeFileSync(targetPath, req.file.buffer);
+  }
+  res.json({ cached: true, filename: safeName });
+});
 
 // Helper to calculate unbilled and billed amounts for a mission
 function getMissionUnbilledStats(missionId: string) {
@@ -772,9 +864,13 @@ apiRouter.delete('/expenses/:id', (req, res) => {
   if (!exp) return res.status(404).json({ error: "Frais introuvable" });
   if (exp.status === 'facture') return res.status(400).json({ error: "Impossible de supprimer un frais déjà facturé" });
 
+  if (exp.receipt_filename) {
+    const fPath = path.resolve(uploadsDir, path.basename(exp.receipt_filename));
+    if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
+  }
   db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
   db.prepare('DELETE FROM accounting_entries WHERE id = ?').run(`acc-${req.params.id}`);
-  res.json({ message: "Frais supprimé" });
+  res.json({ message: "Frais supprimé", receipt_filename: exp.receipt_filename || null });
 });
 
 apiRouter.post('/expenses/:id/receipt', upload.single('receipt'), (req, res) => {
@@ -797,11 +893,15 @@ apiRouter.delete('/expenses/:id/receipt', (req, res) => {
   const exp = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id) as any;
   if (!exp) return res.status(404).json({ error: "Frais introuvable" });
 
+  if (exp.receipt_filename) {
+    const fPath = path.resolve(uploadsDir, path.basename(exp.receipt_filename));
+    if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
+  }
   db.prepare(`
     UPDATE expenses SET receipt_filename = NULL, receipt_original_name = NULL WHERE id = ?
   `).run(req.params.id);
 
-  res.json({ message: "Justificatif retiré" });
+  res.json({ message: "Justificatif retiré", receipt_filename: exp.receipt_filename || null });
 });
 
 // ---------------- INVOICES / HONORAIRES ----------------
@@ -1469,6 +1569,8 @@ apiRouter.post('/missions/:id/deliverable-docx', async (req, res) => {
         fileName,
         'Généré via le modèle Word VP Expertise'
       );
+      res.setHeader('X-Archived-Filename', diskName);
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Archived-Filename');
     }
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -1557,11 +1659,11 @@ apiRouter.put('/photos/:id', (req, res) => {
 apiRouter.delete('/photos/:id', (req, res) => {
   const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id) as any;
   if (photo) {
-    const fPath = path.resolve(uploadsDir, photo.filename);
+    const fPath = path.resolve(uploadsDir, path.basename(photo.filename));
     if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
     db.prepare('DELETE FROM photos WHERE id = ?').run(req.params.id);
   }
-  res.json({ message: "Photo supprimée" });
+  res.json({ message: "Photo supprimée", filename: photo?.filename || null });
 });
 
 // ---------------- DOCUMENTS & PIÈCES NUMÉROTÉES DU DOSSIER ----------------
@@ -1695,11 +1797,11 @@ apiRouter.put('/documents/:id', (req, res) => {
 apiRouter.delete('/documents/:id', (req, res) => {
   const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id) as any;
   if (doc) {
-    const fPath = path.resolve(uploadsDir, doc.filename);
+    const fPath = path.resolve(uploadsDir, path.basename(doc.filename));
     if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
     db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
   }
-  res.json({ message: "Pièce supprimée" });
+  res.json({ message: "Pièce supprimée", filename: doc?.filename || null });
 });
 
 // ---------------- VOLET 5 : COMPTES DU PRÉJUDICE ----------------
@@ -1851,8 +1953,13 @@ apiRouter.put('/issued-reports/:id', upload.single('file'), (req, res) => {
 });
 
 apiRouter.delete('/issued-reports/:id', (req, res) => {
+  const rep = db.prepare('SELECT * FROM issued_reports WHERE id = ?').get(req.params.id) as any;
+  if (rep?.filename) {
+    const fPath = path.resolve(uploadsDir, path.basename(rep.filename));
+    if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
+  }
   db.prepare('DELETE FROM issued_reports WHERE id = ?').run(req.params.id);
-  res.json({ message: "Rapport émis supprimé" });
+  res.json({ message: "Rapport émis supprimé", filename: rep?.filename || null });
 });
 
 apiRouter.get('/issued-reports/:id/package-zip', async (req, res) => {
@@ -2047,7 +2154,6 @@ apiRouter.post('/missions/:id/parse-attendance-sheet', upload.single('file'), as
       'gemini-4-hydrogen',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
-    const fileBuffer = fs.readFileSync(file.path);
     const mimeType = file.mimetype || (file.originalname.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
     const prompt = `Tu extrais les participants d'une feuille d'émargement ou liste de présence pour VP EXPERTISE (dossier ${mission.code}).
 Pour chaque ligne lisible, extrais :
@@ -2060,28 +2166,45 @@ Renvoie UNIQUEMENT un JSON valide :
 {"meeting_date": "", "meeting_label": "", "attendees": [{"name": "...", "role": "...", "organization": "...", "email": ""}]}`;
 
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
-    for (const mName of candidateModels) {
+    let mediaPart: any = null;
+    let cleanupMedia = async () => {};
+    try {
+      const prepared = await prepareGeminiMediaPart(ai, file.path, mimeType);
+      mediaPart = prepared.part;
+      cleanupMedia = prepared.cleanup;
+    } catch (prepErr: any) {
+      console.warn('[Attendance OCR] Préparation média ignorée :', prepErr?.message || prepErr);
+    }
+
+    if (mediaPart) {
+      const timeoutMs = file.size > INLINE_GEMINI_MEDIA_MAX_BYTES ? 45000 : 20000;
       try {
-        const resAi: any = await Promise.race([
-          ai.models.generateContent({
-            model: mName,
-            contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: fileBuffer.toString('base64') } }] }],
-            config: { responseMimeType: 'application/json' },
-          }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 20000)),
-        ]);
-        const cleaned = String(resAi.text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        if (parsed && Array.isArray(parsed.attendees)) {
-          return res.json({
-            model: mName,
-            meeting_date: parsed.meeting_date || '',
-            meeting_label: parsed.meeting_label || '',
-            attendees: parsed.attendees.filter((a: any) => a?.name?.trim()),
-          });
+        for (const mName of candidateModels) {
+          try {
+            const resAi: any = await Promise.race([
+              ai.models.generateContent({
+                model: mName,
+                contents: [{ role: 'user', parts: [{ text: prompt }, mediaPart] }],
+                config: { responseMimeType: 'application/json' },
+              }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), timeoutMs)),
+            ]);
+            const cleaned = String(resAi.text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleaned);
+            if (parsed && Array.isArray(parsed.attendees)) {
+              return res.json({
+                model: mName,
+                meeting_date: parsed.meeting_date || '',
+                meeting_label: parsed.meeting_label || '',
+                attendees: parsed.attendees.filter((a: any) => a?.name?.trim()),
+              });
+            }
+          } catch (e: any) {
+            console.warn('[Attendance OCR] Fallback next model:', e.message);
+          }
         }
-      } catch (e: any) {
-        console.warn('[Attendance OCR] Fallback next model:', e.message);
+      } finally {
+        await cleanupMedia();
       }
     }
   }
@@ -2684,16 +2807,21 @@ apiRouter.delete('/compta/entries/:id/receipt', (req, res) => {
   const existing = db.prepare('SELECT * FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: "Écriture introuvable" });
 
+  if (existing.receipt_filename) {
+    const fPath = path.resolve(uploadsDir, path.basename(existing.receipt_filename));
+    if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
+  }
   db.prepare(`
     UPDATE accounting_entries SET receipt_filename = NULL, receipt_original_name = NULL WHERE id = ?
   `).run(req.params.id);
 
-  res.json({ message: "Justificatif retiré" });
+  res.json({ message: "Justificatif retiré", receipt_filename: existing.receipt_filename || null });
 });
 
 apiRouter.delete('/compta/entries/:id', (req, res) => {
+  const existing = db.prepare('SELECT receipt_filename FROM accounting_entries WHERE id = ?').get(req.params.id) as any;
   db.prepare('DELETE FROM accounting_entries WHERE id = ?').run(req.params.id);
-  res.json({ message: "Écriture supprimée de ce mois" });
+  res.json({ message: "Écriture supprimée de ce mois", receipt_filename: existing?.receipt_filename || null });
 });
 
 // Recurring Expenses CRUD
@@ -2855,19 +2983,18 @@ Renvoie UNIQUEMENT un JSON valide au format :
 
       // Construction des parties selon la nature réelle du fichier
       let parts: any[] = [];
+      let cleanupMedia = async () => {};
       if (isBinaryMedia) {
         const mediaMimeType = isRealPdf
           ? 'application/pdf'
           : (file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg');
-        parts = [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType: mediaMimeType,
-              data: fileBuffer.toString('base64'),
-            },
-          },
-        ];
+        try {
+          const prepared = await prepareGeminiMediaPart(ai, file.path, mediaMimeType);
+          cleanupMedia = prepared.cleanup;
+          parts = [{ text: prompt }, prepared.part];
+        } catch (prepErr: any) {
+          console.warn('[Bank Reconciliation] Préparation média ignorée :', prepErr?.message || prepErr);
+        }
       } else {
         // Fichier texte, CSV ou simulation : passé en texte pour éviter toute erreur de décodage inlineData
         const textContent = fileBuffer.toString('utf-8');
@@ -2878,40 +3005,47 @@ Renvoie UNIQUEMENT un JSON valide au format :
         ];
       }
 
-      for (const mName of candidateModels) {
+      if (parts.length > 0) {
+        const timeoutMs = file.size > INLINE_GEMINI_MEDIA_MAX_BYTES ? 45000 : 25000;
         try {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout Gemini Bank Statement ${mName} (> 25000ms)`)), 25000)
-          );
+          for (const mName of candidateModels) {
+            try {
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Timeout Gemini Bank Statement ${mName} (> ${timeoutMs}ms)`)), timeoutMs)
+              );
 
-          const config: any = {
-            responseMimeType: 'application/json',
-          };
-          if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
-            config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+              const config: any = {
+                responseMimeType: 'application/json',
+              };
+              if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
+                config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+              }
+
+              const generatePromise = ai.models.generateContent({
+                model: mName,
+                contents: [
+                  {
+                    role: 'user',
+                    parts,
+                  },
+                ],
+                config,
+              });
+
+              const result: any = await Promise.race([generatePromise, timeoutPromise]);
+              const rawText = result.text || '';
+              const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+              const parsed = JSON.parse(cleaned);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                extractedLines = parsed;
+                break;
+              }
+            } catch (err: any) {
+              console.warn(`[Bank Reconciliation] Modèle ${mName} indisponible :`, err.message);
+            }
           }
-
-          const generatePromise = ai.models.generateContent({
-            model: mName,
-            contents: [
-              {
-                role: 'user',
-                parts,
-              },
-            ],
-            config,
-          });
-
-          const result: any = await Promise.race([generatePromise, timeoutPromise]);
-          const rawText = result.text || '';
-          const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(cleaned);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            extractedLines = parsed;
-            break;
-          }
-        } catch (err: any) {
-          console.warn(`[Bank Reconciliation] Modèle ${mName} indisponible :`, err.message);
+        } finally {
+          await cleanupMedia();
         }
       }
     }
@@ -3948,16 +4082,15 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
       });
 
       let parts: any[] = [];
+      let cleanupMedia = async () => {};
       if (isBinaryMedia) {
-        parts = [
-          { text: systemPrompt },
-          {
-            inlineData: {
-              mimeType,
-              data: fileBuffer.toString('base64'),
-            },
-          },
-        ];
+        try {
+          const prepared = await prepareGeminiMediaPart(ai, file.path, mimeType);
+          cleanupMedia = prepared.cleanup;
+          parts = [{ text: systemPrompt }, prepared.part];
+        } catch (prepErr: any) {
+          console.warn('[Ingest] Préparation média ignorée :', prepErr?.message || prepErr);
+        }
       } else {
         parts = [
           {
@@ -3966,44 +4099,51 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
         ];
       }
 
-      for (const mName of candidateModels) {
+      if (parts.length > 0) {
+        const timeoutMs = file.size > INLINE_GEMINI_MEDIA_MAX_BYTES ? 45000 : 20000;
         try {
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> 20000ms)`)), 20000)
-          );
+          for (const mName of candidateModels) {
+            try {
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Timeout Gemini Ingest ${mName} (> ${timeoutMs}ms)`)), timeoutMs)
+              );
 
-          const config: any = {
-            responseMimeType: 'application/json',
-          };
-          if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
-            config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-          }
+              const config: any = {
+                responseMimeType: 'application/json',
+              };
+              if (mName.startsWith('gemini-3') || mName.startsWith('gemini-4')) {
+                config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+              }
 
-          const generatePromise = ai.models.generateContent({
-            model: mName,
-            contents: [
-              {
-                role: 'user',
-                parts,
-              },
-            ],
-            config,
-          });
+              const generatePromise = ai.models.generateContent({
+                model: mName,
+                contents: [
+                  {
+                    role: 'user',
+                    parts,
+                  },
+                ],
+                config,
+              });
 
-          const result: any = await Promise.race([generatePromise, timeoutPromise]);
-          const rawText = result.text || '';
-          const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(cleaned);
-          if (parsed && parsed.action_type) {
-            extracted = parsed;
-            modelUsed = `${mName} (Multimodal & Vocal)`;
-            break;
+              const result: any = await Promise.race([generatePromise, timeoutPromise]);
+              const rawText = result.text || '';
+              const cleaned = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+              const parsed = JSON.parse(cleaned);
+              if (parsed && parsed.action_type) {
+                extracted = parsed;
+                modelUsed = `${mName} (Multimodal & Vocal)`;
+                break;
+              }
+            } catch (modelErr: any) {
+              console.warn(`[Ingest] Modèle ${mName} indisponible :`, modelErr.message);
+              if (modelErr.message && (modelErr.message.includes('API_KEY_INVALID') || modelErr.message.includes('401') || modelErr.message.includes('403'))) {
+                break;
+              }
+            }
           }
-        } catch (modelErr: any) {
-          console.warn(`[Ingest] Modèle ${mName} indisponible :`, modelErr.message);
-          if (modelErr.message && (modelErr.message.includes('API_KEY_INVALID') || modelErr.message.includes('401') || modelErr.message.includes('403'))) {
-            break;
-          }
+        } finally {
+          await cleanupMedia();
         }
       }
     }

@@ -36,6 +36,9 @@ const publicUploadsDir = path.resolve(process.cwd(), 'public/uploads');
 if (fs.existsSync(publicUploadsDir)) {
   app.use('/uploads', express.static(publicUploadsDir));
 }
+app.use('/uploads', (_req, res) => {
+  res.status(404).json({ error: 'Fichier introuvable sur le cache serveur local.' });
+});
 
 // API routes
 app.use('/api', apiRouter);

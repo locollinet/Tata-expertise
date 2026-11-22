@@ -17,6 +17,7 @@ import {
   isInsideIframe,
   isFileSystemAccessSupported
 } from '../utils/localFolderSync.js';
+import { restoreMissingUploadsToServer } from '../utils/storageSync.js';
 
 interface HeaderProps {
   activeTab: 'today' | 'missions' | 'billing' | 'compta';
@@ -561,13 +562,36 @@ export const Header: React.FC<HeaderProps> = ({
                     Récupère l'intégralité des 6 volets de tous les dossiers et la Compta en un seul fichier ZIP prêt à décompresser dans le Finder.
                   </p>
                 </div>
-                <a
-                  href="/api/sync/export-zip"
-                  download="Rocco_VP_Expertise_Mac.zip"
-                  className="shrink-0 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 px-3.5 py-2 rounded-lg font-semibold shadow-xs"
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const stateRes = await fetch('/api/sync/export-state');
+                      if (stateRes.ok) {
+                        const st = await stateRes.json();
+                        const allFiles = [
+                          ...(st.documents || []).map((d: any) => d.filename),
+                          ...(st.photos || []).map((p: any) => p.filename),
+                          ...(st.issued_reports || []).map((r: any) => r.filename),
+                          ...(st.expenses || []).map((e: any) => e.receipt_filename),
+                          ...(st.accounting_entries || []).map((a: any) => a.receipt_filename),
+                        ];
+                        await restoreMissingUploadsToServer(allFiles);
+                      }
+                    } catch {
+                      // Proceed with server-side zip even if offline
+                    }
+                    const a = document.createElement('a');
+                    a.href = '/api/sync/export-zip';
+                    a.download = 'Rocco_VP_Expertise_Mac.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }}
+                  className="shrink-0 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 px-3.5 py-2 rounded-lg font-semibold shadow-xs cursor-pointer"
                 >
                   Télécharger .zip
-                </a>
+                </button>
               </div>
 
               {/* Astuce Dock Mac */}

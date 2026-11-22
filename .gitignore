@@ -38,8 +38,8 @@ VP_EXPERTISE_BRIEF_V3.zip
 !public/**/*
 !server/assets/
 !server/assets/*.docx
-!server/data/
-!server/data/historical_seed.json
+# Données clients jamais versionnées (chargées depuis Firestore en production)
+server/data/historical_seed.json
 
 # Fichiers système et IDE
 .DS_Store

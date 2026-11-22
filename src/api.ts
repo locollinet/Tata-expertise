@@ -1,5 +1,6 @@
 import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport, DamageLine, IssuedReport, DeliverableType, DeliverableRequestPayload } from '@shared/types.js';
 import { scheduleAutoSyncToFirestore } from './utils/firestoreSync.js';
+import { uploadFileToCloudStorage, deleteFileFromCloudStorage } from './utils/storageSync.js';
 
 const BASE_URL = '/api';
 
@@ -94,8 +95,14 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      const json = await res.json();
+      if (json.receipt_filename) {
+        await uploadFileToCloudStorage(json.receipt_filename, data.receiptFile, {
+          originalName: json.receipt_original_name || data.receiptFile.name,
+        });
+      }
       scheduleAutoSyncToFirestore();
-      return res.json();
+      return json;
     }
     return fetchJSON<{ id: string; total_ht: number; total_ttc: number; receipt_filename?: string; receipt_original_name?: string; message: string }>('/expenses', {
       method: 'POST',
@@ -106,9 +113,13 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
-  deleteExpense: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}`, {
-    method: 'DELETE',
-  }),
+  deleteExpense: async (id: string) => {
+    const res = await fetchJSON<{ message: string; receipt_filename?: string | null }>(`/expenses/${id}`, {
+      method: 'DELETE',
+    });
+    if (res.receipt_filename) await deleteFileFromCloudStorage(res.receipt_filename);
+    return res;
+  },
   uploadExpenseReceipt: async (id: string, file: File) => {
     const formData = new FormData();
     formData.append('receipt', file);
@@ -117,12 +128,22 @@ export const api = {
       body: formData,
     });
     if (!res.ok) throw new Error("Erreur lors de l'upload du justificatif");
+    const json = await res.json() as { message: string; receipt_filename: string; receipt_original_name: string };
+    if (json.receipt_filename) {
+      await uploadFileToCloudStorage(json.receipt_filename, file, {
+        originalName: json.receipt_original_name || file.name,
+      });
+    }
     scheduleAutoSyncToFirestore();
-    return res.json() as Promise<{ message: string; receipt_filename: string; receipt_original_name: string }>;
+    return json;
   },
-  removeExpenseReceipt: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}/receipt`, {
-    method: 'DELETE',
-  }),
+  removeExpenseReceipt: async (id: string) => {
+    const res = await fetchJSON<{ message: string; receipt_filename?: string | null }>(`/expenses/${id}/receipt`, {
+      method: 'DELETE',
+    });
+    if (res.receipt_filename) await deleteFileFromCloudStorage(res.receipt_filename);
+    return res;
+  },
 
   // Invoices
   getInvoices: () => fetchJSON<Invoice[]>('/invoices'),
@@ -208,18 +229,28 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    const json = await res.json();
+    const attached = fd.get('file');
+    if (json.filename && attached instanceof File) {
+      await uploadFileToCloudStorage(json.filename, attached, {
+        originalName: json.original_name || attached.name,
+      });
+    }
     scheduleAutoSyncToFirestore();
-    return res.json();
+    return json;
   },
   updateIssuedReport: (id: string, data: Partial<IssuedReport>) =>
     fetchJSON<{ message: string }>(`/issued-reports/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  deleteIssuedReport: (id: string) =>
-    fetchJSON<{ message: string }>(`/issued-reports/${id}`, {
+  deleteIssuedReport: async (id: string) => {
+    const res = await fetchJSON<{ message: string; filename?: string | null }>(`/issued-reports/${id}`, {
       method: 'DELETE',
-    }),
+    });
+    if (res.filename) await deleteFileFromCloudStorage(res.filename);
+    return res;
+  },
 
   // Photos
   updatePhoto: (id: string, data: Partial<Photo>) =>
@@ -227,7 +258,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  deletePhoto: (id: string) => fetchJSON<{ message: string }>(`/photos/${id}`, { method: 'DELETE' }),
+  deletePhoto: async (id: string) => {
+    const res = await fetchJSON<{ message: string; filename?: string | null }>(`/photos/${id}`, { method: 'DELETE' });
+    if (res.filename) await deleteFileFromCloudStorage(res.filename);
+    return res;
+  },
 
   // Documents
   getDocuments: (missionId: string) => fetchJSON<any[]>(`/missions/${missionId}/documents`),
@@ -236,8 +271,16 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  deleteDocument: (id: string) => fetchJSON<{ message: string }>(`/documents/${id}`, { method: 'DELETE' }),
-  deleteMissionDocument: (id: string) => fetchJSON<{ message: string }>(`/documents/${id}`, { method: 'DELETE' }),
+  deleteDocument: async (id: string) => {
+    const res = await fetchJSON<{ message: string; filename?: string | null }>(`/documents/${id}`, { method: 'DELETE' });
+    if (res.filename) await deleteFileFromCloudStorage(res.filename);
+    return res;
+  },
+  deleteMissionDocument: async (id: string) => {
+    const res = await fetchJSON<{ message: string; filename?: string | null }>(`/documents/${id}`, { method: 'DELETE' });
+    if (res.filename) await deleteFileFromCloudStorage(res.filename);
+    return res;
+  },
 
   // Attendees
   addAttendee: (dataOrMissionId: Partial<Attendee> | string, legacyData?: Partial<Attendee>) => {
@@ -298,7 +341,12 @@ export const api = {
     const cd = res.headers.get('Content-Disposition') || '';
     const m = cd.match(/filename="?([^";]+)"?/i);
     const fileName = m ? m[1] : `VP_Expertise_${payload.deliverable_type}.docx`;
+    const archivedFilename = res.headers.get('X-Archived-Filename');
     const blob = await res.blob();
+    if (archivedFilename) {
+      await uploadFileToCloudStorage(archivedFilename, blob, { originalName: fileName });
+      scheduleAutoSyncToFirestore();
+    }
     return { blob, fileName };
   },
   deleteAttendee: (id: string) => fetchJSON<{ message: string }>(`/attendees/${id}`, { method: 'DELETE' }),
@@ -386,8 +434,15 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      const json = await res.json();
+      const receipt = data.get('receipt');
+      if (json.receipt_filename && receipt instanceof File) {
+        await uploadFileToCloudStorage(json.receipt_filename, receipt, {
+          originalName: json.receipt_original_name || receipt.name,
+        });
+      }
       scheduleAutoSyncToFirestore();
-      return res.json();
+      return json;
     }
     if (data.receiptFile) {
       const fd = new FormData();
@@ -413,8 +468,14 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      const json = await res.json();
+      if (json.receipt_filename) {
+        await uploadFileToCloudStorage(json.receipt_filename, data.receiptFile, {
+          originalName: json.receipt_original_name || data.receiptFile.name,
+        });
+      }
       scheduleAutoSyncToFirestore();
-      return res.json();
+      return json;
     }
     return fetchJSON<{ id: string; receipt_filename?: string; receipt_original_name?: string; message: string }>('/compta/entries', {
       method: 'POST',
@@ -428,8 +489,15 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      const json = await res.json();
+      const receipt = data.get('receipt');
+      if (json.receipt_filename && receipt instanceof File) {
+        await uploadFileToCloudStorage(json.receipt_filename, receipt, {
+          originalName: json.receipt_original_name || receipt.name,
+        });
+      }
       scheduleAutoSyncToFirestore();
-      return res.json();
+      return json;
     }
     return fetchJSON<{ message: string; receipt_filename?: string; receipt_original_name?: string }>(`/compta/entries/${id}`, {
       method: 'PUT',
@@ -447,8 +515,14 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    const json = await res.json() as { receipt_filename: string; receipt_original_name: string; message: string };
+    if (json.receipt_filename) {
+      await uploadFileToCloudStorage(json.receipt_filename, file, {
+        originalName: json.receipt_original_name || file.name,
+      });
+    }
     scheduleAutoSyncToFirestore();
-    return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
+    return json;
   },
   uploadAccountingEntryReceipt: async (entryId: string, file: File) => {
     const fd = new FormData();
@@ -461,13 +535,22 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    const json = await res.json() as { receipt_filename: string; receipt_original_name: string; message: string };
+    if (json.receipt_filename) {
+      await uploadFileToCloudStorage(json.receipt_filename, file, {
+        originalName: json.receipt_original_name || file.name,
+      });
+    }
     scheduleAutoSyncToFirestore();
-    return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
+    return json;
   },
-  deleteAccountingReceipt: (entryId: string) =>
-    fetchJSON<{ message: string }>(`/compta/entries/${entryId}/receipt`, {
+  deleteAccountingReceipt: async (entryId: string) => {
+    const res = await fetchJSON<{ message: string; receipt_filename?: string | null }>(`/compta/entries/${entryId}/receipt`, {
       method: 'DELETE',
-    }),
+    });
+    if (res.receipt_filename) await deleteFileFromCloudStorage(res.receipt_filename);
+    return res;
+  },
   deleteAccountingEntry: (id: string) =>
     fetchJSON<{ message: string }>(`/compta/entries/${id}`, {
       method: 'DELETE',

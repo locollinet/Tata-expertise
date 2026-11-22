@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny catch-all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isCabinetMember() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in [
+          'contact@vpexpertise.com',
+          'locollinet@gmail.com'
+        ];
+    }
+
+    function isSafeFileName(name) {
+      return name is string
+        && name.size() > 0
+        && name.size() <= 255
+        && !name.matches('.*(/|\\.\\.).*');
+    }
+
+    // Shared VP Expertise cabinet attachments (PDFs > 1 MiB, site photos, DOCX reports, receipts)
+    match /cabinet/vp_expertise_cabinet/uploads/{fileName} {
+      allow read, delete: if isCabinetMember() && isSafeFileName(fileName);
+      allow create, update: if isCabinetMember()
+        && isSafeFileName(fileName)
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 100 * 1024 * 1024;
+    }
+  }
+}

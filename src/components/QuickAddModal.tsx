@@ -3,6 +3,8 @@ import { X, Clock, Receipt, Check, AlertCircle, Camera, Users, Search, Archive }
 import { Mission, ACTIVITY_CATEGORY_LABELS, ActivityCategory } from '@shared/types.js';
 import { api } from '../api.js';
 import { syncFileToLocalMacFolder, syncComptaFileToMac, mirrorEvidenceToFirestore } from '../utils/localFolderSync.js';
+import { uploadFileToCloudStorage } from '../utils/storageSync.js';
+import { scheduleAutoSyncToFirestore } from '../utils/firestoreSync.js';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -237,6 +239,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             const err = await res.json();
             throw new Error(err.error || "Erreur lors de l'enregistrement du frais");
           }
+          const expJson = await res.json();
+          if (expJson.receipt_filename) {
+            await uploadFileToCloudStorage(expJson.receipt_filename, receiptFile, {
+              originalName: expJson.receipt_original_name || receiptFile.name,
+              missionCode: selectedMission?.code,
+            });
+          }
+          scheduleAutoSyncToFirestore();
 
           // Les justificatifs de frais sont rangés dans le dossier Compta séparé des dossiers d'expertise sur le Mac
           await syncComptaFileToMac({
@@ -286,6 +296,12 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           throw new Error(err.error || "Erreur lors de l'enregistrement de la photo");
         }
         const photoJson = await res.json();
+        const cloudPhotoUrl = photoJson.filename
+          ? await uploadFileToCloudStorage(photoJson.filename, photoFile, {
+              originalName: photoFile.name,
+              missionCode: selectedMission?.code,
+            })
+          : null;
 
         await mirrorEvidenceToFirestore({
           missionId,
@@ -295,8 +311,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           caption: photoCaption.trim() || defaultCaption,
           type: photoType === 'emargement' ? 'document' : 'photo',
           serverFilename: photoJson.filename,
+          cloudFileUrl: cloudPhotoUrl,
           isSelectedForReport: photoForReport,
         });
+        scheduleAutoSyncToFirestore();
 
         if (photoType === 'justificatif') {
           await syncComptaFileToMac({
