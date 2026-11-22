@@ -32,13 +32,9 @@ const PORT = resolvePort();
 // Initialize SQLite database
 initDatabase();
 
-// Check if database needs seeding
+// Ensure database has initial or upgraded 10-year historical seed
 try {
-  const missionCount = db.prepare('SELECT COUNT(*) as c FROM missions').get() as { c: number } | undefined;
-  if (!missionCount || missionCount.c === 0) {
-    console.log('[VP Expertise] Database empty. Running initial synthetic seed...');
-    seedData();
-  }
+  seedData();
 } catch (e) {
   console.error('[VP Expertise] Error checking/seeding DB:', e);
 }

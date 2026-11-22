@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from './db.ts';
+import { seedData } from './seed.ts';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import path from 'path';
@@ -75,6 +76,7 @@ function parseJsonSafe<T>(val: any, fallback: T): T {
 
 // ---------------- DASHBOARD / AUJOURD'HUI ----------------
 apiRouter.get('/dashboard', (_req, res) => {
+  seedData();
   const billingThreshold = Number(process.env.BILLING_THRESHOLD_REMINDER || 3500);
 
   // 1. Get all active missions and check thresholds
@@ -187,6 +189,7 @@ apiRouter.get('/dashboard', (_req, res) => {
 
 // ---------------- MISSIONS / DOSSIERS ----------------
 apiRouter.get('/missions', (req, res) => {
+  seedData();
   const query = (req.query.q as string || '').toLowerCase().trim();
   const statusFilter = req.query.status as string;
   const guaranteeFilter = req.query.guarantee_type as string;
@@ -203,7 +206,7 @@ apiRouter.get('/missions', (req, res) => {
     params.push(guaranteeFilter);
   }
 
-  sql += ' ORDER BY created_at DESC';
+  sql += " ORDER BY CASE WHEN status = 'cloture' THEN 1 ELSE 0 END ASC, reception_date DESC, code DESC";
   const allMissions = db.prepare(sql).all(...params) as any[];
 
   // Check if user searched for "pièce 27" or "piece 2" or a filename/caption
@@ -775,6 +778,7 @@ function computeNextGlobalInvoiceNumber(year?: number): string {
 }
 
 apiRouter.get('/invoices', (_req, res) => {
+  seedData();
   const invoices = db.prepare(`
     SELECT * FROM invoices
     ORDER BY SUBSTR(invoice_number, 1, 4) DESC, CAST(SUBSTR(invoice_number, 6) AS INTEGER) DESC, date DESC

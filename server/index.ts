@@ -19,12 +19,8 @@ const PORT = process.env.PORT || 3001;
 // Initialize SQLite database
 initDatabase();
 
-// Check if database needs seeding
-const missionCount = db.prepare('SELECT COUNT(*) as c FROM missions').get() as { c: number };
-if (missionCount.c === 0) {
-  console.log('Database empty. Running initial synthetic seed...');
-  seedData();
-}
+// Ensure database has initial or upgraded 10-year historical seed
+seedData();
 
 app.use(cors());
 app.use(express.json());

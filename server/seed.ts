@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { db, initDatabase } from './db.js';
+import { db, initDatabase } from './db.ts';
 
 interface HistoricalSeedPayload {
   missions: Array<Record<string, any>>;
@@ -22,7 +22,21 @@ function resolveSeedJsonPath(): string {
 
 export function seedData() {
   const missionCount = db.prepare('SELECT COUNT(*) as count FROM missions').get() as { count: number };
-  if (missionCount.count > 0) {
+  const hasHistoricalInvoice = Boolean(
+    db.prepare("SELECT 1 FROM invoices WHERE invoice_number LIKE '2017-%' LIMIT 1").get()
+  );
+  const legacyDemoCount = (
+    db.prepare("SELECT COUNT(*) as c FROM missions WHERE id IN ('m-1', 'm-2', 'm-3', 'm-4')").get() as { c: number }
+  ).c;
+
+  // Automatically upgrade an existing legacy synthetic demo DB (<= 10 missions incl. m-1..m-4) to the 10-year historical dataset
+  const isLegacyDemoOnly =
+    missionCount.count > 0 &&
+    missionCount.count <= 10 &&
+    legacyDemoCount >= 3 &&
+    !hasHistoricalInvoice;
+
+  if (missionCount.count > 0 && !isLegacyDemoOnly) {
     return;
   }
 
@@ -104,6 +118,30 @@ export function seedData() {
   `);
 
   const tx = db.transaction(() => {
+    if (isLegacyDemoOnly) {
+      const clearTables = [
+        'invoice_lines',
+        'credit_notes',
+        'invoices',
+        'activities',
+        'expenses',
+        'accounting_entries',
+        'report_drafts',
+        'damage_lines',
+        'issued_reports',
+        'attendees',
+        'photos',
+        'documents',
+        'communications',
+        'travel_orders',
+        'registered_mails',
+        'missions',
+      ];
+      for (const tbl of clearTables) {
+        db.prepare(`DELETE FROM ${tbl}`).run();
+      }
+      console.log('[seed] Replaced legacy 4-mission demo DB with 10-year historical dataset.');
+    }
     for (const m of payload.missions) {
       insertMission.run(
         m.id,
