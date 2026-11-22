@@ -14,7 +14,7 @@ import { db, auth, handleFirestoreError, OperationType } from '../firebase.js';
 export const CABINET_WORKSPACE_ID = 'vp_expertise_cabinet';
 
 export const CABINET_AUTHORIZED_EMAILS = [
-  'contact@vpexpertise.com',
+  'valentine.pecheux@vpexpertise.com',
   'locollinet@gmail.com',
 ] as const;
 
@@ -250,7 +250,7 @@ export async function pushCabinetStateToFirestore(
 }> {
   const user = auth.currentUser;
   if (!user) {
-    throw new Error('Connectez-vous avec votre compte Google (contact@vpexpertise.com) pour synchroniser Firebase.');
+    throw new Error('Connectez-vous avec votre compte cabinet (valentine.pecheux@vpexpertise.com) pour synchroniser Firebase.');
   }
   if (!user.emailVerified || !isAuthorizedCabinetEmail(user.email)) {
     throw new Error(`Le compte ${user.email || 'actuel'} n’est pas autorisé à accéder à l’espace VP Expertise.`);

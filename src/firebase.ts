@@ -3,6 +3,10 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  reload,
   signOut,
   onAuthStateChanged,
   User,
@@ -32,6 +36,29 @@ export const googleProvider = new GoogleAuthProvider();
 export async function signInWithGoogle(): Promise<User> {
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<User> {
+  const result = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return result.user;
+}
+
+export async function sendCabinetPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+export async function sendCabinetEmailVerification(): Promise<void> {
+  if (!auth.currentUser) {
+    throw new Error('Aucun utilisateur connecté.');
+  }
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function refreshCurrentUser(): Promise<User | null> {
+  if (!auth.currentUser) return null;
+  await reload(auth.currentUser);
+  await auth.currentUser.getIdToken(true);
+  return auth.currentUser;
 }
 
 export async function logOut(): Promise<void> {

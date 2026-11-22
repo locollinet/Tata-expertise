@@ -17,7 +17,7 @@ service cloud.firestore {
       return isSignedIn()
         && request.auth.token.email is string
         && request.auth.token.email.lower() in [
-          'contact@vpexpertise.com',
+          'valentine.pecheux@vpexpertise.com',
           'locollinet@gmail.com'
         ];
     }

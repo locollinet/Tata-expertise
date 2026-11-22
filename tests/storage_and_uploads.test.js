@@ -20,10 +20,15 @@ test('Sécurité & Confidentialité : storage.rules verrouillé sur VP Expertise
   assert.ok(fs.existsSync(rulesPath), 'storage.rules doit exister');
   const rules = fs.readFileSync(rulesPath, 'utf-8');
   assert.ok(rules.includes('allow read, write: if false;'), 'Le deny par défaut doit être présent');
-  assert.ok(rules.includes("'contact@vpexpertise.com'"), 'contact@vpexpertise.com doit être autorisé');
+  assert.ok(rules.includes("'valentine.pecheux@vpexpertise.com'"), 'valentine.pecheux@vpexpertise.com doit être autorisé');
   assert.ok(rules.includes("'locollinet@gmail.com'"), 'locollinet@gmail.com doit être autorisé');
+  assert.equal(rules.includes("'contact@vpexpertise.com'"), false, 'contact@vpexpertise.com ne doit plus être dans storage.rules');
   assert.ok(rules.includes('email_verified == true'), 'La vérification email Firebase Auth doit être exigée');
   assert.ok(rules.includes('100 * 1024 * 1024'), 'La limite Storage doit supporter les pièces lourdes jusqu’à 100 Mio');
+
+  const fsRules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf-8');
+  assert.ok(fsRules.includes("'valentine.pecheux@vpexpertise.com'"), 'valentine.pecheux@vpexpertise.com doit être dans firestore.rules');
+  assert.equal(fsRules.includes("'contact@vpexpertise.com'"), false, 'contact@vpexpertise.com ne doit plus être dans firestore.rules');
 });
 
 test('Pièces > 1 Mo : upload PDF 1,5 Mo, détection perte Cloud Run (404 strict), restauration /uploads/cache et suppression', async () => {
