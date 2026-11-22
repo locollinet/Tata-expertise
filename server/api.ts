@@ -147,11 +147,16 @@ apiRouter.get('/dashboard', (_req, res) => {
 
   // 4. Latest invoices
   const latestInvoices = db.prepare(`
-    SELECT * FROM invoices ORDER BY date DESC LIMIT 5
+    SELECT * FROM invoices
+    ORDER BY date DESC, SUBSTR(invoice_number, 1, 4) DESC, CAST(SUBSTR(invoice_number, 6) AS INTEGER) DESC
+    LIMIT 5
   `).all();
 
-  // 5. Monthly revenue (Octobre 2026)
-  const currentMonth = '2026-10';
+  // 5. Monthly revenue (latest billing month, e.g. Novembre 2026)
+  const latestMonthRow = db.prepare(`
+    SELECT MAX(strftime('%Y-%m', date)) as m FROM invoices WHERE status != 'annule'
+  `).get() as { m?: string } | undefined;
+  const currentMonth = latestMonthRow?.m || '2026-11';
   const revenueObj = db.prepare(`
     SELECT COALESCE(SUM(total_ht), 0) as rev FROM invoices WHERE strftime('%Y-%m', date) = ? AND status != 'annule'
   `).get(currentMonth) as { rev: number };
@@ -772,16 +777,20 @@ function computeNextGlobalInvoiceNumber(year?: number): string {
 apiRouter.get('/invoices', (_req, res) => {
   const invoices = db.prepare(`
     SELECT * FROM invoices
-    ORDER BY CAST(SUBSTR(invoice_number, 6) AS INTEGER) DESC, date DESC
+    ORDER BY SUBSTR(invoice_number, 1, 4) DESC, CAST(SUBSTR(invoice_number, 6) AS INTEGER) DESC, date DESC
   `).all() as any[];
-  const enriched = invoices.map(inv => {
-    const lines = db.prepare('SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY order_index ASC').all(inv.id);
-    return {
-      ...inv,
-      split_details: inv.split_details ? JSON.parse(inv.split_details) : null,
-      lines,
-    };
-  });
+  const allLines = db.prepare('SELECT * FROM invoice_lines ORDER BY order_index ASC').all() as any[];
+  const linesByInv = new Map<string, any[]>();
+  for (const ln of allLines) {
+    const arr = linesByInv.get(ln.invoice_id);
+    if (arr) arr.push(ln);
+    else linesByInv.set(ln.invoice_id, [ln]);
+  }
+  const enriched = invoices.map(inv => ({
+    ...inv,
+    split_details: inv.split_details ? JSON.parse(inv.split_details) : null,
+    lines: linesByInv.get(inv.id) || [],
+  }));
   res.json(enriched);
 });
 
@@ -2366,10 +2375,15 @@ function ensureDossierExpensesForMonth(month: string) {
 
 apiRouter.get('/compta/entries', (req, res) => {
   const month = (req.query.month as string) || '2026-10';
-  ensureRecurringEntriesForMonth(month);
-  ensureDossierExpensesForMonth(month);
+  if (month >= '2026-12') {
+    ensureRecurringEntriesForMonth(month);
+  }
+  if (month >= '2026-10') {
+    ensureDossierExpensesForMonth(month);
+  }
 
   const entries = db.prepare('SELECT * FROM accounting_entries WHERE month = ? ORDER BY date ASC').all(month) as any[];
+  const availableMonths = (db.prepare('SELECT DISTINCT month FROM accounting_entries ORDER BY month DESC').all() as Array<{ month: string }>).map(r => r.month);
   const recurringTemplates = db.prepare('SELECT * FROM recurring_expenses ORDER BY day_of_month ASC, object ASC').all() as any[];
 
   // Calculate totals & detailed TVA breakdown + distinction Frais Entreprise vs Frais Dossiers
@@ -2440,6 +2454,7 @@ apiRouter.get('/compta/entries', (req, res) => {
 
   res.json({
     month,
+    available_months: availableMonths,
     entries,
     recurring_expenses: recurringTemplates.map(r => ({ ...r, active: Boolean(r.active) })),
     vat_breakdown: vatBreakdown,

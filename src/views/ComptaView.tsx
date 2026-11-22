@@ -466,13 +466,24 @@ export const ComptaView: React.FC = () => {
     loadMonthData();
   };
 
-  const monthLabels: Record<string, string> = {
-    '2026-08': 'Août 2026',
-    '2026-09': 'Septembre 2026',
-    '2026-10': 'Octobre 2026',
-    '2026-11': 'Novembre 2026',
-    '2026-12': 'Décembre 2026',
+  const FR_MONTH_NAMES = [
+    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+  ];
+  const formatMonthFr = (ym: string) => {
+    const [y, m] = ym.split('-');
+    const idx = parseInt(m, 10) - 1;
+    return idx >= 0 && idx < 12 ? `${FR_MONTH_NAMES[idx]} ${y}` : ym;
   };
+  const availableMonths: string[] = Array.from(
+    new Set([
+      '2026-12', '2026-11', '2026-10', '2026-09', '2026-08',
+      ...(((data as any)?.available_months as string[] | undefined) || []),
+    ])
+  ).sort((a, b) => b.localeCompare(a));
+  const monthLabels: Record<string, string> = Object.fromEntries(
+    availableMonths.map((ym) => [ym, formatMonthFr(ym)])
+  );
 
   const frequencyLabels: Record<string, string> = {
     ponctuel: 'Ponctuel',

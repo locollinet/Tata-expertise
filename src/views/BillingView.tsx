@@ -53,13 +53,18 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [prepError, setPrepError] = useState<string | null>(null);
   const [prepSuccess, setPrepSuccess] = useState<string | null>(null);
   const [registerFilter, setRegisterFilter] = useState<string | 'all'>('all');
+  const [yearFilter, setYearFilter] = useState<string>('2026');
+  const [visibleLimit, setVisibleLimit] = useState<number>(100);
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
 
   // Calcul temps réel du prochain numéro séquentiel global de facture (tous dossiers confondus)
   const nextGlobalInvoiceNumber = useMemo(() => {
-    const year = new Date().getFullYear();
+    const year = Math.max(
+      2026,
+      ...invoices.map((i) => parseInt(String(i.invoice_number || '').slice(0, 4), 10) || 2026)
+    );
     const prefix = `${year}-`;
-    let maxSeq = 70;
+    let maxSeq = 108;
     for (const inv of invoices) {
       const numStr = String(inv.invoice_number || '').trim();
       if (numStr.startsWith(prefix)) {
@@ -154,12 +159,25 @@ export const BillingView: React.FC<BillingViewProps> = ({
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [invoices]);
 
+  const availableYears = useMemo(() => {
+    const yrs = new Set<string>();
+    invoices.forEach((inv) => {
+      const y = String(inv.invoice_number || inv.date || '').slice(0, 4);
+      if (/^20\d\d$/.test(y)) yrs.add(y);
+    });
+    return Array.from(yrs).sort((a, b) => b.localeCompare(a));
+  }, [invoices]);
+
   const displayedInvoices = useMemo(() => {
     let list = invoices;
     if (registerFilter !== 'all') {
       list = list.filter(inv => (inv.mission_code || '').toLowerCase() === registerFilter.toLowerCase());
     }
     const q = invoiceSearchQuery.trim().toLowerCase();
+    // When searching across all invoices or filtering a specific dossier, search all years unless explicitly narrowed
+    if (yearFilter !== 'all' && !q && registerFilter === 'all') {
+      list = list.filter(inv => String(inv.invoice_number || inv.date || '').startsWith(yearFilter));
+    }
     if (!q) return list;
     return list.filter(inv =>
       (inv.invoice_number || '').toLowerCase().includes(q) ||
@@ -167,7 +185,9 @@ export const BillingView: React.FC<BillingViewProps> = ({
       (inv.client_name || '').toLowerCase().includes(q) ||
       (inv.subject || '').toLowerCase().includes(q)
     );
-  }, [invoices, registerFilter, invoiceSearchQuery]);
+  }, [invoices, registerFilter, yearFilter, invoiceSearchQuery]);
+
+  const paginatedInvoices = useMemo(() => displayedInvoices.slice(0, visibleLimit), [displayedInvoices, visibleLimit]);
 
   // Live calculation of preview amounts
   const unbilledActivities = missionDetail?.activities?.filter((a: any) => a.status === 'a_facturer') || [];
@@ -1030,8 +1050,27 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 </button>
               )}
               <select
+                value={yearFilter}
+                onChange={(e) => {
+                  setYearFilter(e.target.value);
+                  setVisibleLimit(100);
+                }}
+                className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] py-1.5 px-3 bg-white border font-semibold text-slate-800 cursor-pointer"
+                title="Filtrer les factures par année"
+              >
+                <option value="all">Toutes années ({invoices.length})</option>
+                {availableYears.map((yr) => (
+                  <option key={yr} value={yr}>
+                    Année {yr} ({invoices.filter((i) => String(i.invoice_number || i.date || '').startsWith(yr)).length})
+                  </option>
+                ))}
+              </select>
+              <select
                 value={registerFilter}
-                onChange={(e) => setRegisterFilter(e.target.value)}
+                onChange={(e) => {
+                  setRegisterFilter(e.target.value);
+                  setVisibleLimit(100);
+                }}
                 className="text-xs rounded-xl border-slate-300 shadow-2xs focus:border-[#0f3854] py-1.5 px-3 bg-white border font-semibold text-slate-800 cursor-pointer"
                 title="Filtrer les factures par dossier"
               >
@@ -1091,9 +1130,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayedInvoices.map((inv) => {
+                {paginatedInvoices.map((inv) => {
                   const isDraft = inv.status === 'brouillon';
                   const isPaid = inv.status === 'regle';
+                  const isPartial = inv.status === 'regle_partiel';
                   const isCancelled = inv.status === 'annule';
                   const timePart =
                     inv.created_at && inv.created_at.includes('T')
@@ -1149,7 +1189,25 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         {isDraft ? (
                           <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-bold">Brouillon</span>
                         ) : isPaid ? (
-                          <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[10px] font-bold">Réglé</span>
+                          <div className="inline-flex flex-col items-center">
+                            <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[10px] font-bold">Réglé</span>
+                            {inv.payment_date && (
+                              <span className="text-[10px] text-emerald-700 mt-0.5 font-mono">
+                                {inv.payment_date.split('-').reverse().join('/')}
+                              </span>
+                            )}
+                          </div>
+                        ) : isPartial ? (
+                          <div className="inline-flex flex-col items-center">
+                            <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                              Partiel ({Number(inv.paid_amount || 0).toFixed(0)}/{Number(inv.net_payable || 0).toFixed(0)} €)
+                            </span>
+                            {inv.payment_date && (
+                              <span className="text-[10px] text-amber-700 mt-0.5 font-mono">
+                                {inv.payment_date.split('-').reverse().join('/')}
+                              </span>
+                            )}
+                          </div>
                         ) : isCancelled ? (
                           <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full text-[10px] font-bold">Annulé / Avoir</span>
                         ) : (
@@ -1226,6 +1284,20 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 })}
               </tbody>
             </table>
+            {displayedInvoices.length > paginatedInvoices.length && (
+              <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-600">
+                <span>
+                  Affichage de <strong>{paginatedInvoices.length}</strong> sur <strong>{displayedInvoices.length}</strong> factures
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setVisibleLimit((v) => v + 150)}
+                  className="px-3 py-1.5 rounded-lg bg-[#0f3854] text-white font-semibold hover:bg-[#164b70] transition-colors cursor-pointer"
+                >
+                  Afficher 150 factures supplémentaires
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -14,8 +14,8 @@ coverage/
 *.local
 
 # Bases de données persistantes locales et uploads
-data/
-uploads/
+/data/
+/uploads/
 *.sqlite
 *.sqlite3
 *.db
@@ -38,6 +38,8 @@ VP_EXPERTISE_BRIEF_V3.zip
 !public/**/*
 !server/assets/
 !server/assets/*.docx
+!server/data/
+!server/data/historical_seed.json
 
 # Fichiers système et IDE
 .DS_Store

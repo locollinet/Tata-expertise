@@ -367,9 +367,19 @@ export function initDatabase() {
     } catch (_) {}
   }
 
-  // Non-destructive migration of existing missions (adverse_parties, stake_amount, numbered pieces, damage_lines, issued_reports)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_invoices_mission_id ON invoices(mission_id);
+    CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+    CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice_id ON invoice_lines(invoice_id);
+    CREATE INDEX IF NOT EXISTS idx_activities_status_mission ON activities(status, mission_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_status_mission ON expenses(status, mission_id);
+    CREATE INDEX IF NOT EXISTS idx_accounting_month ON accounting_entries(month);
+  `);
+
+  // Legacy demo migrations only run on the tiny synthetic dataset (< 10 missions), never over real 385+ historical dataset
   try {
     const allMissions = db.prepare('SELECT * FROM missions').all() as any[];
+    if (allMissions.length < 10) {
     for (const m of allMissions) {
       let currentAdverse: any[] = [];
       try {
@@ -641,6 +651,7 @@ export function initDatabase() {
           );
         }
       }
+    }
     }
   } catch (err) {
     console.warn('Migration non-destructive ignorée :', err);

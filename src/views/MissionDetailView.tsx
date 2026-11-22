@@ -131,6 +131,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
     }
   };
 
+  const [expandedMissionInvoiceId, setExpandedMissionInvoiceId] = useState<string | null>(null);
   const rawSubtab = new URLSearchParams(window.location.search).get('subtab');
   const rawVolet = new URLSearchParams(window.location.search).get('volet');
   const resolveInitialVolet = (s: string | null): DossierVoletKey => {
@@ -2437,7 +2438,7 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           Briève description du sinistre
                         </span>
                         <p className="text-slate-800 whitespace-pre-line font-medium">
-                          {mission.summary || 'Aucune description renseignée.'}
+                          {mission.summary || mission.description || 'Aucune description renseignée.'}
                         </p>
                       </div>
                       <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80">
@@ -3012,12 +3013,12 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
                           <th className="py-2.5 px-3 font-semibold">Numéro Global</th>
-                          <th className="py-2.5 px-3 font-semibold">Date & Heure</th>
-                          <th className="py-2.5 px-3 font-semibold">Objet / Période</th>
+                          <th className="py-2.5 px-3 font-semibold">Émission / Règlement</th>
+                          <th className="py-2.5 px-3 font-semibold">Objet / Pointage associé</th>
                           <th className="py-2.5 px-3 font-semibold text-right">Montant HT</th>
                           <th className="py-2.5 px-3 font-semibold text-right">Net à payer TTC</th>
                           <th className="py-2.5 px-3 font-semibold text-center">Statut</th>
-                          <th className="py-2.5 px-3 font-semibold text-right">Fichier Word</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -3026,48 +3027,122 @@ export const MissionDetailView: React.FC<MissionDetailViewProps> = ({
                           const timePart = inv.created_at && inv.created_at.includes('T')
                             ? inv.created_at.split('T')[1]?.slice(0, 5)
                             : null;
+                          const lines = Array.isArray(inv.lines) ? inv.lines : [];
+                          const splits = Array.isArray(inv.split_details) ? inv.split_details : [];
+                          const isExpanded = expandedMissionInvoiceId === inv.id;
                           return (
-                            <tr key={inv.id} className="hover:bg-slate-50">
-                              <td className="py-2.5 px-3 font-bold text-[#0f3854] font-mono">{inv.invoice_number}</td>
-                              <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
-                                {(inv.date || '').split('-').reverse().join('/')}
-                                {timePart && <span className="text-[10px] text-slate-400 ml-1">({timePart})</span>}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
-                                {inv.subject || `Mission d'expertise`}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-semibold text-slate-800">
-                                {Number(inv.total_ht || 0).toFixed(2).replace('.', ',')} €
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                                {Number(net).toFixed(2).replace('.', ',')} €
-                              </td>
-                              <td className="py-2.5 px-3 text-center">
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    inv.status === 'regle'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            <React.Fragment key={inv.id}>
+                              <tr className="hover:bg-slate-50">
+                                <td className="py-2.5 px-3 font-bold text-[#0f3854] font-mono">
+                                  <div>{inv.invoice_number}</div>
+                                  {lines.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedMissionInvoiceId(isExpanded ? null : inv.id)}
+                                      className="text-[10px] font-sans font-semibold text-sky-700 hover:underline mt-0.5 cursor-pointer"
+                                    >
+                                      {isExpanded ? 'Masquer pointage' : `Pointage (${lines.length})`}
+                                    </button>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">
+                                  <div>
+                                    Émise : <strong>{(inv.date || '').split('-').reverse().join('/')}</strong>
+                                    {timePart && <span className="text-[10px] text-slate-400 ml-1">({timePart})</span>}
+                                  </div>
+                                  {inv.payment_date && (
+                                    <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                                      Réglée : {String(inv.payment_date).split('-').reverse().join('/')}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-700 max-w-xs">
+                                  <div className="truncate">{inv.subject || `Mission d'expertise`}</div>
+                                  {splits.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {splits.map((sp: any, sIdx: number) => (
+                                        <span
+                                          key={sIdx}
+                                          className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                            sp.paid
+                                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                                          }`}
+                                        >
+                                          {sp.payer_name} ({sp.percentage}%){sp.paid_date ? ` · ${String(sp.paid_date).split('-').reverse().join('/')}` : ' · En attente'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-semibold text-slate-800">
+                                  {Number(inv.total_ht || 0).toFixed(2).replace('.', ',')} €
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                                  {Number(net).toFixed(2).replace('.', ',')} €
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      inv.status === 'regle'
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : inv.status === 'regle_partiel'
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : inv.status === 'brouillon'
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : inv.status === 'annule'
+                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                        : 'bg-sky-50 text-sky-800 border border-sky-200'
+                                    }`}
+                                  >
+                                    {inv.status === 'regle'
+                                      ? 'Réglée'
+                                      : inv.status === 'regle_partiel'
+                                      ? `Partiel (${Number(inv.paid_amount || 0).toFixed(0)}/${Number(net).toFixed(0)} €)`
                                       : inv.status === 'brouillon'
-                                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      ? 'Brouillon'
                                       : inv.status === 'annule'
-                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                      : 'bg-sky-50 text-sky-800 border border-sky-200'
-                                  }`}
-                                >
-                                  {inv.status === 'regle' ? 'Réglée' : inv.status === 'brouillon' ? 'Brouillon' : inv.status === 'annule' ? 'Avoir' : 'Émise'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownloadInvoiceDocx(inv)}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-semibold transition-colors"
-                                >
-                                  <Download className="w-3 h-3 text-slate-500" />
-                                  <span>.docx</span>
-                                </button>
-                              </td>
-                            </tr>
+                                      ? 'Avoir'
+                                      : 'Émise'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadInvoiceDocx(inv)}
+                                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-semibold transition-colors"
+                                  >
+                                    <Download className="w-3 h-3 text-slate-500" />
+                                    <span>.docx</span>
+                                  </button>
+                                </td>
+                              </tr>
+                              {isExpanded && lines.length > 0 && (
+                                <tr className="bg-slate-50/80">
+                                  <td colSpan={7} className="px-4 py-2.5">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                                      Détail du pointage facturé ({inv.invoice_number})
+                                    </div>
+                                    <div className="grid grid-cols-12 gap-2 text-[11px] font-semibold text-slate-500 border-b border-slate-200 pb-1">
+                                      <div className="col-span-6">Objet / Prestation</div>
+                                      <div className="col-span-1 text-right">Qté</div>
+                                      <div className="col-span-1 text-right">Tps</div>
+                                      <div className="col-span-2 text-right">PU HT</div>
+                                      <div className="col-span-2 text-right">Total HT</div>
+                                    </div>
+                                    {lines.map((ln: any, lIdx: number) => (
+                                      <div key={ln.id || lIdx} className="grid grid-cols-12 gap-2 text-[11px] text-slate-700 py-1 border-b border-slate-100 last:border-b-0">
+                                        <div className="col-span-6">{ln.description}</div>
+                                        <div className="col-span-1 text-right font-mono">{ln.quantity}</div>
+                                        <div className="col-span-1 text-right font-mono">{ln.time_spent ?? 1}</div>
+                                        <div className="col-span-2 text-right font-mono">{Number(ln.unit_price_ht || 0).toFixed(2).replace('.', ',')} €</div>
+                                        <div className="col-span-2 text-right font-bold font-mono">{Number(ln.total_ht || 0).toFixed(2).replace('.', ',')} €</div>
+                                      </div>
+                                    ))}
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           );
                         })}
                       </tbody>

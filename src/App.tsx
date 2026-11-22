@@ -108,21 +108,24 @@ export function App() {
     refreshData();
   }, []);
 
-  // Prefetch mission details silently in the background so opening any folder is 100% instantaneous
+  // Prefetch top 8 active mission details silently in the background without bursting 385+ requests
   useEffect(() => {
     if (missions.length > 0) {
       const timer = setTimeout(() => {
-        missions.forEach((m) => {
-          if (!missionsCache[m.id]) {
-            api.getMission(m.id).then((full) => {
-              setMissionsCache(prev => ({
-                ...prev,
-                [full.id]: full,
-                [full.code.toLowerCase()]: full,
-              }));
-            }).catch(() => {});
-          }
-        });
+        missions
+          .filter((m) => m.status !== 'cloture')
+          .slice(0, 8)
+          .forEach((m) => {
+            if (!missionsCache[m.id]) {
+              api.getMission(m.id).then((full) => {
+                setMissionsCache(prev => ({
+                  ...prev,
+                  [full.id]: full,
+                  [full.code.toLowerCase()]: full,
+                }));
+              }).catch(() => {});
+            }
+          });
       }, 300);
       return () => clearTimeout(timer);
     }
