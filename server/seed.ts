@@ -26,7 +26,11 @@ export function seedData() {
     db.prepare("SELECT 1 FROM invoices WHERE invoice_number LIKE '2017-%' LIMIT 1").get()
   );
   const legacyDemoCount = (
-    db.prepare("SELECT COUNT(*) as c FROM missions WHERE id IN ('m-1', 'm-2', 'm-3', 'm-4')").get() as { c: number }
+    db.prepare(`
+      SELECT COUNT(*) as c FROM missions
+      WHERE code IN ('VP2026922', 'VP2025915', 'VP2026728', 'VP2026104')
+         OR id IN ('m-vp2026922', 'm-vp2025915', 'm-vp2026728', 'm-vp2026104', 'm-1', 'm-2', 'm-3', 'm-4')
+    `).get() as { c: number }
   ).c;
 
   // Automatically upgrade an existing legacy synthetic demo DB (<= 10 missions incl. m-1..m-4) to the 10-year historical dataset

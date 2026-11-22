@@ -17,13 +17,24 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [guaranteeFilter, setGuaranteeFilter] = useState<string>('all');
   const [includeClosed, setIncludeClosed] = useState<boolean>(false);
+  const [visibleLimit, setVisibleLimit] = useState<number>(60);
 
   const q = searchTerm.trim().toLowerCase();
   const pieceMatch = q.match(/pi[eè]ce\s*n?[°o]?\s*(\d+)/i);
   const searchedPieceNum = pieceMatch ? Number(pieceMatch[1]) : null;
 
+  const closedCount = missions.filter((m) => m.status === 'cloture').length;
+  const activeCount = missions.length - closedCount;
+  const countByStatus: Record<string, number> = {
+    all: activeCount,
+    en_cours: missions.filter((m) => m.status === 'en_cours').length,
+    attente_pieces: missions.filter((m) => m.status === 'attente_pieces').length,
+    rapport_remis: missions.filter((m) => m.status === 'rapport_remis').length,
+    cloture: closedCount,
+  };
+
   const filteredMissions = missions.filter((m: any) => {
-    if (!includeClosed && statusFilter !== 'cloture' && m.status === 'cloture') {
+    if (!includeClosed && !q && statusFilter !== 'cloture' && m.status === 'cloture') {
       return false;
     }
     const matchesStatus = statusFilter === 'all' || m.status === statusFilter;
@@ -77,7 +88,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
             <span>Mes Dossiers d'Expertise</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Registres d'expertise, suivi contradictoire et synchronisation des 6 volets.
+            {activeCount} dossiers actifs · {closedCount} clôturés ({missions.length} au total) — Registres d'expertise & synchronisation des 6 volets.
           </p>
         </div>
 
@@ -111,18 +122,18 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
               onChange={(e) => setIncludeClosed(e.target.checked)}
               className="rounded border-slate-300 text-[#0f3854] focus:ring-[#0f3854]"
             />
-            <span>Inclure les dossiers clos / archivés</span>
+            <span>Inclure les dossiers clos / archivés ({closedCount})</span>
           </label>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-1.5 overflow-x-auto">
             {[
-              { id: 'all', label: 'Tous les dossiers actifs' },
-              { id: 'en_cours', label: 'En cours' },
-              { id: 'attente_pieces', label: 'Attente pièces' },
-              { id: 'rapport_remis', label: 'Rapport remis' },
-              { id: 'cloture', label: 'Clôturés' },
+              { id: 'all', label: `Actifs (${countByStatus.all})` },
+              { id: 'en_cours', label: `En cours (${countByStatus.en_cours})` },
+              { id: 'attente_pieces', label: `Attente pièces (${countByStatus.attente_pieces})` },
+              { id: 'rapport_remis', label: `Rapport remis (${countByStatus.rapport_remis})` },
+              { id: 'cloture', label: `Clôturés (${countByStatus.cloture})` },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -173,7 +184,7 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
             <p className="text-xs text-slate-400 mt-1">Modifiez votre recherche ou cochez « Inclure les dossiers clos ».</p>
           </div>
         ) : (
-          filteredMissions.map((mission: any) => {
+          filteredMissions.slice(0, visibleLimit).map((mission: any) => {
             const hasBillingMilestone = (mission.total_unbilled_ht || 0) >= (mission.custom_billing_threshold || 3500);
             const stakeFormatted = formatStake(mission.stake_amount);
             const advParties: any[] = Array.isArray(mission.adverse_parties) ? mission.adverse_parties : [];
@@ -293,6 +304,29 @@ export const MissionsView: React.FC<MissionsViewProps> = ({
           })
         )}
       </div>
+      {filteredMissions.length > visibleLimit && (
+        <div className="flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-slate-200 text-xs text-slate-600">
+          <span>
+            Affichage de <strong>{Math.min(visibleLimit, filteredMissions.length)}</strong> sur <strong>{filteredMissions.length}</strong> dossiers correspondants
+          </span>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={() => setVisibleLimit((v) => v + 60)}
+              className="px-3 py-1.5 rounded-lg bg-[#0f3854] text-white font-semibold hover:bg-[#164b70] transition-colors cursor-pointer"
+            >
+              Afficher 60 de plus
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisibleLimit(filteredMissions.length)}
+              className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              Tout afficher ({filteredMissions.length})
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
