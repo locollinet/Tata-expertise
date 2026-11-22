@@ -1,0 +1,12 @@
+{
+  "firestore": {
+    "database": "ai-studio-tatataimevpexper-0a3d7945-ae29-49f3-a9d5-c5e30546cb65",
+    "rules": "firestore.rules"
+  },
+  "storage": [
+    {
+      "bucket": "gen-lang-client-0669240266.firebasestorage.app",
+      "rules": "storage.rules"
+    }
+  ]
+}
