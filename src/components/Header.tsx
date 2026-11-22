@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles, FolderSync, Download, ExternalLink, X, FolderOpen, Laptop } from 'lucide-react';
+import { Calendar, FolderKanban, Receipt, Calculator, Plus, Cloud, LogIn, LogOut, CheckCircle2, Sparkles, FolderSync, Download, ExternalLink, X, FolderOpen, Laptop, Upload, RefreshCw } from 'lucide-react';
 import { auth, signInWithGoogle, logOut } from '../firebase.js';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import {
+  getFirestoreCabinetStatus,
+  pushCabinetStateToFirestore,
+  hydrateBackendFromFirestore,
+  FirestoreCabinetStatus,
+} from '../utils/firestoreSync.js';
 import { 
   getLocalSyncStatus, 
   connectLocalMacFolder, 
@@ -17,6 +23,7 @@ interface HeaderProps {
   setActiveTab: (tab: 'today' | 'missions' | 'billing' | 'compta') => void;
   onOpenQuickAdd: () => void;
   onOpenAssistant: () => void;
+  onCloudDataChanged?: () => void;
   urgentCount?: number;
   unbilledTotal?: number;
 }
@@ -26,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onOpenQuickAdd,
   onOpenAssistant,
+  onCloudDataChanged,
   urgentCount = 0,
 }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -38,13 +46,29 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Firebase Firestore cloud sync modal state
+  const [showCloudModal, setShowCloudModal] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<FirestoreCabinetStatus | null>(null);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudFeedback, setCloudFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const currentBrowser = detectBrowser();
   const insideIframe = isInsideIframe();
   const nativeSupported = isFileSystemAccessSupported();
 
+  const refreshCloudStatus = async () => {
+    try {
+      const st = await getFirestoreCabinetStatus();
+      setCloudStatus(st);
+    } catch {
+      setCloudStatus(null);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      refreshCloudStatus();
     });
     const refreshSync = () => {
       const s = getLocalSyncStatus();
@@ -53,9 +77,11 @@ export const Header: React.FC<HeaderProps> = ({
     };
     refreshSync();
     window.addEventListener('vp-local-sync-changed', refreshSync);
+    window.addEventListener('vp-firestore-sync-changed', refreshCloudStatus);
     return () => {
       unsubscribe();
       window.removeEventListener('vp-local-sync-changed', refreshSync);
+      window.removeEventListener('vp-firestore-sync-changed', refreshCloudStatus);
     };
   }, []);
 
@@ -85,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
       if (res.connected) {
         setSyncFolderName(res.folderName);
         setSyncSuccessMsg(
-          `Dossier « ${res.folderName} » relié avec succès ! Arborescence des 6 volets créée sur votre Mac (${res.missionsSynced || 0} dossiers / ${res.filesSynced || 0} fichiers dupliqués).`
+          `Dossier « ${res.folderName} » relié avec succès ! Arborescence créée sur votre Mac (${res.missionsSynced || 0} dossiers actifs préparés${res.filesSynced ? `, ${res.filesSynced} justificatifs copiés` : ''}).`
         );
       } else if (res.error) {
         setBrowserWarning(`Erreur : ${res.error}`);
@@ -131,6 +157,60 @@ export const Header: React.FC<HeaderProps> = ({
       await logOut();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleOpenCloudModal = () => {
+    setCloudFeedback(null);
+    setShowCloudModal(true);
+    refreshCloudStatus();
+  };
+
+  const handlePushToFirestore = async () => {
+    setCloudBusy(true);
+    setCloudFeedback(null);
+    try {
+      const res = await pushCabinetStateToFirestore();
+      await refreshCloudStatus();
+      setCloudFeedback({
+        type: 'success',
+        text: `Synchronisé dans Firebase Firestore : ${res.totalMissions} dossiers, ${res.totalInvoices} factures, ${res.totalAccountingEntries} écritures compta et ${res.totalReportDrafts} rapports (${res.chunksWritten} blocs sécurisés).`,
+      });
+    } catch (err: any) {
+      setCloudFeedback({
+        type: 'error',
+        text: err?.message || 'Erreur lors de la synchronisation Firebase Firestore.',
+      });
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleReloadFromFirestore = async () => {
+    setCloudBusy(true);
+    setCloudFeedback(null);
+    try {
+      const res = await hydrateBackendFromFirestore(true);
+      await refreshCloudStatus();
+      if (res.hydrated) {
+        onCloudDataChanged?.();
+        setCloudFeedback({
+          type: 'success',
+          text: `Base rechargée depuis Firebase Firestore (${res.missionsCount} dossiers, ${res.invoicesCount} factures).`,
+        });
+      } else {
+        setCloudFeedback({
+          type: 'error',
+          text: 'Aucune sauvegarde cloud trouvée pour le cabinet VP Expertise. Cliquez sur « Synchroniser vers le Cloud » pour initialiser l’espace partagé.',
+        });
+      }
+    } catch (err: any) {
+      setCloudFeedback({
+        type: 'error',
+        text: err?.message || 'Erreur lors du chargement depuis Firebase Firestore.',
+      });
+    } finally {
+      setCloudBusy(false);
     }
   };
 
@@ -218,6 +298,27 @@ export const Header: React.FC<HeaderProps> = ({
                   ({syncFolderName})
                 </span>
               )}
+            </button>
+
+            {/* Firebase Firestore Cloud Sync Button */}
+            <button
+              type="button"
+              onClick={handleOpenCloudModal}
+              className={`flex items-center space-x-1.5 px-2 lg:px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                cloudStatus?.hasCloudData
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+              }`}
+              title={
+                cloudStatus?.hasCloudData
+                  ? `Base Firebase synchronisée (${cloudStatus.totalMissions} dossiers, ${cloudStatus.totalInvoices} factures)`
+                  : 'Configurer la sauvegarde cloud Firebase Firestore'
+              }
+            >
+              <Cloud className={`w-3.5 h-3.5 shrink-0 ${cloudStatus?.hasCloudData ? 'text-emerald-600' : 'text-amber-600'}`} />
+              <span className="hidden xl:inline">
+                {cloudStatus?.hasCloudData ? 'Firebase OK' : 'Firebase'}
+              </span>
             </button>
 
             {/* User authentication */}
@@ -402,7 +503,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <div>📁 {syncFolderName || 'Rocco_VP_Expertise'}/</div>
               <div className="pl-4">├── 📁 <span className="text-sky-300 font-bold">01_Dossiers_Expertise/</span></div>
-              <div className="pl-8">└── 📁 VP2026922/</div>
+              <div className="pl-8">└── 📁 VP2026BF50/</div>
               <div className="pl-12 text-slate-300">├── Éléments de la mission/ · Contrats/ · Préjudice/</div>
               <div className="pl-12 text-slate-300">├── RCI-Photos/ · Opérations d'expertise/ · Rapports &amp; Courriers/</div>
               <div className="pl-12 text-purple-300">└── (Si Judiciaire : NAP/ · Rapport-Pré-rapport/ · Dires de partie 1/)</div>
@@ -480,6 +581,110 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Modal Base de Données Cloud Firebase Firestore */}
+      {showCloudModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0f3854]">
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Espace Cloud VP Expertise (Firebase)</h3>
+                  <p className="text-xs text-slate-500">
+                    Base partagée et sécurisée du cabinet (contact@vpexpertise.com)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCloudModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {!user ? (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3 text-xs text-amber-900">
+                <p className="font-semibold">
+                  Connectez-vous avec votre compte Google professionnel (contact@vpexpertise.com) pour activer la synchronisation automatique du cabinet.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleLogin}
+                  disabled={authLoading}
+                  className="inline-flex items-center space-x-2 bg-[#0f3854] hover:bg-[#16496d] text-white px-4 py-2 rounded-lg font-semibold cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>{authLoading ? 'Connexion...' : 'Se connecter avec Google'}</span>
+                </button>
+              </div>
+            ) : cloudStatus && !cloudStatus.authorized ? (
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-2 text-xs text-rose-900">
+                <p className="font-bold">Compte non autorisé ({user.email})</p>
+                <p>
+                  L’accès à la base Firebase VP Expertise est strictement réservé au compte <strong>contact@vpexpertise.com</strong> (et à l’administrateur). Déconnectez-vous puis reconnectez-vous avec le compte du cabinet.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs">
+                <div className={`p-3.5 rounded-xl border ${cloudStatus?.hasCloudData ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                  <div className="font-bold flex items-center space-x-1.5">
+                    <CheckCircle2 className={`w-4 h-4 ${cloudStatus?.hasCloudData ? 'text-emerald-600' : 'text-amber-600'}`} />
+                    <span>
+                      {cloudStatus?.hasCloudData
+                        ? `Cloud VP Expertise synchronisé (${user.email})`
+                        : `Espace Cloud prêt à être initialisé (${user.email})`}
+                    </span>
+                  </div>
+                  {cloudStatus?.hasCloudData ? (
+                    <p className="mt-1 text-[11px]">
+                      {cloudStatus.totalMissions} dossiers · {cloudStatus.totalInvoices} factures · {cloudStatus.totalAccountingEntries} écritures compta · {cloudStatus.totalReportDrafts} rapports
+                      {cloudStatus.updatedAt ? ` — Dernière synchro : ${new Date(cloudStatus.updatedAt).toLocaleString('fr-FR')}` : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px]">
+                      Cliquez ci-dessous pour enregistrer l’état complet du cabinet dans l’espace partagé Firebase. Toutes les modifications futures seront ensuite synchronisées automatiquement en arrière-plan.
+                    </p>
+                  )}
+                </div>
+
+                {cloudFeedback && (
+                  <div className={`p-3 rounded-xl border text-xs ${cloudFeedback.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
+                    {cloudFeedback.text}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    disabled={cloudBusy}
+                    onClick={handlePushToFirestore}
+                    className="w-full inline-flex items-center justify-center space-x-2 bg-[#0f3854] hover:bg-[#16496d] disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-semibold cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>{cloudBusy ? 'Synchronisation en cours...' : 'Synchroniser maintenant vers le Cloud'}</span>
+                  </button>
+
+                  {cloudStatus?.hasCloudData && (
+                    <button
+                      type="button"
+                      disabled={cloudBusy}
+                      onClick={handleReloadFromFirestore}
+                      className="w-full inline-flex items-center justify-center space-x-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 px-4 py-2 rounded-xl font-semibold cursor-pointer"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Recharger la base depuis le Cloud</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

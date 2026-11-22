@@ -63,19 +63,21 @@ export const MissionRatesSettings: React.FC<MissionRatesSettingsProps> = ({
         custom_vat_rate: Number(vatRate),
       });
 
-      // 2. Also persist settings in Firestore cloud for multi-device sync
+      // 2. Also persist settings in Firestore cloud when signed in with a verified account
       try {
         const user = auth.currentUser;
-        await setDoc(doc(db, `missions/${mission.id}/settings`, 'current'), {
-          mission_id: mission.id,
-          custom_hourly_rate: Number(hourlyRate),
-          custom_travel_rate: Number(travelRate),
-          custom_km_rate: Number(kmRate),
-          custom_billing_threshold: Number(billingThreshold),
-          custom_vat_rate: Number(vatRate),
-          updated_by: user?.uid || 'user-expert-valentine',
-          updated_at: new Date().toISOString(),
-        });
+        if (user && user.emailVerified) {
+          await setDoc(doc(db, `missions/${mission.id}/settings`, 'current'), {
+            mission_id: mission.id,
+            custom_hourly_rate: Number(hourlyRate),
+            custom_travel_rate: Number(travelRate),
+            custom_km_rate: Number(kmRate),
+            custom_billing_threshold: Number(billingThreshold),
+            custom_vat_rate: Number(vatRate),
+            updated_by: user.uid,
+            updated_at: new Date().toISOString(),
+          });
+        }
       } catch (cloudErr) {
         console.warn('Persistance Firestore optionnelle:', cloudErr);
       }

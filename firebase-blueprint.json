@@ -1,5 +1,69 @@
 {
   "entities": {
+    "CabinetWorkspace": {
+      "title": "CabinetWorkspace",
+      "description": "Shared VP Expertise cabinet manifest stored in Firestore (accessible strictly to authorized cabinet accounts)",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "cabinetName": { "type": "string", "maxLength": 128 },
+        "totalMissions": { "type": "number" },
+        "totalInvoices": { "type": "number" },
+        "totalAccountingEntries": { "type": "number" },
+        "totalReportDrafts": { "type": "number" },
+        "chunkIds": { "type": "array" },
+        "schemaVersion": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "cabinetName",
+        "totalMissions",
+        "totalInvoices",
+        "totalAccountingEntries",
+        "totalReportDrafts",
+        "chunkIds",
+        "schemaVersion",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CabinetDatasetChunk": {
+      "title": "CabinetDatasetChunk",
+      "description": "Native Firestore chunk storing missions, invoices, accounting entries, reports or operational records for the cabinet workspace",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "maxLength": 128 },
+        "entity": {
+          "type": "string",
+          "enum": [
+            "missions",
+            "invoices",
+            "credit_notes",
+            "activities",
+            "expenses",
+            "accounting_entries",
+            "report_drafts",
+            "operational"
+          ]
+        },
+        "chunkIndex": { "type": "number" },
+        "itemCount": { "type": "number" },
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "entity",
+        "chunkIndex",
+        "itemCount",
+        "items",
+        "updatedAt"
+      ]
+    },
     "EvidenceItem": {
       "title": "EvidenceItem",
       "description": "Technical evidence, photos and PDF documents for a mission",
@@ -10,13 +74,15 @@
         "mission_code": { "type": "string", "maxLength": 64 },
         "title": { "type": "string", "maxLength": 255 },
         "type": { "type": "string", "enum": ["photo", "document", "constat"] },
-        "file_url": { "type": "string", "maxLength": 2048 },
+        "file_url": { "type": "string", "maxLength": 950000 },
         "filename": { "type": "string", "maxLength": 255 },
         "file_size": { "type": "number" },
         "mime_type": { "type": "string", "maxLength": 128 },
         "caption": { "type": "string", "maxLength": 1000 },
         "taken_at": { "type": "string", "maxLength": 64 },
         "order_index": { "type": "number" },
+        "piece_number": { "type": "number" },
+        "section": { "type": "string", "maxLength": 64 },
         "is_selected_for_report": { "type": "boolean" },
         "created_by": { "type": "string", "maxLength": 128 },
         "created_at": { "type": "string", "maxLength": 64 }
@@ -33,6 +99,7 @@
         "custom_travel_rate": { "type": "number" },
         "custom_km_rate": { "type": "number" },
         "custom_billing_threshold": { "type": "number" },
+        "custom_vat_rate": { "type": "number" },
         "updated_by": { "type": "string", "maxLength": 128 },
         "updated_at": { "type": "string", "maxLength": 64 }
       },
@@ -40,6 +107,14 @@
     }
   },
   "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": "CabinetWorkspace",
+      "description": "Shared VP Expertise cabinet workspace manifest (vp_expertise_cabinet) strictly scoped to authorized cabinet members"
+    },
+    "/workspaces/{workspaceId}/datasets/{chunkId}": {
+      "schema": "CabinetDatasetChunk",
+      "description": "Structured Firestore dataset chunks containing all 16 tables (dossiers, invoices, invoice lines, accounting entries, reports and operational records)"
+    },
     "/missions/{missionId}/evidences/{evidenceId}": {
       "schema": "EvidenceItem",
       "description": "Technical evidence, site photographs and PDF documents attached to a railway claim mission"

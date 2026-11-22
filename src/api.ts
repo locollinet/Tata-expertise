@@ -1,6 +1,23 @@
 import { Mission, Activity, Expense, Invoice, CreditNote, ReportDraft, Attendee, Photo, Communication, TravelOrder, RegisteredMail, AccountingEntry, DashboardSummary, BankReconciliationReport, DamageLine, IssuedReport, DeliverableType, DeliverableRequestPayload } from '@shared/types.js';
+import { scheduleAutoSyncToFirestore } from './utils/firestoreSync.js';
 
 const BASE_URL = '/api';
+
+const READ_ONLY_POST_PATHS = [
+  '/assistant/chat',
+  '/assistant/ingest',
+  '/deliverable-docx',
+  '/parse-attendance-sheet',
+  '/clean-notes',
+  '/compta/bank-reconciliation',
+  '/sync/import-state',
+];
+
+function shouldAutoSync(url: string, method?: string): boolean {
+  const m = (method || 'GET').toUpperCase();
+  if (m === 'GET' || m === 'HEAD') return false;
+  return !READ_ONLY_POST_PATHS.some((p) => url.includes(p));
+}
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${url}`, {
@@ -18,7 +35,11 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {}
     throw new Error(errMsg);
   }
-  return res.json();
+  const data = await res.json();
+  if (shouldAutoSync(url, options?.method)) {
+    scheduleAutoSyncToFirestore();
+  }
+  return data;
 }
 
 export const api = {
@@ -73,6 +94,7 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      scheduleAutoSyncToFirestore();
       return res.json();
     }
     return fetchJSON<{ id: string; total_ht: number; total_ttc: number; receipt_filename?: string; receipt_original_name?: string; message: string }>('/expenses', {
@@ -95,6 +117,7 @@ export const api = {
       body: formData,
     });
     if (!res.ok) throw new Error("Erreur lors de l'upload du justificatif");
+    scheduleAutoSyncToFirestore();
     return res.json() as Promise<{ message: string; receipt_filename: string; receipt_original_name: string }>;
   },
   removeExpenseReceipt: (id: string) => fetchJSON<{ message: string }>(`/expenses/${id}/receipt`, {
@@ -185,6 +208,7 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    scheduleAutoSyncToFirestore();
     return res.json();
   },
   updateIssuedReport: (id: string, data: Partial<IssuedReport>) =>
@@ -362,6 +386,7 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      scheduleAutoSyncToFirestore();
       return res.json();
     }
     if (data.receiptFile) {
@@ -388,6 +413,7 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      scheduleAutoSyncToFirestore();
       return res.json();
     }
     return fetchJSON<{ id: string; receipt_filename?: string; receipt_original_name?: string; message: string }>('/compta/entries', {
@@ -402,6 +428,7 @@ export const api = {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Erreur HTTP ${res.status}`);
       }
+      scheduleAutoSyncToFirestore();
       return res.json();
     }
     return fetchJSON<{ message: string; receipt_filename?: string; receipt_original_name?: string }>(`/compta/entries/${id}`, {
@@ -420,6 +447,7 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    scheduleAutoSyncToFirestore();
     return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
   },
   uploadAccountingEntryReceipt: async (entryId: string, file: File) => {
@@ -433,6 +461,7 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur HTTP ${res.status}`);
     }
+    scheduleAutoSyncToFirestore();
     return res.json() as Promise<{ receipt_filename: string; receipt_original_name: string; message: string }>;
   },
   deleteAccountingReceipt: (entryId: string) =>

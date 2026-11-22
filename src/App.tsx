@@ -11,6 +11,9 @@ import { CreateMissionModal } from './components/CreateMissionModal.js';
 import { AIAssistantDrawer } from './components/AIAssistantDrawer.js';
 import { Mission, DashboardSummary, DossierVoletKey } from '@shared/types.js';
 import { api } from './api.js';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase.js';
+import { hydrateBackendFromFirestore, scheduleAutoSyncToFirestore } from './utils/firestoreSync.js';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'today' | 'missions' | 'billing' | 'compta'>('today');
@@ -89,7 +92,7 @@ export function App() {
   const [createMissionInitialData, setCreateMissionInitialData] = useState<any>(null);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
 
-  const refreshData = async () => {
+  const refreshData = async (triggerCloudSync = false) => {
     try {
       const [missionsData, dashboardData] = await Promise.all([
         api.getMissions(),
@@ -97,6 +100,9 @@ export function App() {
       ]);
       setMissions(missionsData);
       setSummary(dashboardData);
+      if (triggerCloudSync) {
+        scheduleAutoSyncToFirestore();
+      }
     } catch (err) {
       console.error("Erreur de chargement des données :", err);
     } finally {
@@ -105,7 +111,20 @@ export function App() {
   };
 
   useEffect(() => {
-    refreshData();
+    refreshData(false);
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u && u.emailVerified) {
+        try {
+          const res = await hydrateBackendFromFirestore(false);
+          if (res.hydrated) {
+            refreshData(false);
+          }
+        } catch (err) {
+          console.warn('[Firestore] Hydratation initiale ignorée :', err);
+        }
+      }
+    });
+    return () => unsub();
   }, []);
 
   // Prefetch top 8 active mission details silently in the background without bursting 385+ requests
@@ -195,6 +214,7 @@ export function App() {
         setActiveTab={handleTabChange}
         onOpenQuickAdd={() => handleOpenQuickAdd()}
         onOpenAssistant={() => setIsAssistantOpen(true)}
+        onCloudDataChanged={() => refreshData(false)}
         urgentCount={summary?.urgent_actions?.length || 0}
         unbilledTotal={summary?.total_unbilled_ht || 0}
       />
@@ -211,7 +231,7 @@ export function App() {
             onNavigateToMissions={() => handleTabChange('missions')}
             onNavigateToCompta={() => handleTabChange('compta')}
             onOpenCreateMission={() => setIsCreateMissionOpen(true)}
-            onRefreshData={refreshData}
+            onRefreshData={() => refreshData(true)}
           />
         )}
 
@@ -269,7 +289,7 @@ export function App() {
           <BillingView
             missions={missions}
             initialMissionCode={billingPreselectedCode}
-            onRefreshMissions={refreshData}
+            onRefreshMissions={() => refreshData(true)}
             onNavigateToMission={(code) => handleNavigateToMission(code, 'billing')}
           />
         )}
@@ -350,7 +370,7 @@ export function App() {
 
       {/* Footer (Desktop) */}
       <footer className="hidden md:block border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-400">
-        <p>VP EXPERTISE — Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires • Application Locale Conforme</p>
+        <p>VP EXPERTISE — Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires • Cloud Sécurisé & Finder Mac</p>
       </footer>
 
       {/* Floating AI Assistant Trigger Button (Desktop / Tablet uniquement) */}
@@ -375,7 +395,7 @@ export function App() {
           setCreateMissionInitialData(data);
           setIsCreateMissionOpen(true);
         }}
-        onRefreshData={refreshData}
+        onRefreshData={() => refreshData(true)}
       />
 
       {/* Quick Add Modal */}
@@ -385,7 +405,7 @@ export function App() {
         missions={missions}
         defaultMissionId={quickAddDefaultMissionId}
         defaultTab={quickAddDefaultTab}
-        onSuccess={refreshData}
+        onSuccess={() => refreshData(true)}
       />
 
       {/* Create Mission Modal */}
@@ -397,7 +417,7 @@ export function App() {
           setCreateMissionInitialData(null);
         }}
         onSuccess={(newId) => {
-          refreshData();
+          refreshData(true);
           setSelectedMissionId(newId);
           setActiveTab('missions');
           setCreateMissionInitialData(null);

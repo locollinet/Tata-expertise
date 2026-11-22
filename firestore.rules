@@ -7,9 +7,19 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // Hardened Global Helpers
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    // Strictly authorized VP Expertise cabinet accounts (both email_verified enforced via isSignedIn)
+    function isCabinetMember() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in [
+          'contact@vpexpertise.com',
+          'locollinet@gmail.com'
+        ];
     }
 
     function isValidId(id) {
@@ -24,59 +34,244 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isSharedCabinet(workspaceId) {
+      return workspaceId == 'vp_expertise_cabinet';
+    }
+
+    function isWorkspaceAuthorized(workspaceId) {
+      return isSharedCabinet(workspaceId)
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
+        && isCabinetMember();
+    }
+
+    function isValidWorkspace(data) {
+      return data.keys().hasAll([
+          'ownerId', 'cabinetName', 'totalMissions', 'totalInvoices',
+          'totalAccountingEntries', 'totalReportDrafts', 'chunkIds',
+          'schemaVersion', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'cabinetName', 'totalMissions', 'totalInvoices',
+          'totalAccountingEntries', 'totalReportDrafts', 'chunkIds',
+          'schemaVersion', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.cabinetName is string && data.cabinetName.size() > 0 && data.cabinetName.size() <= 128
+        && data.totalMissions is number && data.totalMissions >= 0
+        && data.totalInvoices is number && data.totalInvoices >= 0
+        && data.totalAccountingEntries is number && data.totalAccountingEntries >= 0
+        && data.totalReportDrafts is number && data.totalReportDrafts >= 0
+        && data.chunkIds is list && data.chunkIds.size() <= 60
+        && (data.chunkIds.size() == 0 || (data.chunkIds[0] is string && data.chunkIds[0].size() <= 128))
+        && data.schemaVersion is number && data.schemaVersion >= 1
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDatasetChunk(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'entity', 'chunkIndex',
+          'itemCount', 'items', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'entity', 'chunkIndex',
+          'itemCount', 'items', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.workspaceId is string && data.workspaceId.size() > 0 && data.workspaceId.size() <= 128
+        && data.entity in [
+          'missions', 'invoices', 'credit_notes', 'activities',
+          'expenses', 'accounting_entries', 'report_drafts', 'operational'
+        ]
+        && data.chunkIndex is number && data.chunkIndex >= 0
+        && data.itemCount is number && data.itemCount >= 0 && data.itemCount <= 600
+        && data.items is list && data.items.size() <= 600
+        && (data.items.size() == 0 || data.items[0] is map)
+        && data.updatedAt is timestamp;
+    }
+
     function isValidEvidenceItem(data) {
       return data.keys().hasAll(['id', 'mission_id', 'mission_code', 'title', 'type', 'filename', 'created_by'])
-        && data.id is string && data.id.size() <= 128
-        && data.mission_id is string && data.mission_id.size() <= 128
-        && data.mission_code is string && data.mission_code.size() <= 64
+        && data.keys().hasOnly([
+          'id', 'mission_id', 'mission_code', 'title', 'type', 'file_url',
+          'filename', 'file_size', 'mime_type', 'caption', 'taken_at',
+          'order_index', 'piece_number', 'section', 'is_selected_for_report',
+          'created_by', 'created_at'
+        ])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.mission_id is string && data.mission_id.size() > 0 && data.mission_id.size() <= 128
+        && data.mission_code is string && data.mission_code.size() > 0 && data.mission_code.size() <= 64
         && data.title is string && data.title.size() <= 255
         && data.type in ['photo', 'document', 'constat']
-        && data.filename is string && data.filename.size() <= 255
-        && data.created_by is string && data.created_by.size() <= 128;
+        && data.filename is string && data.filename.size() > 0 && data.filename.size() <= 255
+        && data.created_by is string && data.created_by.size() > 0 && data.created_by.size() <= 128
+        && (!('file_url' in data) || (data.file_url is string && data.file_url.size() <= 950000))
+        && (!('mime_type' in data) || (data.mime_type is string && data.mime_type.size() <= 128))
+        && (!('caption' in data) || (data.caption is string && data.caption.size() <= 1000))
+        && (!('taken_at' in data) || (data.taken_at is string && data.taken_at.size() <= 64))
+        && (!('created_at' in data) || (data.created_at is string && data.created_at.size() <= 64))
+        && (!('section' in data) || (data.section is string && data.section.size() <= 64))
+        && (!('file_size' in data) || data.file_size is number)
+        && (!('order_index' in data) || data.order_index is number)
+        && (!('piece_number' in data) || data.piece_number is number)
+        && (!('is_selected_for_report' in data) || data.is_selected_for_report is bool);
     }
 
     function isValidMissionSettings(data) {
       return data.keys().hasAll(['mission_id', 'updated_by'])
-        && data.mission_id is string && data.mission_id.size() <= 128
-        && data.updated_by is string && data.updated_by.size() <= 128
+        && data.keys().hasOnly([
+          'mission_id', 'custom_hourly_rate', 'custom_travel_rate',
+          'custom_km_rate', 'custom_billing_threshold', 'custom_vat_rate',
+          'updated_by', 'updated_at'
+        ])
+        && data.mission_id is string && data.mission_id.size() > 0 && data.mission_id.size() <= 128
+        && data.updated_by is string && data.updated_by.size() > 0 && data.updated_by.size() <= 128
+        && (!('updated_at' in data) || (data.updated_at is string && data.updated_at.size() <= 64))
         && (!('custom_hourly_rate' in data) || data.custom_hourly_rate is number)
         && (!('custom_travel_rate' in data) || data.custom_travel_rate is number)
         && (!('custom_km_rate' in data) || data.custom_km_rate is number)
-        && (!('custom_billing_threshold' in data) || data.custom_billing_threshold is number);
+        && (!('custom_billing_threshold' in data) || data.custom_billing_threshold is number)
+        && (!('custom_vat_rate' in data) || data.custom_vat_rate is number);
     }
 
-    // Evidence Collection for each Mission
-    match /missions/{missionId}/evidences/{evidenceId} {
-      allow get, list: if isSignedIn();
+    // Shared VP Expertise Cabinet Workspace (strictly restricted to authorized cabinet emails)
+    match /workspaces/{workspaceId} {
+      allow get: if isCabinetMember()
+        && isValidId(workspaceId)
+        && (
+          isSharedCabinet(workspaceId)
+          || (workspaceId == request.auth.uid && (resource == null || existing().ownerId == request.auth.uid))
+        );
 
-      allow create: if isSignedIn()
+      allow list: if isCabinetMember()
+        && (existing().cabinetName == 'VP EXPERTISE' || existing().ownerId == request.auth.uid);
+
+      allow create: if isCabinetMember()
+        && isValidId(workspaceId)
+        && isSharedCabinet(workspaceId)
+        && isValidWorkspace(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isCabinetMember()
+        && isValidId(workspaceId)
+        && isSharedCabinet(workspaceId)
+        && isValidWorkspace(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'cabinetName', 'totalMissions', 'totalInvoices',
+          'totalAccountingEntries', 'totalReportDrafts', 'chunkIds',
+          'schemaVersion', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+
+      // Structured Dataset Chunks (Master Gate enforced on parent shared cabinet workspace)
+      match /datasets/{chunkId} {
+        allow get: if isCabinetMember()
+          && isValidId(workspaceId)
+          && isValidId(chunkId)
+          && (
+            (isSharedCabinet(workspaceId) && (resource == null || existing().workspaceId == 'vp_expertise_cabinet') && isWorkspaceAuthorized(workspaceId))
+            || (workspaceId == request.auth.uid && (resource == null || existing().ownerId == request.auth.uid))
+          );
+
+        allow list: if isCabinetMember()
+          && (
+            (isSharedCabinet(workspaceId) && existing().workspaceId == 'vp_expertise_cabinet')
+            || (workspaceId == request.auth.uid && existing().ownerId == request.auth.uid)
+          );
+
+        allow create: if isCabinetMember()
+          && isValidId(workspaceId)
+          && isValidId(chunkId)
+          && isSharedCabinet(workspaceId)
+          && isValidDatasetChunk(incoming())
+          && incoming().ownerId == request.auth.uid
+          && incoming().workspaceId == workspaceId
+          && incoming().updatedAt == request.time
+          && isWorkspaceAuthorized(workspaceId);
+
+        allow update: if isCabinetMember()
+          && isValidId(workspaceId)
+          && isValidId(chunkId)
+          && isSharedCabinet(workspaceId)
+          && existing().workspaceId == 'vp_expertise_cabinet'
+          && isValidDatasetChunk(incoming())
+          && incoming().ownerId == request.auth.uid
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'ownerId', 'entity', 'chunkIndex', 'itemCount', 'items', 'updatedAt'
+          ])
+          && isWorkspaceAuthorized(workspaceId);
+
+        allow delete: if isCabinetMember()
+          && isValidId(workspaceId)
+          && isValidId(chunkId)
+          && isSharedCabinet(workspaceId)
+          && existing().workspaceId == 'vp_expertise_cabinet'
+          && isWorkspaceAuthorized(workspaceId);
+      }
+    }
+
+    // Evidence Collection for each Mission (shared among authorized VP Expertise cabinet members)
+    match /missions/{missionId}/evidences/{evidenceId} {
+      allow get: if isCabinetMember()
+        && isValidId(missionId)
+        && isValidId(evidenceId);
+
+      allow list: if isCabinetMember()
+        && existing().mission_id is string;
+
+      allow create: if isCabinetMember()
         && isValidId(missionId)
         && isValidId(evidenceId)
         && isValidEvidenceItem(incoming())
         && incoming().created_by == request.auth.uid;
 
-      allow update: if isSignedIn()
+      allow update: if isCabinetMember()
         && isValidId(missionId)
         && isValidId(evidenceId)
         && isValidEvidenceItem(incoming())
         && incoming().created_by == existing().created_by
-        && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'order_index', 'is_selected_for_report', 'title', 'file_url']);
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'caption', 'order_index', 'is_selected_for_report', 'title', 'file_url'
+        ]);
 
-      allow delete: if isSignedIn()
+      allow delete: if isCabinetMember()
         && isValidId(missionId)
-        && isValidId(evidenceId)
-        && (existing().created_by == request.auth.uid || request.auth.token.email == 'locollinet@gmail.com');
+        && isValidId(evidenceId);
     }
 
-    // Custom Mission Settings (Rates and Thresholds)
+    // Custom Mission Settings (shared among authorized VP Expertise cabinet members)
     match /missions/{missionId}/settings/{settingsId} {
-      allow get, list: if isSignedIn();
+      allow get: if isCabinetMember()
+        && isValidId(missionId)
+        && isValidId(settingsId);
 
-      allow create, update: if isSignedIn()
+      allow list: if isCabinetMember()
+        && existing().mission_id is string;
+
+      allow create: if isCabinetMember()
         && isValidId(missionId)
         && isValidId(settingsId)
         && isValidMissionSettings(incoming())
         && incoming().updated_by == request.auth.uid;
+
+      allow update: if isCabinetMember()
+        && isValidId(missionId)
+        && isValidId(settingsId)
+        && isValidMissionSettings(incoming())
+        && incoming().updated_by == request.auth.uid
+        && incoming().mission_id == existing().mission_id
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'custom_hourly_rate', 'custom_travel_rate', 'custom_km_rate',
+          'custom_billing_threshold', 'custom_vat_rate', 'updated_by', 'updated_at'
+        ]);
 
       allow delete: if false;
     }

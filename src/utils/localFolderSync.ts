@@ -258,8 +258,9 @@ export async function ensureMissionFolderOnMac(missionCode: string, isJudicial =
 }
 
 /**
- * Synchronise automatiquement TOUS les dossiers existants (6 volets + factures) et le dossier Compta
- * dans le dossier racine du Mac dès sa connexion.
+ * Prépare l'arborescence Valentine (7 volets + volets judiciaires) pour tous les dossiers ACTIFS
+ * et le dossier Compta séparé dans le dossier racine du Mac dès sa connexion, sans générer ni
+ * écraser les centaines d'archives historiques déjà présentes sur iCloud Drive.
  */
 export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: number; filesSynced: number }> {
   let missionsSynced = 0;
@@ -275,110 +276,37 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
     }
     if (perm !== 'granted') return { missionsSynced, filesSynced };
 
-    // 1. Créer le dossier Compta séparé + l'arborescence 01..06 de tous les dossiers
+    // 1. Créer le dossier Compta séparé + la racine des dossiers d'expertise
+    const { handle: dossiersRoot, folderName: dossiersName } = await getDossiersRootHandle(rootHandle);
     await getComptaRootHandle(rootHandle);
+
+    // 2. Créer l'arborescence Valentine uniquement pour les dossiers ACTIFS (évite d'encombrer iCloud avec les 234 archives clôturées)
     const missionsRes = await fetch('/api/missions');
     if (missionsRes.ok) {
       const missions = await missionsRes.json();
-      for (const m of missions) {
-        if (m.code) {
-          await ensureMissionFolderOnMac(m.code, Boolean(m.is_judicial || m.court_reference || m.judicial_expert));
-          missionsSynced++;
+      const activeMissions = Array.isArray(missions)
+        ? missions.filter((m: any) => m.code && m.status !== 'cloture')
+        : [];
 
-          // 1b. Synchroniser les photos de terrain et documents de chaque dossier
-          try {
-            const detailRes = await fetch(`/api/missions/${m.id}`);
-            if (detailRes.ok) {
-              const detail = await detailRes.json();
-              if (Array.isArray(detail.photos)) {
-                for (const photo of detail.photos) {
-                  if (photo.filename) {
-                    try {
-                      const fileRes = await fetch(`/uploads/${photo.filename}`);
-                      if (fileRes.ok) {
-                        const blob = await fileRes.blob();
-                        const safeName = photo.original_name || photo.filename;
-                        await syncFileToLocalMacFolder({
-                          missionCode: m.code,
-                          subFolder: VALENTINE_FOLDERS.rci_photos,
-                          fileName: safeName,
-                          data: blob,
-                        });
-                        filesSynced++;
-                      }
-                    } catch {}
-                  }
-                }
-              }
-
-              if (Array.isArray(detail.documents)) {
-                for (const doc of detail.documents) {
-                  if (doc.filename) {
-                    try {
-                      const fileRes = await fetch(`/uploads/${doc.filename}`);
-                      if (fileRes.ok) {
-                        const blob = await fileRes.blob();
-                        const safeName = doc.original_name || doc.filename;
-                        const targetFolder = resolveValentineExportFolder(doc);
-                        await syncFileToLocalMacFolder({
-                          missionCode: m.code,
-                          subFolder: targetFolder,
-                          fileName: safeName,
-                          data: blob,
-                        });
-                        filesSynced++;
-                      }
-                    } catch {}
-                  }
-                }
-              }
-            }
-          } catch {}
+      for (const m of activeMissions) {
+        const safeMission = String(m.code).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: true });
+        for (const folder of ALL_DOSSIER_VOLET_FOLDERS) {
+          await missionDir.getDirectoryHandle(folder, { create: true });
         }
-      }
-    }
-
-    // 2. Déposer toutes les factures Word (.docx) dans Dossiers/<Code>/Factures Honoraires/ ET dans Compta/<AAAA-MM>/Factures_emises/
-    const invoicesRes = await fetch('/api/invoices');
-    if (invoicesRes.ok) {
-      const invoices = await invoicesRes.json();
-      for (const inv of invoices) {
-        try {
-          const docxRes = await fetch(`/api/invoices/${inv.id}/docx`);
-          if (docxRes.ok) {
-            const blob = await docxRes.blob();
-            await syncFileToLocalMacFolder({
-              missionCode: inv.our_ref || 'Cabinet_VP',
-              subFolder: VALENTINE_FOLDERS.honoraires,
-              fileName: `Facture_${inv.invoice_number}.docx`,
-              data: blob,
-            });
-            // Nettoyage automatique si une ancienne copie se trouvait dans 01_Page_de_garde
-            try {
-              const { handle: dossiersRoot } = await getDossiersRootHandle(rootHandle);
-              const safeMission = (inv.our_ref || 'Cabinet_VP').replace(/[^a-zA-Z0-9_-]/g, '_');
-              const missionDir = await dossiersRoot.getDirectoryHandle(safeMission, { create: false });
-              const gardeDir = await missionDir.getDirectoryHandle('01_Page_de_garde', { create: false });
-              await gardeDir.removeEntry(`Facture_${inv.invoice_number}.docx`);
-            } catch {
-              // Ignorer si déjà absent
-            }
-            const month = (inv.date || '2026-10').slice(0, 7);
-            await syncComptaFileToMac({
-              month,
-              subFolder: 'Factures_emises',
-              fileName: `Facture_${inv.invoice_number}.docx`,
-              data: blob,
-            });
-            filesSynced++;
+        if (Boolean(m.is_judicial || m.court_reference || m.judicial_expert)) {
+          for (const jFolder of JUDICIAL_VALENTINE_FOLDERS) {
+            await missionDir.getDirectoryHandle(jFolder, { create: true });
           }
-        } catch {
-          // Ignore individual invoice error
         }
+        missionsSynced++;
+      }
+      if (missionsSynced > 0) {
+        markSyncSuccess(`${rootHandle.name}/${dossiersName} (${missionsSynced} dossiers actifs)`);
       }
     }
 
-    // 3. Déposer tous les justificatifs de frais dans Compta/<AAAA-MM>/Justificatifs/
+    // 3. Synchroniser les justificatifs de frais actifs déjà téléversés sur le serveur dans Compta/<AAAA-MM>/Justificatifs/
     try {
       const expRes = await fetch('/api/expenses');
       if (expRes.ok) {
@@ -389,7 +317,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
               const fileRes = await fetch(`/uploads/${exp.receipt_filename}`);
               if (fileRes.ok) {
                 const blob = await fileRes.blob();
-                const month = (exp.date || '2026-10').slice(0, 7);
+                const month = (exp.date || new Date().toISOString().slice(0, 7)).slice(0, 7);
                 const safeName = exp.receipt_original_name || exp.receipt_filename;
                 await syncComptaFileToMac({
                   month,
@@ -405,7 +333,7 @@ export async function syncAllExistingMissionsToMac(): Promise<{ missionsSynced: 
       }
     } catch {}
   } catch (err) {
-    console.warn('Erreur lors de la synchronisation initiale des dossiers existants :', err);
+    console.warn('Erreur lors de la synchronisation initiale des dossiers actifs :', err);
   }
   return { missionsSynced, filesSynced };
 }
@@ -487,11 +415,11 @@ export function getLocalSyncStatus(): {
   lastPath: string | null;
 } {
   const disabled = localStorage.getItem('vp_local_sync_disabled') === '1';
-  if (disabled) {
+  const folderName = localStorage.getItem('vp_local_sync_folder_name');
+  const mode = localStorage.getItem('vp_local_sync_mode');
+  if (disabled || !folderName || !mode) {
     return { connected: false, folderName: null, mode: null, lastSyncedAt: null, lastPath: null };
   }
-  const folderName = localStorage.getItem('vp_local_sync_folder_name') || 'Rocco_Mac (Synchronisé)';
-  const mode = localStorage.getItem('vp_local_sync_mode') || 'safari_auto';
   const lastSyncedAt = localStorage.getItem('vp_local_sync_last_at');
   const lastPath = localStorage.getItem('vp_local_sync_last_path');
   return {
@@ -527,35 +455,38 @@ export async function mirrorEvidenceToFirestore(params: {
   isSelectedForReport?: boolean;
 }): Promise<void> {
   try {
-    const uid = auth.currentUser?.uid || 'user-expert-valentine';
+    const user = auth.currentUser;
+    if (!user || !user.emailVerified) return;
+    const uid = user.uid;
     const evidenceId = `evid-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     let fileDataUrl = '';
-    if (params.file.type.startsWith('image/') && params.file.size < 900_000) {
+    if (params.file.type.startsWith('image/') && params.file.size < 650_000) {
       fileDataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
         reader.readAsDataURL(params.file);
       });
     }
-    const evidenceDoc: EvidenceItem = {
+    const evidenceDoc: Record<string, any> = {
       id: evidenceId,
       mission_id: params.missionId,
       mission_code: params.missionCode,
-      title: (params.title || params.caption || params.file.name).trim(),
+      title: (params.title || params.caption || params.file.name).trim().slice(0, 255),
       type: params.type || (params.file.type.startsWith('image/') ? 'photo' : 'document'),
       file_url: fileDataUrl || (params.serverFilename ? `/uploads/${params.serverFilename}` : ''),
-      filename: params.file.name,
+      filename: params.file.name.slice(0, 255),
       file_size: params.file.size,
-      mime_type: params.file.type,
-      caption: (params.caption || params.title || '').trim(),
+      mime_type: (params.file.type || 'application/octet-stream').slice(0, 128),
+      caption: (params.caption || params.title || '').trim().slice(0, 1000),
       taken_at: new Date().toISOString(),
       order_index: Date.now(),
-      piece_number: params.pieceNumber,
-      section: params.section,
       is_selected_for_report: params.isSelectedForReport ?? true,
       created_by: uid,
       created_at: new Date().toISOString(),
     };
+    if (typeof params.pieceNumber === 'number') evidenceDoc.piece_number = params.pieceNumber;
+    if (params.section) evidenceDoc.section = params.section;
+
     await setDoc(doc(firestoreDb, `missions/${params.missionId}/evidences`, evidenceId), evidenceDoc);
   } catch (err) {
     console.warn('Miroir Firebase Firestore optionnel ignoré :', err);

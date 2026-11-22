@@ -213,13 +213,55 @@ apiRouter.get('/missions', (req, res) => {
   const pieceMatch = query.match(/pi[eè]ce\s*n?[°o]?\s*(\d+)/i);
   const searchedPieceNum = pieceMatch ? Number(pieceMatch[1]) : null;
 
+  // Bulk-load stats and documents in O(1) SQL queries instead of N+1 queries per mission
+  const actMap = new Map<string, { unbilled_hours: number; act_ht: number }>();
+  for (const row of db.prepare(`
+    SELECT mission_id, COALESCE(SUM(hours), 0) as unbilled_hours, COALESCE(SUM(total_ht), 0) as act_ht
+    FROM activities WHERE status = 'a_facturer' AND billable = 1 GROUP BY mission_id
+  `).all() as any[]) {
+    actMap.set(row.mission_id, { unbilled_hours: row.unbilled_hours, act_ht: row.act_ht });
+  }
+
+  const expMap = new Map<string, number>();
+  for (const row of db.prepare(`
+    SELECT mission_id, COALESCE(SUM(total_ht), 0) as exp_ht
+    FROM expenses WHERE status = 'a_facturer' AND is_refacturable = 1 GROUP BY mission_id
+  `).all() as any[]) {
+    expMap.set(row.mission_id, row.exp_ht);
+  }
+
+  const invMap = new Map<string, { billed_ht: number; inv_count: number; last_invoice_date: string | null; last_invoice_number: string | null }>();
+  for (const row of db.prepare(`
+    SELECT mission_id, COALESCE(SUM(total_ht), 0) as billed_ht, COUNT(*) as inv_count,
+           MAX(date) as last_invoice_date, MAX(invoice_number) as last_invoice_number
+    FROM invoices WHERE status != 'annule' GROUP BY mission_id
+  `).all() as any[]) {
+    invMap.set(row.mission_id, {
+      billed_ht: Math.round(row.billed_ht * 100) / 100,
+      inv_count: row.inv_count,
+      last_invoice_date: row.last_invoice_date || null,
+      last_invoice_number: row.last_invoice_number || null,
+    });
+  }
+
+  const docsByMission = new Map<string, any[]>();
+  for (const d of db.prepare('SELECT id, mission_id, piece_number, section, original_name, caption, category FROM documents ORDER BY piece_number ASC').all() as any[]) {
+    const arr = docsByMission.get(d.mission_id);
+    if (arr) arr.push(d);
+    else docsByMission.set(d.mission_id, [d]);
+  }
+
   const enriched = allMissions
     .map(m => {
-      const stats = getMissionUnbilledStats(m.id);
+      const act = actMap.get(m.id) || { unbilled_hours: 0, act_ht: 0 };
+      const exp_ht = expMap.get(m.id) || 0;
+      const inv = invMap.get(m.id) || { billed_ht: 0, inv_count: 0, last_invoice_date: null, last_invoice_number: null };
+      const total_unbilled_ht = Math.round((act.act_ht + exp_ht) * 100) / 100;
+
       const adverse_parties = parseJsonSafe<any[]>(m.adverse_parties, []);
       const stake_history = parseJsonSafe<any[]>(m.stake_history, []);
       const expertise_operations = parseJsonSafe<any[]>(m.expertise_operations, []);
-      const docs = db.prepare('SELECT id, piece_number, section, original_name, caption, category FROM documents WHERE mission_id = ? ORDER BY piece_number ASC').all(m.id) as any[];
+      const docs = docsByMission.get(m.id) || [];
 
       let matched_pieces: any[] = [];
       if (query) {
@@ -237,13 +279,13 @@ apiRouter.get('/missions', (req, res) => {
         adverse_parties,
         stake_history,
         expertise_operations,
-        unbilled_hours: stats.unbilled_hours,
-        unbilled_expenses: stats.unbilled_expenses,
-        total_unbilled_ht: stats.total_unbilled_ht,
-        total_billed_ht: stats.total_billed_ht,
-        invoices_count: stats.invoices_count,
-        last_invoice_date: stats.last_invoice_date,
-        last_invoice_number: stats.last_invoice_number,
+        unbilled_hours: act.unbilled_hours,
+        unbilled_expenses: exp_ht,
+        total_unbilled_ht,
+        total_billed_ht: inv.billed_ht,
+        invoices_count: inv.inv_count,
+        last_invoice_date: inv.last_invoice_date,
+        last_invoice_number: inv.last_invoice_number,
         documents_count: docs.length,
         matched_pieces,
       };
@@ -2001,8 +2043,8 @@ apiRouter.post('/missions/:id/parse-attendance-sheet', upload.single('file'), as
   if (apiKey && file) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
-      'gemini-3.8-flash',
       'gemini-3.1-flash-lite',
+      'gemini-4-hydrogen',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
     const fileBuffer = fs.readFileSync(file.path);
@@ -2081,8 +2123,8 @@ apiRouter.post('/missions/:id/clean-notes', async (req, res) => {
   if (apiKey) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
-      'gemini-3.8-flash',
       'gemini-3.1-flash-lite',
+      'gemini-4-hydrogen',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
@@ -2770,8 +2812,8 @@ apiRouter.post('/compta/bank-reconciliation', upload.single('statement'), async 
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-3.8-flash',
         'gemini-3.1-flash-lite',
+        'gemini-4-hydrogen',
         'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
@@ -3238,268 +3280,414 @@ apiRouter.post('/compta/entries-from-bank', (req, res) => {
   res.json({ id, message: `Dépense « ${object} » (${ttc.toFixed(2).replace('.', ',')} € TTC) ajoutée à la compta avec succès !` });
 });
 
-// ---------------- ASSISTANT IA (GEMINI 2.5 FLASH) ----------------
+// ---------------- ASSISTANT IA (ROCCO — ACCÈS COMPLET 10 ANS D'HISTORIQUE) ----------------
+function formatEurFr(val: number): string {
+  return Number(val || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatMonthLabelFr(ym: string): string {
+  const [y, m] = (ym || '').split('-');
+  const months = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+  const idx = parseInt(m || '1', 10) - 1;
+  return `${months[idx] || m} ${y}`;
+}
+
 apiRouter.post('/assistant/chat', async (req, res) => {
+  seedData();
   const { message, history = [], missionId } = req.body;
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: "Message requis" });
   }
 
-  // 1. Gather live operational data for context
-  const missions = db.prepare("SELECT * FROM missions WHERE status != 'cloture'").all() as any[];
-  const enrichedMissions = missions.map(m => {
-    const stats = getMissionUnbilledStats(m.id);
-    return {
-      code: m.code,
-      title: m.title,
-      client: m.insurance_client,
-      insured: m.insured_party,
-      status: m.status,
-      next_deadline: m.next_deadline,
-      next_action: m.next_action,
-      unbilled_hours: stats.unbilled_hours,
-      total_unbilled_ht: stats.total_unbilled_ht,
-      billing_threshold: m.custom_billing_threshold || 3500,
-    };
-  });
+  const lower = message.toLowerCase().trim();
+  const normalizedQuery = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-  const latestInvoices = db.prepare("SELECT invoice_number, mission_code, client_name, total_ht, total_ttc, date, status FROM invoices ORDER BY date DESC LIMIT 5").all();
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const revObj = db.prepare("SELECT COALESCE(SUM(total_ht), 0) as rev FROM invoices WHERE strftime('%Y-%m', date) = ? AND status != 'annule'").get(currentMonth) as { rev: number };
-  const upcomingTravels = db.prepare("SELECT mission_code, destination, start_date, notes FROM travel_orders WHERE status IN ('prevu', 'confirme') ORDER BY start_date ASC LIMIT 3").all();
+  // 1. Live global 10-year KPIs across ALL missions (active + closed), invoices, accounting, and reports
+  const statusRows = db.prepare('SELECT status, COUNT(*) as c FROM missions GROUP BY status').all() as Array<{ status: string; c: number }>;
+  const statusMap: Record<string, number> = {};
+  let totalMissionsCount = 0;
+  for (const r of statusRows) {
+    statusMap[r.status] = r.c;
+    totalMissionsCount += r.c;
+  }
+  const closedMissionsCount = statusMap['cloture'] || 0;
+  const activeMissionsCount = totalMissionsCount - closedMissionsCount;
+  const judicialCount = (db.prepare("SELECT COUNT(*) as c FROM missions WHERE is_judicial = 1 OR (court_reference IS NOT NULL AND court_reference != '')").get() as { c: number }).c;
 
-  // If a specific mission is selected, pull its deep details
+  const missionsByYear = db.prepare(`
+    SELECT SUBSTR(reception_date, 1, 4) as year,
+           COUNT(*) as total,
+           SUM(CASE WHEN status = 'cloture' THEN 1 ELSE 0 END) as closed_count,
+           SUM(CASE WHEN status != 'cloture' THEN 1 ELSE 0 END) as active_count
+    FROM missions
+    WHERE reception_date IS NOT NULL AND LENGTH(reception_date) >= 4
+    GROUP BY year ORDER BY year ASC
+  `).all() as Array<{ year: string; total: number; closed_count: number; active_count: number }>;
+
+  const invoicesByYear = db.prepare(`
+    SELECT SUBSTR(date, 1, 4) as year,
+           COUNT(*) as inv_count,
+           ROUND(COALESCE(SUM(total_ht), 0), 2) as total_ht,
+           ROUND(COALESCE(SUM(total_ttc), 0), 2) as total_ttc,
+           SUM(CASE WHEN status = 'emis' THEN 1 ELSE 0 END) as unpaid_count,
+           ROUND(COALESCE(SUM(CASE WHEN status = 'emis' THEN total_ttc ELSE 0 END), 0), 2) as unpaid_ttc
+    FROM invoices
+    WHERE status != 'annule'
+    GROUP BY year ORDER BY year ASC
+  `).all() as Array<{ year: string; inv_count: number; total_ht: number; total_ttc: number; unpaid_count: number; unpaid_ttc: number }>;
+
+  const totalInvoicesAll = invoicesByYear.reduce((s, r) => s + r.inv_count, 0);
+  const cumulativeHT = Math.round(invoicesByYear.reduce((s, r) => s + r.total_ht, 0) * 100) / 100;
+  const cumulativeTTC = Math.round(invoicesByYear.reduce((s, r) => s + r.total_ttc, 0) * 100) / 100;
+
+  const creditNotesStats = db.prepare(`
+    SELECT COUNT(*) as c, ROUND(COALESCE(SUM(total_ht), 0), 2) as total_ht
+    FROM credit_notes
+  `).get() as { c: number; total_ht: number };
+
+  const unpaidSummary = db.prepare(`
+    SELECT COUNT(*) as c,
+           ROUND(COALESCE(SUM(total_ht), 0), 2) as total_ht,
+           ROUND(COALESCE(SUM(total_ttc), 0), 2) as total_ttc
+    FROM invoices WHERE status = 'emis'
+  `).get() as { c: number; total_ht: number; total_ttc: number };
+
+  const topUnpaidInvoices = db.prepare(`
+    SELECT i.invoice_number, i.mission_code,
+           COALESCE(NULLIF(NULLIF(TRIM(i.client_name), ''), 'Client'), m.insurance_client, i.client_name) as resolved_client,
+           i.date, i.total_ht, i.total_ttc
+    FROM invoices i
+    LEFT JOIN missions m ON i.mission_id = m.id
+    WHERE i.status = 'emis'
+    ORDER BY i.date DESC, i.total_ttc DESC LIMIT 12
+  `).all() as any[];
+
+  const latestMonthRow = db.prepare("SELECT MAX(strftime('%Y-%m', date)) as m FROM invoices WHERE status != 'annule'").get() as { m?: string } | undefined;
+  const latestInvoiceMonth = latestMonthRow?.m || new Date().toISOString().slice(0, 7);
+  const latestMonthRev = db.prepare("SELECT COUNT(*) as c, ROUND(COALESCE(SUM(total_ht), 0), 2) as rev_ht, ROUND(COALESCE(SUM(total_ttc), 0), 2) as rev_ttc FROM invoices WHERE strftime('%Y-%m', date) = ? AND status != 'annule'").get(latestInvoiceMonth) as { c: number; rev_ht: number; rev_ttc: number };
+
+  const latestInvoices = db.prepare(`
+    SELECT i.invoice_number, i.mission_code,
+           COALESCE(NULLIF(NULLIF(TRIM(i.client_name), ''), 'Client'), m.insurance_client, i.client_name) as resolved_client,
+           i.total_ht, i.total_ttc, i.date, i.status
+    FROM invoices i
+    LEFT JOIN missions m ON i.mission_id = m.id
+    ORDER BY i.date DESC, SUBSTR(i.invoice_number, 1, 4) DESC, CAST(SUBSTR(i.invoice_number, 6) AS INTEGER) DESC
+    LIMIT 10
+  `).all() as any[];
+
+  // Top 15 clients resolving placeholder 'Client' with real mission.insurance_client
+  const topClients = db.prepare(`
+    SELECT COALESCE(NULLIF(NULLIF(TRIM(i.client_name), ''), 'Client'), NULLIF(TRIM(m.insurance_client), ''), 'Non renseigné') as client,
+           COUNT(DISTINCT i.mission_id) as dossiers_count,
+           COUNT(*) as inv_count,
+           ROUND(COALESCE(SUM(i.total_ht), 0), 2) as total_ht
+    FROM invoices i
+    LEFT JOIN missions m ON i.mission_id = m.id
+    WHERE i.status != 'annule'
+    GROUP BY client
+    ORDER BY total_ht DESC
+    LIMIT 15
+  `).all() as Array<{ client: string; dossiers_count: number; inv_count: number; total_ht: number }>;
+
+  // Unbilled honoraires (activities + expenses) across all missions
+  const unbilledMissions = db.prepare(`
+    SELECT m.id, m.code, m.title, m.insurance_client, m.insured_party, m.status,
+           m.next_deadline, m.next_action, COALESCE(m.custom_billing_threshold, 3500) as billing_threshold,
+           COALESCE(a.unbilled_hours, 0) as unbilled_hours,
+           ROUND(COALESCE(a.act_ht, 0) + COALESCE(e.exp_ht, 0), 2) as total_unbilled_ht
+    FROM missions m
+    LEFT JOIN (
+      SELECT mission_id, SUM(hours) as unbilled_hours, SUM(total_ht) as act_ht
+      FROM activities WHERE status = 'a_facturer' AND billable = 1 GROUP BY mission_id
+    ) a ON a.mission_id = m.id
+    LEFT JOIN (
+      SELECT mission_id, SUM(total_ht) as exp_ht
+      FROM expenses WHERE status = 'a_facturer' AND is_refacturable = 1 GROUP BY mission_id
+    ) e ON e.mission_id = m.id
+    WHERE COALESCE(a.act_ht, 0) + COALESCE(e.exp_ht, 0) > 0
+    ORDER BY total_unbilled_ht DESC
+  `).all() as any[];
+
+  const totalUnbilledHT = Math.round(unbilledMissions.reduce((s, m) => s + Number(m.total_unbilled_ht || 0), 0) * 100) / 100;
+  const totalUnbilledHours = Math.round(unbilledMissions.reduce((s, m) => s + Number(m.unbilled_hours || 0), 0) * 100) / 100;
+
+  // Accounting summary by year & recent months
+  const accountingByYear = db.prepare(`
+    SELECT SUBSTR(month, 1, 4) as year,
+           COUNT(*) as entries_count,
+           ROUND(COALESCE(SUM(CASE WHEN type = 'recette' THEN amount_ht ELSE 0 END), 0), 2) as recettes_ht,
+           ROUND(COALESCE(SUM(CASE WHEN type = 'depense' THEN amount_ht ELSE 0 END), 0), 2) as depenses_ht,
+           ROUND(COALESCE(SUM(CASE WHEN type = 'recette' THEN vat_amount ELSE -vat_amount END), 0), 2) as tva_nette
+    FROM accounting_entries
+    GROUP BY year ORDER BY year ASC
+  `).all() as any[];
+
+  const totalAccountingCount = accountingByYear.reduce((s, r) => s + r.entries_count, 0);
+  const reportDraftsCount = (db.prepare('SELECT COUNT(*) as c FROM report_drafts').get() as { c: number }).c;
+  const upcomingTravels = db.prepare("SELECT mission_code, destination, start_date, notes FROM travel_orders WHERE status IN ('prevu', 'confirme') ORDER BY start_date ASC LIMIT 5").all() as any[];
+  const deadlinesMissions = db.prepare("SELECT code, title, next_deadline, next_action, insurance_client FROM missions WHERE status != 'cloture' AND next_deadline IS NOT NULL AND next_deadline != '' ORDER BY next_deadline ASC LIMIT 15").all() as any[];
+
+  // 2. Dynamic Search & Retrieval across ALL 393 dossiers (active + closed), 905 invoices, 159 reports, 3634 accounting entries
+  const allMissionsBasic = db.prepare(`
+    SELECT m.*,
+           COALESCE(inv.billed_ht, 0) as total_billed_ht,
+           COALESCE(inv.inv_count, 0) as invoices_count,
+           inv.last_invoice_date,
+           COALESCE(act.unbilled_hours, 0) as unbilled_hours,
+           ROUND(COALESCE(act.act_ht, 0) + COALESCE(exp.exp_ht, 0), 2) as total_unbilled_ht
+    FROM missions m
+    LEFT JOIN (
+      SELECT mission_id, ROUND(SUM(total_ht), 2) as billed_ht, COUNT(*) as inv_count, MAX(date) as last_invoice_date
+      FROM invoices WHERE status != 'annule' GROUP BY mission_id
+    ) inv ON inv.mission_id = m.id
+    LEFT JOIN (
+      SELECT mission_id, SUM(hours) as unbilled_hours, SUM(total_ht) as act_ht
+      FROM activities WHERE status = 'a_facturer' AND billable = 1 GROUP BY mission_id
+    ) act ON act.mission_id = m.id
+    LEFT JOIN (
+      SELECT mission_id, SUM(total_ht) as exp_ht
+      FROM expenses WHERE status = 'a_facturer' AND is_refacturable = 1 GROUP BY mission_id
+    ) exp ON exp.mission_id = m.id
+    ORDER BY m.reception_date DESC, m.code DESC
+  `).all() as any[];
+
+  // Extract explicit year(s), invoice number(s), mission code(s), and meaningful search tokens
+  const mentionedYears = Array.from(new Set((message.match(/\b(201[7-9]|202[0-9])\b/g) || [])));
+  const mentionedInvoiceNums = Array.from(new Set((message.match(/\b20\d{2}-\d{2,4}\b/g) || [])));
+  const mentionedMissionCodes = Array.from(new Set((message.match(/\bVP\d{4}[A-Z0-9()_-]{1,10}\b/gi) || []).map(c => c.toUpperCase())));
+
+  const stopWords = new Set([
+    'bonjour', 'rocco', 'valentine', 'merci', 'svp', 'peux', 'peut', 'pour', 'avec', 'dans', 'plus', 'tout',
+    'tous', 'toutes', 'quel', 'quels', 'quelle', 'quelles', 'combien', 'dossier', 'dossiers', 'mission',
+    'missions', 'affaire', 'affaires', 'facture', 'factures', 'client', 'clients', 'assureur', 'assureurs',
+    'rapport', 'rapports', 'historique', 'total', 'depuis', 'annee', 'annees', 'mois', 'parle', 'donne',
+    'fais', 'faire', 'point', 'resume', 'resumer', 'statut', 'cloture', 'clotures', 'actif', 'actifs',
+    'cours', 'chiffre', 'compta', 'comptable', 'avoir', 'avoirs', 'sont', 'etre', 'cette', 'cela', 'comme',
+    'dont', 'entre', 'sans', 'sous', 'vers', 'chez', 'notre', 'votre', 'leurs', 'elle', 'elles', 'nous', 'vous',
+    'phrases', 'phrase', 'gros', 'grand', 'meilleur', 'liste', 'lister', 'montre', 'affiche', 'chercher', 'trouve',
+    'impaye', 'impayes', 'impayee', 'impayees', 'regle', 'regles', 'emis', 'emises', 'attente', 'facturer',
+  ]);
+
+  const searchTokens = normalizedQuery
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 3 && !stopWords.has(t) && !/^20\d{2}$/.test(t));
+
+  // Score every mission across all 393 dossiers (active + closed!)
+  const scoredMissions: Array<{ mission: any; score: number }> = [];
+  for (const m of allMissionsBasic) {
+    let score = 0;
+    const codeUpper = String(m.code || '').toUpperCase();
+    if (mentionedMissionCodes.some(c => codeUpper === c || codeUpper.includes(c))) {
+      score += 100;
+    }
+    if (missionId && (m.id === missionId || codeUpper === String(missionId).toUpperCase())) {
+      score += 90;
+    }
+
+    const hayRaw = `${m.code || ''} ${m.title || ''} ${m.case_reference || ''} ${m.insurance_client || ''} ${m.insurer_company || ''} ${m.insured_party || ''} ${m.broker_name || ''} ${m.client_lawyer || ''} ${m.third_parties || ''} ${m.adverse_parties || ''} ${m.description || ''} ${m.court_reference || ''} ${m.judicial_expert || ''}`;
+    const hayNorm = hayRaw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    for (const tok of searchTokens) {
+      if (codeUpper.toLowerCase().includes(tok)) score += 40;
+      else if (hayNorm.includes(tok)) score += 10;
+    }
+
+    if (mentionedYears.length > 0 && score === 0 && mentionedYears.some(y => String(m.reception_date || '').startsWith(y) || codeUpper.includes(y))) {
+      score += 3;
+    }
+
+    if (score > 0) {
+      scoredMissions.push({ mission: m, score });
+    }
+  }
+  scoredMissions.sort((a, b) => b.score - a.score || (b.mission.total_billed_ht || 0) - (a.mission.total_billed_ht || 0));
+  const matchedMissionsList = scoredMissions.slice(0, 15).map(s => s.mission);
+  const topExactMission = scoredMissions.length > 0 && scoredMissions[0].score >= 40 ? scoredMissions[0].mission : null;
+
+  // Also search report_drafts if tokens provided
+  let matchedReports: any[] = [];
+  if (searchTokens.length > 0) {
+    const firstTok = `%${searchTokens[0]}%`;
+    matchedReports = db.prepare(`
+      SELECT mission_code, title, SUBSTR(section_facts, 1, 220) as facts, SUBSTR(section_observations, 1, 220) as obs
+      FROM report_drafts
+      WHERE LOWER(title) LIKE ? OR LOWER(section_facts) LIKE ? OR LOWER(section_observations) LIKE ? OR LOWER(section_analysis) LIKE ?
+      LIMIT 6
+    `).all(firstTok, firstTok, firstTok, firstTok) as any[];
+  }
+
+  // Gather deep details for selected mission OR top exact matched mission (works on active AND closed!)
+  const focusMissionId = topExactMission?.id || missionId || null;
   let specificMissionContext = '';
-  if (missionId) {
-    const sm = db.prepare("SELECT * FROM missions WHERE id = ?").get(missionId) as any;
+  let focusMissionDetails: any = null;
+  if (focusMissionId) {
+    const sm = allMissionsBasic.find(m => m.id === focusMissionId || m.code.toLowerCase() === String(focusMissionId).toLowerCase());
     if (sm) {
-      const smActs = db.prepare("SELECT date, category, label, hours, total_ht, status FROM activities WHERE mission_id = ? ORDER BY date DESC LIMIT 6").all(sm.id);
-      const smDocs = db.prepare("SELECT filename, original_name, category, caption FROM documents WHERE mission_id = ? ORDER BY created_at DESC LIMIT 6").all(sm.id);
-      const smAtt = db.prepare("SELECT name, organization, role FROM attendees WHERE mission_id = ?").all(sm.id);
+      const smInvs = db.prepare("SELECT invoice_number, date, client_name, subject, total_ht, total_ttc, status, payment_date FROM invoices WHERE mission_id = ? ORDER BY date DESC").all(sm.id) as any[];
+      const smActs = db.prepare("SELECT date, category, label, hours, total_ht, status FROM activities WHERE mission_id = ? ORDER BY date DESC LIMIT 10").all(sm.id) as any[];
+      const smExps = db.prepare("SELECT date, category, label, total_ht, total_ttc, status FROM expenses WHERE mission_id = ? ORDER BY date DESC LIMIT 10").all(sm.id) as any[];
+      const smDraft = db.prepare("SELECT title, section_facts, section_observations, section_analysis, section_conclusions FROM report_drafts WHERE mission_id = ?").get(sm.id) as any;
+      const smDocs = db.prepare("SELECT original_name, category, caption, piece_number FROM documents WHERE mission_id = ? ORDER BY piece_number ASC LIMIT 10").all(sm.id) as any[];
+      const smAtt = db.prepare("SELECT name, organization, role FROM attendees WHERE mission_id = ?").all(sm.id) as any[];
+      const advList = parseJsonSafe<any[]>(sm.adverse_parties, []);
+
+      focusMissionDetails = { mission: sm, invoices: smInvs, activities: smActs, expenses: smExps, draft: smDraft, docs: smDocs, attendees: smAtt, adverse: advList };
+
       specificMissionContext = `
-Détail du dossier sélectionné (${sm.code} - ${sm.title}) :
-- Assureur : ${sm.insurance_client} | Assuré : ${sm.insured_party || 'Non précisé'}
-- Réf : ${sm.case_reference} | Taux : ${sm.custom_hourly_rate || 190} €/h
-- Échéance : ${sm.next_deadline || 'Aucune'} — ${sm.next_action || 'Aucune'}
-- Participants enregistrés (${smAtt.length}) : ${smAtt.map((a: any) => `${a.name} (${a.organization})`).join(', ') || 'Aucun'}
-- Dernières activités : ${smActs.map((a: any) => `${a.date}: ${a.label} (${a.hours}h, ${a.status})`).join(' | ')}
-- Documents rattachés (${smDocs.length}) : ${smDocs.map((d: any) => `${d.original_name} (${d.category})`).join(', ')}
+=== FICHE COMPLÈTE DU DOSSIER CIBLÉ : [${sm.code}] ${sm.title} ===
+- Statut : ${sm.status} | Judiciaire : ${sm.is_judicial ? 'Oui' : 'Non'} | Garantie : ${sm.guarantee_type || 'RC'}
+- Réception : ${sm.reception_date || 'N/A'} | Date sinistre : ${sm.incident_date || 'N/A'} | Réf. dossier : ${sm.case_reference || 'N/A'}
+- Mandant / Client : ${sm.insurance_client || 'N/A'} (Contact: ${sm.client_contact || 'N/A'})
+- Assureur : ${sm.insurer_company || 'N/A'} | Assuré : ${sm.insured_party || 'N/A'} | Courtier : ${sm.broker_name || 'N/A'} | Avocat : ${sm.client_lawyer || 'N/A'}
+- Parties adverses / Tiers : ${advList.map((a: any) => `${a.party_name}${a.expert_firm ? ` (Expert: ${a.expert_firm} ${a.expert_name || ''})` : ''}`).join(', ') || sm.third_parties || 'Aucun'}
+- Enjeu estimé : ${sm.stake_amount ? `${formatEurFr(sm.stake_amount)} €` : 'Non renseigné'}
+- Total déjà facturé : ${formatEurFr(sm.total_billed_ht)} € HT (${sm.invoices_count} facture(s))
+- Non facturé en cours : ${formatEurFr(sm.total_unbilled_ht)} € HT (${sm.unbilled_hours} h de vacations + frais) — Seuil : ${sm.custom_billing_threshold || 3500} € HT
+- Prochaine échéance : ${sm.next_deadline || 'Aucune'} — Action : ${sm.next_action || 'Aucune'}
+- Factures du dossier (${smInvs.length}) : ${smInvs.length > 0 ? smInvs.map((i: any) => `${i.invoice_number} du ${i.date} (${formatEurFr(i.total_ht)} € HT / ${formatEurFr(i.total_ttc)} € TTC, statut: ${i.status}${i.payment_date ? `, réglée le ${i.payment_date}` : ''})`).join(' | ') : 'Aucune'}
+- Vacations / Activités (${smActs.length}) : ${smActs.length > 0 ? smActs.map((a: any) => `${a.date}: ${a.label} (${a.hours}h, ${formatEurFr(a.total_ht)} € HT, ${a.status})`).join(' | ') : 'Aucune'}
+- Frais (${smExps.length}) : ${smExps.length > 0 ? smExps.map((e: any) => `${e.date}: ${e.label} (${formatEurFr(e.total_ht)} € HT, ${e.status})`).join(' | ') : 'Aucun'}
+- Participants (${smAtt.length}) : ${smAtt.map((a: any) => `${a.name} (${a.organization})`).join(', ') || 'Aucun'}
+- Documents (${smDocs.length}) : ${smDocs.map((d: any) => `P${d.piece_number || '-'}: ${d.original_name} (${d.category})`).join(', ') || 'Aucun'}
+${smDraft ? `- Brouillon de rapport (${smDraft.title}) :\n  Faits : ${(smDraft.section_facts || '').slice(0, 350)}\n  Constatations : ${(smDraft.section_observations || '').slice(0, 350)}\n  Analyse : ${(smDraft.section_analysis || '').slice(0, 350)}` : ''}
 `;
     }
   }
+
+  // Year-specific breakdown if user asked about specific year(s)
+  let yearSpecificContext = '';
+  if (mentionedYears.length > 0) {
+    const blocks: string[] = [];
+    for (const yr of mentionedYears.slice(0, 2)) {
+      const yrMonths = db.prepare(`
+        SELECT strftime('%Y-%m', date) as ym, COUNT(*) as c, ROUND(COALESCE(SUM(total_ht), 0), 2) as ht
+        FROM invoices WHERE strftime('%Y', date) = ? AND status != 'annule'
+        GROUP BY ym ORDER BY ym ASC
+      `).all(yr) as any[];
+      const yrTopMissions = db.prepare(`
+        SELECT m.code, m.title, m.insurance_client, m.status, ROUND(COALESCE(SUM(i.total_ht), 0), 2) as billed_ht, COUNT(i.id) as inv_c
+        FROM invoices i JOIN missions m ON i.mission_id = m.id
+        WHERE strftime('%Y', i.date) = ? AND i.status != 'annule'
+        GROUP BY m.id ORDER BY billed_ht DESC LIMIT 8
+      `).all(yr) as any[];
+      blocks.push(
+        `Détail année ${yr} :\n` +
+        `  - Mensuel facturé : ${yrMonths.map(r => `${r.ym}: ${formatEurFr(r.ht)} € HT (${r.c} fact.)`).join(' | ') || 'Aucune facture'}\n` +
+        `  - Principaux dossiers facturés en ${yr} : ${yrTopMissions.map(r => `[${r.code}] ${r.title.slice(0, 60)} (${r.insurance_client}) = ${formatEurFr(r.billed_ht)} € HT (${r.inv_c} fact., ${r.status})`).join(' ; ') || 'Aucun'}`
+      );
+    }
+    yearSpecificContext = `\n=== FOCUS ANNÉE(S) DEMANDÉE(S) ===\n${blocks.join('\n')}\n`;
+  }
+
+  // Specific invoice lookup if user mentioned an invoice number (e.g. 2026-107)
+  let specificInvoicesContext = '';
+  if (mentionedInvoiceNums.length > 0) {
+    const placeholders = mentionedInvoiceNums.map(() => '?').join(',');
+    const foundInvs = db.prepare(`
+      SELECT i.*, COALESCE(NULLIF(NULLIF(TRIM(i.client_name), ''), 'Client'), m.insurance_client, i.client_name) as resolved_client
+      FROM invoices i LEFT JOIN missions m ON i.mission_id = m.id
+      WHERE i.invoice_number IN (${placeholders})
+    `).all(...mentionedInvoiceNums) as any[];
+    if (foundInvs.length > 0) {
+      specificInvoicesContext = `\n=== FACTURE(S) MENTIONNÉE(S) ===\n` +
+        foundInvs.map(i => `* Facture ${i.invoice_number} (Dossier ${i.mission_code}) — Client: ${i.resolved_client} — Date: ${i.date} — ${formatEurFr(i.total_ht)} € HT / ${formatEurFr(i.total_ttc)} € TTC — Statut: ${i.status}${i.payment_date ? ` (réglée le ${i.payment_date})` : ''} — Objet: ${i.subject}`).join('\n') + '\n';
+    }
+  }
+
+  const recentActiveSample = allMissionsBasic.filter(m => m.status !== 'cloture').slice(0, 20);
 
   const contextPrompt = `
 Tu t'appelles **Rocco**. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux, ingénieure experte fondatrice du cabinet VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice).
 
 TON DE VOIX & ATTITUDE (ESSENTIEL) :
 - Tu es extrêmement agréable, chaleureux, bienveillant, prévenant et d'une politesse impeccable avec Valentine.
-- Adresse-toi toujours à elle avec respect et douceur (ex: "Bonjour Valentine", "Avec grand plaisir Valentine", "Ne vous inquiétez pas, tout est sous contrôle", "Je m'en occupe immédiatement pour vous", "C'est un réel plaisir de vous aider").
-- Rends-lui la gestion de son cabinet fluide, rassurante et légère, en lui enlevant toute charge mentale ou stress inutile.
-- Sois encourageant, positif et à l'écoute, tout en restant rigoureux, fiable et d'une exactitude absolue sur les chiffres, le droit, les dossiers ferroviaires et la comptabilité.
-- Jamais de ton froid, distant ou robotique. Reste élégant, clair et serviable en toutes circonstances.
+- Adresse-toi toujours à elle avec respect et douceur ("Bonjour Valentine", "Avec grand plaisir Valentine", etc.).
+- Tu as accès en DIRECT à l'INTÉGRALITÉ des 10 années d'historique du cabinet (2017 à 2026) : dossiers actifs ET clôturés, factures, avoirs, comptabilité et rapports d'expertise. Ne dis JAMAIS que tu n'as accès qu'aux dossiers actifs !
 
-Voici les données réelles et à jour de son cabinet en direct de sa base :
-- Dossiers actifs (${enrichedMissions.length}) :
-${enrichedMissions.map(m => `  * [${m.code}] ${m.title} — Client: ${m.client} — Non facturé: ${m.total_unbilled_ht.toFixed(2)} € HT (${m.unbilled_hours}h) — Seuil: ${m.billing_threshold} € — Échéance: ${m.next_deadline || 'Aucune'} (${m.next_action || 'Aucune'})`).join('\n')}
+=== SYNTHÈSE GLOBALE DU CABINET VP EXPERTISE (BASE COMPLÈTE 2017–2026) ===
+- Total dossiers intégrés : **${totalMissionsCount} dossiers** (${activeMissionsCount} actifs : ${statusMap['en_cours'] || 0} en cours, ${statusMap['attente_pieces'] || 0} en attente de pièces, ${statusMap['rapport_remis'] || 0} rapport remis ; et **${closedMissionsCount} dossiers clôturés**). Dont ${judicialCount} dossiers judiciaires.
+- Répartition des dossiers par année d'ouverture : ${missionsByYear.map(r => `${r.year}: ${r.total} (${r.active_count} actifs / ${r.closed_count} clos)`).join(' | ')}
+- Facturation historique (10 ans) : **${totalInvoicesAll} factures** (${creditNotesStats.c} avoirs pour ${formatEurFr(creditNotesStats.total_ht)} € HT) — Cumul 2017–2026 : **${formatEurFr(cumulativeHT)} € HT** (${formatEurFr(cumulativeTTC)} € TTC).
+- Chiffre d'affaires annuel HT (factures hors annulées) :
+${invoicesByYear.map(r => `  * ${r.year} : ${formatEurFr(r.total_ht)} € HT (${formatEurFr(r.total_ttc)} € TTC) — ${r.inv_count} factures${r.unpaid_count > 0 ? ` (dont ${r.unpaid_count} en attente de règlement : ${formatEurFr(r.unpaid_ttc)} € TTC)` : ''}`).join('\n')}
+- Dernier mois facturé (${formatMonthLabelFr(latestInvoiceMonth)}) : ${formatEurFr(latestMonthRev.rev_ht)} € HT (${latestMonthRev.c} factures).
+- Factures émises en attente de règlement (impayés) : **${unpaidSummary.c} factures** pour **${formatEurFr(unpaidSummary.total_ht)} € HT** (${formatEurFr(unpaidSummary.total_ttc)} € TTC).
+  Principales factures en attente :
+${topUnpaidInvoices.map(i => `  * ${i.invoice_number} [${i.mission_code}] (${i.resolved_client}) du ${i.date} : ${formatEurFr(i.total_ht)} € HT / ${formatEurFr(i.total_ttc)} € TTC`).join('\n') || '  Aucune'}
+- Honoraires non encore facturés en cours : **${formatEurFr(totalUnbilledHT)} € HT** (${totalUnbilledHours} h sur ${unbilledMissions.length} dossier(s)).
+${unbilledMissions.slice(0, 10).map(m => `  * [${m.code}] ${m.title} (${m.insurance_client}) : ${formatEurFr(m.total_unbilled_ht)} € HT (${m.unbilled_hours}h) — Seuil: ${m.billing_threshold} €`).join('\n') || '  Aucun'}
+- Top 15 clients / mandants historiques (cumul 2017–2026, libellés résolus) :
+${topClients.map((c, idx) => `  ${idx + 1}. ${c.client} : ${formatEurFr(c.total_ht)} € HT (${c.inv_count} factures sur ${c.dossiers_count} dossiers)`).join('\n')}
+- Comptabilité intégrée : **${totalAccountingCount} écritures** et **${reportDraftsCount} brouillons de rapports** en base :
+${accountingByYear.map(a => `  * Compta ${a.year} (${a.entries_count} écritures) : Recettes ${formatEurFr(a.recettes_ht)} € HT | Dépenses ${formatEurFr(a.depenses_ht)} € HT | TVA nette ${formatEurFr(a.tva_nette)} €`).join('\n')}
+- 10 dernières factures émises :
+${latestInvoices.map(i => `  * ${i.invoice_number} [${i.mission_code}] (${i.resolved_client}) du ${i.date} : ${formatEurFr(i.total_ht)} € HT (${i.status})`).join('\n')}
+- Échéances enregistrées (${deadlinesMissions.length}) : ${deadlinesMissions.map(d => `${d.next_deadline} [${d.code}] ${d.next_action}`).join(' | ') || 'Aucune échéance datée'}
+- Prochains déplacements (${upcomingTravels.length}) : ${upcomingTravels.map(t => `${t.start_date} [${t.mission_code}] ${t.destination}`).join(' | ') || 'Aucun'}
+${yearSpecificContext}${specificInvoicesContext}${specificMissionContext}
+${matchedMissionsList.length > 0 ? `=== DOSSIERS CORRESPONDANT À LA RECHERCHE (${matchedMissionsList.length} sur ${totalMissionsCount}, actifs ET clôturés) ===\n${matchedMissionsList.map(m => `  * [${m.code}] (${m.status}) ${m.title} — Mandant: ${m.insurance_client || 'N/A'} | Assuré: ${m.insured_party || 'N/A'} | Réception: ${m.reception_date || 'N/A'} | Facturé: ${formatEurFr(m.total_billed_ht)} € HT (${m.invoices_count} fact.) | Non facturé: ${formatEurFr(m.total_unbilled_ht)} € HT${m.stake_amount ? ` | Enjeu: ${formatEurFr(m.stake_amount)} €` : ''}`).join('\n')}\n` : ''}
+${matchedReports.length > 0 ? `=== EXTRAITS DE RAPPORTS CORRESPONDANTS ===\n${matchedReports.map(r => `  * [${r.mission_code}] ${r.title} — Faits: ${r.facts || 'N/A'} | Constats: ${r.obs || 'N/A'}`).join('\n')}\n` : ''}
+=== 20 DOSSIERS ACTIFS LES PLUS RÉCENTS ===
+${recentActiveSample.map(m => `  * [${m.code}] ${m.title} — ${m.insurance_client || 'N/A'} (reçu ${m.reception_date || 'N/A'}, facturé ${formatEurFr(m.total_billed_ht)} € HT)`).join('\n')}
 
-- Chiffre d'affaires émis ce mois (${currentMonth}) : ${revObj.rev.toFixed(2)} € HT
-- Dernières factures :
-${latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2)} € HT (${i.status})`).join('\n')}
-
-- Prochains déplacements :
-${upcomingTravels.map((t: any) => `  * ${t.start_date} (${t.mission_code}) : ${t.destination}`).join('\n') || 'Aucun'}
-${specificMissionContext}
-
-Consignes :
-1. Réponds toujours avec les chiffres et faits exacts ci-dessus.
-2. Si elle te demande de rédiger un message, prépare-lui un projet soigné et prêt à être copié/envoyé (Objet, formule de politesse chaleureuse et professionnelle, corps clair, signature "Valentine Pécheux - VP Expertise").
-3. Reste toujours pratique, attentionné et efficace.
+Consignes strictes :
+1. Réponds UNIQUEMENT à partir des chiffres et faits exacts ci-dessus (ne jamais inventer de montant ni de dossier).
+2. Si Valentine demande un mail/courrier, rédige un brouillon prêt à copier-coller signé "Valentine Pécheux - VP Expertise".
+3. Sois clair, structuré, chaleureux et synthétique.
 `;
 
-  // 2. Traitement des intentions sémantiques (analyse de la phrase complète, jamais de bouts de mots)
+  // 3. Intentions purement didacticiels / aide UI (uniquement si pas de question analytique/donnée combinée)
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
-  const lower = message.toLowerCase().trim();
 
-  // Détection sémantique stricte par délimiteurs de mots (\b)
   const isVoiceNoteQuery = /\b(notes?\s+vocales?|mémos?\s+vocaux|mémos?\s+audio|fichiers?\s+audio|enregistrements?\s+vocaux|dictée\s+vocale|messages?\s+vocaux|écouter\s+ma\s+voix|parler\s+au\s+micro|enregistrer\s+la\s+voix)\b/i.test(lower);
   const isCapabilityQuery = /\b(que\s+sais-tu\s+faire|quelles?\s+sont\s+tes\s+fonctionnalit|comment\s+(tu\s+fonctionnes?|t[' ]utiliser|ça\s+marche)|à\s+quoi\s+sers-tu|aide\b|help\b|guide\b)\b/i.test(lower);
-
-  // Détection des questions sur la prise en charge des photos de terrain, notes d'analyse et vocal
   const isMediaStorageQuery = /\b(photos?\s+de\s+terrain|format\s+note\s+ou\s+vocal|analyser\s+et\s+stocker|mettre\s+des\s+photos|stocker\s+le\s+tout|prendre\s+des\s+photos|mémos?\s+vocaux|fichiers?\s+audio)\b/i.test(lower) ||
     (/\b(photos?|images?|clichés?|notes?|vocal|voix|enregistrements?)\b/i.test(lower) && /\b(stocker|enregistrer|analyser|classer|mettre|garder|traiter|recevoir)\b/i.test(lower));
-
   const isBankReconciliationQuery = /\b(rapprochement|relevé\s+de\s+compte|relevé\s+bancaire|compte\s+bancaire|tout\s+est\s+carré|tout\s+est\s+carre|pointage\s+bancaire|tableau\s+excel\s+de\s+compta)\b/i.test(lower);
 
-  const isBillingQuery = /\b(seuil|palier)s?\s+(de\s+)?facturation\b/i.test(lower) ||
-    /\b(dossiers?|affaires?)\s+(ayant\s+dépassé|au-dessus\s+du?|qui\s+ont\s+dépassé)\s+(le\s+)?(seuil|palier|3\s*500)\b/i.test(lower) ||
-    /\b(combien|total)\s+(d[' ]honoraires|à\s+facturer|en\s+attente\s+de\s+facturation|non\s+facturé)/i.test(lower) ||
-    /\bquels?\s+dossiers?\s+(ont|sont)\s+(à\s+facturer|dépassé)\b/i.test(lower) ||
-    /\b3\s*500\s*(€|euros)?\b/i.test(lower);
-
-  const isDeadlineQuery = /\b(prochaines?\s+échéances?|dates?\s+limites?|jalons?\s+de\s+procédure)\b/i.test(lower) ||
-    /\b(calendrier|planning|dates?)\b.*\b(dires?|échéances?|procédures?)\b/i.test(lower) ||
-    /\bquelles?\s+sont\s+mes\s+échéances\b/i.test(lower);
-
-  const isAccountingQuery = /\b(chiffre\s+d[' ]?affaires|bilan\s+comptable|tva\s+collectée|point\s+compta|\bca\s+du\s+mois\b|\bca\s+ce\s+mois\b)\b/i.test(lower) ||
-    /\bquel\s+est\s+(mon\s+)?ca\b/i.test(lower);
-
-  const isTravelQuery = /\b(prochains?\s+déplacements?|prochaines?\s+visites?\s+(sur\s+)?site|voyages?\s+prévus?|prochain\s+train)\b/i.test(lower);
-
-  const isDraftingOrCreative = /\b(rédige|redige|rédiger|rediger|écris|ecris|écrire|ecrire|brouillon|prépare\s+un\s+(mail|courrier|message)|relance|relancer)\b/i.test(lower);
-
-  // Recherche ciblée d'un dossier (uniquement si mention explicite du dossier ou de son code)
-  const isExplicitMissionContext = /\b(dossier|mission|affaire|sinistre|point\s+sur|synthèse\s+du|fiche)\b/i.test(lower);
-  const matchedMission = enrichedMissions.find(m => {
-    const codeRegex = new RegExp(`\\b${m.code}\\b`, 'i');
-    const numOnly = m.code.replace(/\D/g, '');
-    const numRegex = numOnly.length >= 3 ? new RegExp(`\\b${numOnly}\\b`, 'i') : null;
-    if (codeRegex.test(lower) || (numRegex && numRegex.test(lower))) return true;
-    if (isExplicitMissionContext) {
-      if (m.client && new RegExp(`\\b${m.client.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(lower)) return true;
-      if (m.code.includes('922') && /alstom|ligne\s*18|trémie/i.test(lower)) return true;
-      if (m.code.includes('104') && /regiorail|ambérieu|amberieu/i.test(lower)) return true;
-      if (m.code.includes('915') && /forwardis|clermont|gravanche/i.test(lower)) return true;
-      if (m.code.includes('728') && /tla|ettendorf/i.test(lower)) return true;
-    }
-    return false;
-  });
-
-  // Cas 2.0 : Question sur le rapprochement bancaire et le tableau de compta ("Tout est carré")
   if (isBankReconciliationQuery) {
     return res.json({
-      reply: `🏦 **Bonjour Valentine ! C'est Rocco.** C'est un réel plaisir de vous rassurer : oui, absolument ! Je suis spécialement là pour faire le rapprochement entre votre relevé de compte bancaire et votre tableau Excel de comptabilité pour que vous soyez totalement sereine et que **tout soit bien carré** à la fin du mois.\n\n` +
-        `Voici comment nous procédons ensemble très simplement :\n\n` +
-        `1. 📄 **Déposez votre relevé bancaire PDF** (ou scan/photo) dans l'onglet **Comptabilité ➔ Rapprochement Bancaire IA**, ou glissez-le directement ici dans notre conversation.\n` +
-        `2. 🔍 **Analyse & Pointage automatique :**\n` +
-        `   * Je lis chaque virement reçu et vérifie qu'il correspond bien au règlement de l'une de vos **factures d'honoraires** (AXA, Helvetia, Alstom...).\n` +
-        `   * Je pointe vos prélèvements récurrents (**URSSAF, Loyer, SFR, CORGECO...**) et vos notes de frais de déplacement (**SNCF, Péage, Parking, Restaurant, Hôtel**).\n` +
-        `3. 🟢 **Verdict « Tout est carré » :**\n` +
-        `   * **Opérations lettrées (100%)** : Vous avez la confirmation immédiate que tout concorde parfaitement.\n` +
-        `   * **Dépenses oubliées** : Si un ticket de péage ou de parking apparaît sur votre carte mais n'était pas dans votre tableau, je vous propose de **l'ajouter en 1 clic** avec le bon calcul de TVA déductible !\n\n` +
-        `👉 Vous pouvez vous rendre dès maintenant dans l'onglet **Comptabilité** pour tester votre premier relevé, ou me le donner directement ici !`,
+      reply: `🏦 **Bonjour Valentine ! C'est Rocco.** Oui, absolument : je réalise le rapprochement entre votre relevé de compte bancaire et votre comptabilité pour vérifier que **tout est bien carré** à la fin du mois.\n\n` +
+        `1. 📄 Déposez votre relevé bancaire PDF (ou scan/photo) dans **Comptabilité ➔ Rapprochement Bancaire IA**, ou glissez-le ici.\n` +
+        `2. 🔍 Je pointe automatiquement vos virements clients face à vos **${totalInvoicesAll} factures** ainsi que vos charges récurrentes et notes de frais.\n` +
+        `3. 🟢 Toute dépense oubliée peut être ajoutée en 1 clic avec le bon calcul de TVA déductible.`,
       model: 'Rocco (Rapprochement Bancaire)',
       hasKey: Boolean(apiKey),
     });
   }
 
-  // Cas 2.1 : Question sur les notes vocales ou le stockage média / terrain -> Réponse affirmative, complète et directe
   if (isVoiceNoteQuery || isMediaStorageQuery) {
     return res.json({
       reply: `🎙️ **Bonjour Valentine ! Avec grand plaisir.** Vous pouvez déposer vos photos de terrain, vos notes d'analyse et vos enregistrements vocaux en toute confiance : je m'occupe d'analyser, classer et ranger le tout proprement dans vos dossiers.\n\n` +
-        `Voici comment je vous facilite la tâche sur le terrain :\n\n` +
-        `1. 📷 **Photos de terrain :**\n` +
-        `   * Prenez en photo un composant ou une avarie (bogies, essieux, rails, caténaires, trémies, fissures, déformations).\n` +
-        `   * Je l'analyse techniquement, génère une légende d'expertise contradictoire et l'insère directement dans la galerie du dossier et votre **rapport d'expertise Word**.\n\n` +
-        `2. 🎙️ **Notes vocales & dictée au micro :**\n` +
-        `   * Cliquez sur le bouton micro 🎙️ ci-dessous pour me parler en direct, ou déposez un fichier audio (.mp3, .m4a, .wav, .ogg, .webm).\n` +
-        `   * Je transcris fidèlement vos propos grâce à l'IA multimodale Gemini et j'en extrais immédiatement vos constats techniques ou vos heures de vacation pour créer l'action en un clic.\n\n` +
-        `3. 📝 **Notes & analyses techniques rédigées :**\n` +
-        `   * Tapez ou collez vos observations : je les classe directement dans la bonne section de votre rapport (**Faits**, **Constatations**, **Analyse technique**, ou **Conclusions**).\n\n` +
-        `4. 🧾 **Justificatifs de frais & Dires :**\n` +
-        `   * Reçus SNCF, hôtels, péages et Dires d'avocat analysés avec calcul exact de la TVA.\n\n` +
-        `👉 Cliquez simplement sur l'appareil photo 📷, le trombone 📎 ou le micro 🎙️ juste en dessous, je m'occupe du reste !`,
+        `1. 📷 **Photos de terrain** : analyse technique et légende factuelle insérée dans le dossier et le rapport Word.\n` +
+        `2. 🎙️ **Notes vocales & dictée au micro** : cliquez sur 🎙️ ci-dessous ou déposez un fichier audio (.mp3, .m4a, .wav, .ogg, .webm) pour transcrire vos constats et pointer vos vacations.\n` +
+        `3. 📝 **Notes & justificatifs** : reçus SNCF, hôtels, péages et Dires d'avocat classés automatiquement.`,
       model: 'Rocco (Ingestion Multimodale)',
       hasKey: Boolean(apiKey),
     });
   }
 
-  // Cas 2.2 : Question sur les fonctionnalités / aide
   if (isCapabilityQuery) {
     return res.json({
-      reply: `👋 **Bonjour Valentine ! Je suis Rocco**, votre assistant personnel et dévoué pour le cabinet VP EXPERTISE.\n\n` +
-        `C'est un réel plaisir de vous accompagner pour vous simplifier le quotidien. Voici tout ce que je peux faire pour vous en direct sur vos dossiers ferroviaires :\n\n` +
-        `1. 🎙️ **Notes vocales & dictées de visite :** Enregistrez votre voix ou déposez un mémo audio : transcription instantanée et rattachement des constats et vacations au dossier.\n` +
-        `2. 📷 **Photos de terrain & Reçus :** Analyse d'avaries mécaniques avec légendes techniques pour vos rapports Word, et extraction comptable de vos frais de déplacement.\n` +
-        `3. 📝 **Structuration de vos rapports d'expertise :** Remplissage assisté des sections (Faits, Constatations, Analyse technique, Conclusions).\n` +
-        `4. 💰 **Suivi des honoraires & seuils d'alerte :** Calcul en temps réel de vos vacations et frais non facturés, et alertes dès le dépassement du palier de 3 500 € HT.\n` +
-        `5. 📅 **Échéances de procédure & Dires :** Suivi bienveillant des dates limites de remise de vos notes techniques contradictoires.\n` +
-        `6. 🏦 **Rapprochement bancaire :** Vérification mensuelle que « tout est carré » entre votre relevé et votre tableau de compta.\n` +
-        `7. ✉️ **Rédaction de courriers :** Préparation de mails de relance soignés prêts à l'envoi.\n\n` +
-        `Posez-moi simplement votre question, dictez au micro ou déposez un document : je suis là pour vous !`,
+      reply: `👋 **Bonjour Valentine ! Je suis Rocco**, votre assistant connecté à l'ensemble de vos **${totalMissionsCount} dossiers** (${activeMissionsCount} actifs et ${closedMissionsCount} clôturés), vos **${totalInvoicesAll} factures (2017–2026)**, vos **${totalAccountingCount} écritures comptables** et vos **${reportDraftsCount} rapports**.\n\n` +
+        `Je peux notamment :\n` +
+        `* 🔍 Rechercher et résumer n'importe quel dossier (actif ou archivé), ses factures, ses parties et son rapport.\n` +
+        `* 📊 Calculer votre chiffre d'affaires sur n'importe quelle année (2017–2026), vos top clients et vos factures en attente de règlement.\n` +
+        `* 🎙️ Transcrire vos notes vocales, analyser vos photos terrain et extraire vos justificatifs de frais.\n` +
+        `* 🏦 Effectuer votre rapprochement bancaire mensuel et rédiger vos courriers de relance.`,
       model: 'Rocco (Capacités opérationnelles)',
       hasKey: Boolean(apiKey),
     });
   }
 
-  // Cas 2.3 : Fast-Path déterministe pour requêtes factuelles précises (< 5ms)
-  if (!isDraftingOrCreative) {
-    if (isBillingQuery) {
-      const overThreshold = enrichedMissions.filter(m => m.total_unbilled_ht >= m.billing_threshold);
-      const totalUnbilled = enrichedMissions.reduce((acc, m) => acc + m.total_unbilled_ht, 0);
-      return res.json({
-        reply: `💰 **Voici le point sur votre facturation en cours, Valentine :**\n\n` +
-          `* **Total en attente d'émission :** **${totalUnbilled.toFixed(2).replace('.', ',')} € HT**\n\n` +
-          (overThreshold.length > 0
-            ? `⚠️ **Dossier(s) ayant dépassé le seuil d'alerte (${overThreshold[0].billing_threshold} € HT) :**\n` +
-              overThreshold.map(m => `* **${m.code}** (${m.title}) : **${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** (${m.unbilled_hours} h de vacations + frais).`).join('\n') +
-              `\n\n👉 Vous pouvez générer les notes d'honoraires Word officielles au format VP Expertise en un clic dans l'onglet **Honoraires**.`
-            : `✅ Excellente nouvelle : aucun dossier ne dépasse actuellement votre seuil d'alerte !`),
-        model: 'Rocco (Honoraires & Facturation)',
-        hasKey: Boolean(apiKey),
-      });
-    }
-
-    if (isDeadlineQuery) {
-      const withDeadlines = enrichedMissions.filter(m => m.next_deadline).sort((a, b) => (a.next_deadline || '').localeCompare(b.next_deadline || ''));
-      return res.json({
-        reply: `📅 **Voici vos prochaines échéances de procédure, Valentine :**\n\n` +
-          withDeadlines.map(m => `* **${m.next_deadline?.split('-').reverse().join('/')}** — [${m.code}] ${m.title}\n  ↳ *Action :* ${m.next_action}`).join('\n\n') +
-          `\n\n🚆 **Prochain déplacement terrain :**\n` +
-          (upcomingTravels.length > 0
-            ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (${t.mission_code})`).join('\n')
-            : 'Aucun déplacement planifié pour le moment. Vous pouvez respirer ! 😊'),
-        model: 'Rocco (Échéances & Planning)',
-        hasKey: Boolean(apiKey),
-      });
-    }
-
-    if (isAccountingQuery) {
-      return res.json({
-        reply: `📊 **Voici la situation comptable d'Octobre 2026, Valentine :**\n\n` +
-          `* **Chiffre d'affaires émis :** ${revObj.rev.toFixed(2).replace('.', ',')} € HT\n` +
-          `* **TVA collectée estimée (20%) :** ${(revObj.rev * 0.20).toFixed(2).replace('.', ',')} €\n` +
-          `* **Dernières factures émises :**\n` +
-          latestInvoices.map((i: any) => `  * N° ${i.invoice_number} (${i.mission_code}) : ${i.total_ht.toFixed(2).replace('.', ',')} € HT (${i.status})`).join('\n') +
-          `\n\nL'export journal comptable Excel est prêt dans l'onglet **Comptabilité**, et vous pouvez faire votre rapprochement bancaire avec moi dès que vous recevez votre relevé !`,
-        model: 'Rocco (Comptabilité)',
-        hasKey: Boolean(apiKey),
-      });
-    }
-
-    if (isTravelQuery) {
-      return res.json({
-        reply: `🚆 **Voici vos prochains déplacements terrain prévus, Valentine :**\n\n` +
-          (upcomingTravels.length > 0
-            ? upcomingTravels.map((t: any) => `* **${t.start_date.split('-').reverse().join('/')}** : ${t.destination} (Dossier ${t.mission_code}) ${t.notes ? `— ${t.notes}` : ''}`).join('\n') + `\n\nBon voyage et prenez bien soin de vous !`
-            : 'Aucun déplacement planifié pour le moment. Vous êtes tranquille au cabinet ! 😊'),
-        model: 'Rocco (Déplacements)',
-        hasKey: Boolean(apiKey),
-      });
-    }
-
-    if (matchedMission) {
-      const m = matchedMission;
-      const over = m.total_unbilled_ht >= m.billing_threshold;
-      return res.json({
-        reply: `🔍 **Voici le point détaillé sur le dossier ${m.code} (${m.title}), Valentine :**\n\n` +
-          `* **Client / Assureur :** ${m.client} ${m.insured ? `| **Assuré :** ${m.insured}` : ''}\n` +
-          `* **Statut financier :** ${over ? `⚠️ Seuil dépassé : ` : ''}**${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer (${m.unbilled_hours} h de vacations + frais)\n` +
-          `* **Seuil d'alerte configuré :** ${m.billing_threshold.toLocaleString('fr-FR')} € HT\n` +
-          `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
-          `* **Action requise :** ${m.next_action || 'Dossier parfaitement à jour'}\n` +
-          `\n👉 Vous pouvez ouvrir directement ce dossier dans l'onglet **Dossiers** pour consulter l'intégralité des pièces, participants et photos.`,
-        model: 'Rocco (Synthèse Dossier)',
-        hasKey: Boolean(apiKey),
-      });
-    }
-  }
-
-  // 3. Appel du modèle IA Gemini pour les requêtes complexes, conversationnelles ou rédaction
+  // 4. Appel Gemini (prioritaire pour TOUTES les questions métier, analytiques, multi-critères et rédactionnelles)
   if (apiKey) {
     const candidateModels = [
       process.env.GEMINI_MODEL,
-      'gemini-3.8-flash',
       'gemini-3.1-flash-lite',
+      'gemini-4-hydrogen',
       'gemini-flash-latest',
     ].filter(Boolean) as string[];
 
@@ -3528,11 +3716,10 @@ Consignes :
         );
 
         const config: any = {
-          systemInstruction: "Tu t'appelles Rocco. Tu es l'assistant personnel, exécutif, technique et comptable dévoué de Valentine Pécheux (Cabinet VP EXPERTISE - Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
-            "Tu es particulièrement agréable, chaleureux, bienveillant, prévenant, poli et rassurant avec Valentine. Tu l'appelles affectueusement et respectueusement 'Valentine'. " +
-            "Tu l'assistes avec enthousiasme et plaisir sur ses dossiers judiciaires et amiables, ses vacations, ses frais de déplacement (SNCF, hôtels, péages), ses échéances de procédure (Dires), son rapprochement bancaire ('tout est carré') et ses rapports d'expertise. " +
-            "CAPACITÉS CONFIRMÉES : Tu es pleinement capable de recevoir et traiter des photos de terrain (bogies, essieux, rails, caténaires, trémies, fissures), des notes techniques contradictoires pour alimenter les rapports Word, des notes vocales / dictées audio transcrites via Gemini pour enregistrer des vacations et des constats, et des relevés bancaires pour pointer les comptes. " +
-            "RÈGLE D'EXACTITUDE & STYLE : Réponds avec professionnalisme, élégance, bienveillance et clarté en français. Ne sois jamais froid ni sec. Fais tout pour lui simplifier la vie et lui apporter sérénité.",
+          systemInstruction:
+            "Tu t'appelles Rocco, l'assistant personnel, technique, juridique et comptable dévoué de Valentine Pécheux (Cabinet VP EXPERTISE — Ingénierie Mécanique & Matériels Ferroviaires, Expert de Justice). " +
+            "Tu disposes des données exactes des 10 dernières années du cabinet (2017 à 2026) : dossiers actifs et clôturés, factures, impayés, clients, comptabilité et rapports. " +
+            "Réponds toujours en français avec chaleur, bienveillance, rigueur et exactitude absolue sur les chiffres fournis dans le contexte.",
         };
         if (model.startsWith('gemini-3') || model.startsWith('gemini-4')) {
           config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
@@ -3562,69 +3749,55 @@ Consignes :
     }
   }
 
-  // 4. Fallback contextuel intelligent ET personnalisé si l'API externe est indisponible
-  let localReply = "";
+  // 5. Fallback déterministe intelligent et 100% fidèle aux 10 ans de données (si hors-ligne ou sans clé API)
+  const parts: string[] = [];
 
-  // Cas Rédaction d'un e-mail ou courrier
-  if (isDraftingOrCreative) {
-    if (/alstom|ligne\s*18|trémie|vinci/i.test(lower)) {
-      localReply = `✉️ **Voici un projet d'e-mail soigneusement préparé pour vous, Valentine :**\n\n` +
-        `**Objet :** Dossier VP2026922 (SGP Ligne 18 - Trémie OA-08) — Observations techniques suite aux Dires de VINCI\n\n` +
-        `Maître, Chers confrères,\n\n` +
-        `Dans le cadre des opérations d'expertise relatives au sinistre sur la dalle de couverture de la trémie OA-08 (Réf. 11161461), je vous informe que la note d'observation technique de VP EXPERTISE est en cours de finalisation en vue de l'échéance fixée au **05/11/2026**.\n\n` +
-        `Afin de consolider les conclusions sur les contraintes dynamiques et la flexion résiduelle, je vous saurais gré de bien vouloir nous transmettre sans délai les procès-verbaux de contrôle du ferraillage ainsi que les notes de calcul d'étaiement initialement sollicitées.\n\n` +
-        `Restant à votre entière disposition pour tout échange contradictoire préalable.\n\n` +
-        `Bien confraternellement,\n\n` +
-        `**Valentine Pécheux**\n` +
-        `Ingénieure Spécialiste Matériels Roulants & Infrastructures Ferroviaires\n` +
-        `Cabinet VP EXPERTISE — 06 12 34 56 78`;
-    } else if (/regiorail|ambérieu|amberieu|collision/i.test(lower)) {
-      localReply = `✉️ **Voici un projet de relance prêt à l'envoi, Valentine :**\n\n` +
-        `**Objet :** Dossier VP2026104 — Sinistre triage Ambérieu — Transmission du rapport d'incident SNCF Réseau\n\n` +
-        `Bonjour,\n\n` +
-        `Faisant suite à notre dernière réunion d'expertise du dossier référencé RR-2026-AMB-09, je me permets de vous relancer concernant la communication du rapport interne d'incident et des relevés de vitesse de la rame refoulée.\n\n` +
-        `Pour rappel, le délai d'instruction imparti court jusqu'au **28/11/2026** pour le dépôt de la synthèse technique.\n\n` +
-        `Bien cordialement,\n\n` +
-        `**Valentine Pécheux**\n` +
-        `VP EXPERTISE`;
-    } else {
-      localReply = `✉️ **Voici votre projet de message prêt à être copié/envoyé, Valentine :**\n\n` +
-        `**Objet :** Dossier d'expertise ferroviaire — Point d'étape et demande de pièces complémentaires\n\n` +
-        `Bonjour,\n\n` +
-        `Dans le cadre de l'instruction contradictoire en cours, je reviens vers vous concernant les documents techniques attendus pour la poursuite de nos investigations.\n\n` +
-        `Afin de respecter le calendrier de procédure et de préparer utilement la prochaine réunion d'expertise, je vous remercie par avance pour votre retour d'ici la fin de semaine.\n\n` +
-        `Restant à votre écoute,\n\n` +
-        `Bien cordialement,\n\n` +
-        `**Valentine Pécheux**\n` +
-        `Cabinet VP EXPERTISE`;
-    }
-  } else if (matchedMission) {
-    const m = matchedMission;
-    const over = m.total_unbilled_ht >= m.billing_threshold;
-    localReply = `🔍 **Voici le point complet sur le dossier ${m.code} (${m.title}), Valentine :**\n\n` +
-      `* **Client / Assureur :** ${m.client} ${m.insured ? `| **Assuré :** ${m.insured}` : ''}\n` +
-      `* **Statut financier :** ${over ? `⚠️ Seuil dépassé : ` : ''}**${m.total_unbilled_ht.toFixed(2).replace('.', ',')} € HT** à facturer (${m.unbilled_hours} h de vacations + frais)\n` +
-      `* **Seuil d'alerte configuré :** ${m.billing_threshold.toLocaleString('fr-FR')} € HT\n` +
-      `* **Prochaine échéance :** **${m.next_deadline ? m.next_deadline.split('-').reverse().join('/') : 'Aucune date fixée'}**\n` +
-      `* **Action requise :** ${m.next_action || 'Dossier parfaitement à jour'}\n` +
-      `\n👉 Vous pouvez ouvrir directement ce dossier dans l'onglet **Dossiers** si vous souhaitez consulter toutes les pièces.`;
-  } else {
-    // Réponse intelligente adaptée au contexte du cabinet
-    localReply = `Bonjour Valentine ! ☀️ C'est un réel plaisir de vous retrouver pour le cabinet **VP EXPERTISE**.\n\n` +
-      `Je suis **Rocco**, comment puis-je vous rendre service aujourd'hui ?\n\n` +
-      `Voici quelques exemples de ce que nous pouvons faire ensemble :\n` +
-      `* 📷 **Prendre ou déposer une photo de terrain :** cliquez sur l'appareil photo pour analyser une avarie mécanique et l'intégrer au rapport.\n` +
-      `* 🎙️ **Dicter ou déposer une note vocale :** utilisez le micro en bas pour enregistrer vos constats ou vacations.\n` +
-      `* 🏦 **Rapprochement bancaire :** déposez votre relevé bancaire pour vérifier que *tout est bien carré*.\n` +
-      `* 💶 **Point d'honoraires & seuils :** *"Quels dossiers dépassent les 3 500 € ?"*\n` +
-      `* 📅 **Échéances & Dires :** *"Quelles sont mes prochaines dates limites de procédure ?"*\n` +
-      `* 🔍 **Synthèse d'un dossier :** *"Fais le point sur Alstom"* ou *"Dossier Regiorail"*.\n\n` +
-      `Dites-moi tout, je m'en occupe avec grand plaisir !`;
+  if (focusMissionDetails) {
+    const m = focusMissionDetails.mission;
+    parts.push(
+      `🔍 **Point détaillé sur le dossier ${m.code} — ${m.title} :**\n` +
+      `* **Statut :** ${m.status === 'cloture' ? 'Clôturé' : m.status} | **Réception :** ${m.reception_date || 'N/A'}\n` +
+      `* **Mandant / Client :** ${m.insurance_client || 'N/A'}${m.insured_party ? ` | **Assuré :** ${m.insured_party}` : ''}\n` +
+      `* **Déjà facturé :** **${formatEurFr(m.total_billed_ht)} € HT** (${m.invoices_count} facture${m.invoices_count > 1 ? 's' : ''})\n` +
+      `* **En cours non facturé :** **${formatEurFr(m.total_unbilled_ht)} € HT** (${m.unbilled_hours} h)\n` +
+      (focusMissionDetails.invoices.length > 0
+        ? `* **Factures :**\n${focusMissionDetails.invoices.slice(0, 6).map((i: any) => `  * ${i.invoice_number} (${i.date}) : ${formatEurFr(i.total_ht)} € HT — ${i.status}`).join('\n')}`
+        : `* **Factures :** Aucune facture émise pour l'instant.`)
+    );
+  }
+
+  if (mentionedYears.length > 0 || /\b(chiffre\s+d[' ]?affaires|ca\b|factur|recettes|bilan|impay)/i.test(lower)) {
+    const targetYears = mentionedYears.length > 0
+      ? invoicesByYear.filter(r => mentionedYears.includes(r.year))
+      : invoicesByYear.slice(-3);
+    parts.push(
+      `📊 **Chiffre d'affaires & Facturation VP Expertise :**\n` +
+      `* **Cumul 2017–2026 :** **${formatEurFr(cumulativeHT)} € HT** (${totalInvoicesAll} factures)\n` +
+      targetYears.map(r => `* **Année ${r.year} :** **${formatEurFr(r.total_ht)} € HT** (${formatEurFr(r.total_ttc)} € TTC, ${r.inv_count} factures)`).join('\n') +
+      `\n* **Dernier mois facturé (${formatMonthLabelFr(latestInvoiceMonth)}) :** **${formatEurFr(latestMonthRev.rev_ht)} € HT** (${latestMonthRev.c} factures)\n` +
+      `* **Factures en attente de règlement :** ${unpaidSummary.c} factures (**${formatEurFr(unpaidSummary.total_ttc)} € TTC**)`
+    );
+  }
+
+  if (/\b(combien|total|clotur|actif|dossier|client|top)\b/i.test(normalizedQuery) && !focusMissionDetails) {
+    parts.push(
+      `📁 **Synthèse de vos dossiers (2017–2026) :**\n` +
+      `* **Total :** **${totalMissionsCount} dossiers** (${activeMissionsCount} actifs, **${closedMissionsCount} clôturés**, ${judicialCount} judiciaires)\n` +
+      `* **Top 5 clients historiques :**\n` +
+      topClients.slice(0, 5).map((c, idx) => `  ${idx + 1}. **${c.client}** : ${formatEurFr(c.total_ht)} € HT (${c.inv_count} factures / ${c.dossiers_count} dossiers)`).join('\n')
+    );
+  }
+
+  if (parts.length === 0) {
+    parts.push(
+      `Bonjour Valentine ! ☀️ Je suis **Rocco**, connecté à vos **${totalMissionsCount} dossiers** (${activeMissionsCount} actifs, ${closedMissionsCount} clôturés), vos **${totalInvoicesAll} factures (2017–2026)** et vos **${totalAccountingCount} écritures comptables**.\n\n` +
+      `Vous pouvez m'interroger sur n'importe quel code dossier (ex. \`${allMissionsBasic[0]?.code || 'VP2026BF50'}\`), votre chiffre d'affaires annuel, vos impayés (${unpaidSummary.c} factures en attente), vos clients historiques ou déposer une pièce / note vocale.`
+    );
   }
 
   res.json({
-    reply: localReply,
-    model: 'Rocco (Mode Local Intelligent)',
+    reply: parts.join('\n\n'),
+    model: 'Rocco (Synthèse Base Complète)',
     hasKey: Boolean(apiKey),
   });
 });
@@ -3640,22 +3813,28 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: "Veuillez fournir un justificatif ou une consigne." });
     }
 
-    // 1. Fetch active missions for target resolution
-    const missions = db.prepare('SELECT id, code, title, case_reference, insurance_client, insured_party, custom_hourly_rate FROM missions ORDER BY code DESC').all() as any[];
+    // 1. Fetch missions (prioritize active & keyword matches to avoid bloating prompt with 393 dossiers)
+    const missions = db.prepare("SELECT id, code, title, case_reference, insurance_client, insured_party, custom_hourly_rate, status FROM missions ORDER BY CASE WHEN status = 'cloture' THEN 1 ELSE 0 END ASC, reception_date DESC, code DESC").all() as any[];
 
     let matchedMission = preselectedMissionId ? missions.find(m => m.id === preselectedMissionId || m.code.toLowerCase() === preselectedMissionId.toLowerCase()) : null;
 
     // Check if filename / instruction references a mission
-    if (!matchedMission && instruction) {
-      const lowerInst = instruction.toLowerCase();
-      matchedMission = missions.find(m => 
-        lowerInst.includes(m.code.toLowerCase()) || 
-        (m.title && lowerInst.includes(m.title.toLowerCase().slice(0, 10))) ||
-        (m.insurance_client && lowerInst.includes(m.insurance_client.toLowerCase())) ||
-        (m.case_reference && lowerInst.includes(m.case_reference.toLowerCase())) ||
-        (m.code.includes('922') && (lowerInst.includes('alstom') || lowerInst.includes('ligne 18'))) ||
-        (m.code.includes('104') && (lowerInst.includes('regiorail') || lowerInst.includes('ambérieu') || lowerInst.includes('amberieu')))
+    const combinedLower = `${instruction} ${file ? file.originalname : ''}`.toLowerCase();
+    if (!matchedMission && combinedLower.trim()) {
+      matchedMission = missions.find(m =>
+        combinedLower.includes(m.code.toLowerCase()) ||
+        (m.case_reference && m.case_reference.length >= 4 && combinedLower.includes(m.case_reference.toLowerCase())) ||
+        (m.insured_party && m.insured_party.length >= 4 && combinedLower.includes(m.insured_party.toLowerCase())) ||
+        (m.insurance_client && m.insurance_client.length >= 4 && combinedLower.includes(m.insurance_client.toLowerCase()))
       );
+    }
+
+    // Select compact candidate list for LLM prompt (matched + top 45 most recent active missions)
+    const promptMissions: any[] = [];
+    if (matchedMission) promptMissions.push(matchedMission);
+    for (const m of missions) {
+      if (promptMissions.length >= 45) break;
+      if (!promptMissions.some(p => p.id === m.id)) promptMissions.push(m);
     }
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || process.env.API_KEY;
@@ -3675,8 +3854,8 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
     if (apiKey && file) {
       const candidateModels = [
         process.env.GEMINI_MODEL,
-        'gemini-3.8-flash',
         'gemini-3.1-flash-lite',
+        'gemini-4-hydrogen',
         'gemini-flash-latest',
       ].filter(Boolean) as string[];
 
@@ -3699,8 +3878,8 @@ apiRouter.post('/assistant/ingest', upload.single('file'), async (req, res) => {
 
       const systemPrompt = `Tu t'appelles Rocco, l'assistant d'ingestion technique, comptable et juridique dévoué de VP EXPERTISE (Cabinet d'Ingénierie Mécanique & Ferroviaire de Valentine Pécheux, Expert de Justice). Sois toujours précis, prévenant et bienveillant pour Valentine.
 
-Dossiers d'expertise en cours :
-${missions.map(m => `- [${m.code}] (ID: ${m.id}) : ${m.title} (Réf : ${m.case_reference}, Assureur : ${m.insurance_client}, Assuré : ${m.insured_party || 'N/A'})`).join('\n')}
+Dossiers d'expertise candidats (${promptMissions.length} les plus pertinents / récents sur ${missions.length} au total) :
+${promptMissions.map(m => `- [${m.code}] (ID: ${m.id}, ${m.status}) : ${m.title} (Réf : ${m.case_reference}, Assureur : ${m.insurance_client}, Assuré : ${m.insured_party || 'N/A'})`).join('\n')}
 
 Instruction de Valentine : "${instruction || 'Analyse ce justificatif, cette note ou cet enregistrement.'}"
 Nom du fichier original : "${file.originalname}"
@@ -3710,7 +3889,7 @@ Consignes de classification :
 1. "field_photo" : si l'image est une photo technique de terrain (matériels roulants ferroviaires, bogies, essieux, rails, caténaires, trémies, aiguillages, déformations, fissures, corrosion, pièces mécaniques). N'invente ni cause ni responsabilité.
 2. "attendance_sheet" : si l'image/PDF est une feuille d'émargement ou une liste manuscrite/imprimée de participants à une réunion. Remplis "attendees": [{ "name", "role", "organization", "email" }].
 3. "field_note" : si c'est une note vocale ou un texte décrivant des constatations matérielles de visite. Remets au propre factuellement SANS inventer ni causes ni responsabilités ("section_observations"). Si un nombre d'heures est évoqué (ex: "3h de visite"), extrais "hours".
-4. "activity" : si la note vocale ou le texte sert principalement à pointer une vacation (ex: "réunion de 2h sur dossier Alstom").
+4. "activity" : si la note vocale ou le texte sert principalement à pointer une vacation (ex: "réunion de 2h sur dossier").
 5. "expense" : si c'est un ticket de train SNCF, note d'hôtel, restaurant, péage, taxi, carburant, frais de déplacement.
    - Billets SNCF/RATP : TVA à 10%.
    - Hôtel & Restauration : TVA à 10%.
@@ -3720,7 +3899,7 @@ Consignes de classification :
 7. "new_mission" : si c'est une nouvelle ordonnance de référé ou lettre de mission judiciaire pour une affaire inexistante.
 8. "deliverable_draft" : si Valentine demande de préparer/rédiger/générer un courrier ou rapport Word à émettre ("prépare une mise en cause", "convoque à une réunion", "prépare les constatations", "note de situation", "note technique", "rapport EAD"). Indique deliverable_type: "mise_en_cause" | "convocation" | "mec_convocation" | "courrier_position" | "constatations" | "note_situation" | "note_technique" | "rapport_ead".
 
-Rapproche toujours l'action du dossier le plus pertinent de la liste selon les mots-clés (Alstom, Ligne 18, Regiorail, Forwardis, TLA, etc.).
+Rapproche toujours l'action du dossier le plus pertinent de la liste selon le code dossier, la référence, le mandant, l'assuré ou le lieu du sinistre.
 
 Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni texte additionnel :
 {
@@ -3836,13 +4015,12 @@ Renvoie UNIQUEMENT un JSON valide respectant ce schéma sans balise Markdown ni 
 
       // Check for mission match if not already found
       if (!matchedMission) {
-        matchedMission = missions.find(m => 
-          lower.includes(m.code.toLowerCase()) || 
-          lower.includes(m.title.toLowerCase().slice(0, 10)) ||
-          (m.code.includes('922') && (lower.includes('alstom') || lower.includes('ligne 18') || lower.includes('trémie'))) ||
-          (m.code.includes('104') && (lower.includes('regiorail') || lower.includes('ambérieu') || lower.includes('amberieu'))) ||
-          (m.code.includes('915') && (lower.includes('forwardis') || lower.includes('clermont'))) ||
-          (m.code.includes('728') && (lower.includes('tla') || lower.includes('ettendorf')))
+        matchedMission = missions.find(m =>
+          lower.includes(m.code.toLowerCase()) ||
+          (m.case_reference && m.case_reference.length >= 4 && lower.includes(m.case_reference.toLowerCase())) ||
+          (m.insured_party && m.insured_party.length >= 4 && lower.includes(m.insured_party.toLowerCase())) ||
+          (m.insurance_client && m.insurance_client.length >= 4 && lower.includes(m.insurance_client.toLowerCase())) ||
+          (m.title && m.title.length >= 8 && lower.includes(m.title.toLowerCase().slice(0, 14)))
         ) || missions[0];
       }
 
@@ -4450,5 +4628,432 @@ apiRouter.get('/missions/:id/export-zip', async (req, res) => {
   } catch (err: any) {
     console.error('[Export Mission ZIP Error]:', err);
     res.status(500).json({ error: err.message || "Erreur lors de l'export du dossier" });
+  }
+});
+
+// ---------------- SYNCHRONISATION CLOUD FIREBASE FIRESTORE (EXPORT / IMPORT ÉTAT COMPLET) ----------------
+apiRouter.get('/sync/export-state', (_req, res) => {
+  try {
+    seedData();
+    const missions = (db.prepare('SELECT * FROM missions ORDER BY reception_date DESC, code DESC').all() as any[]).map((m) => ({
+      ...m,
+      adverse_parties: parseJsonSafe<any[]>(m.adverse_parties, []),
+      stake_history: parseJsonSafe<any[]>(m.stake_history, []),
+      expertise_operations: parseJsonSafe<any[]>(m.expertise_operations, []),
+      is_judicial: Boolean(m.is_judicial),
+    }));
+
+    const linesByInv = new Map<string, any[]>();
+    for (const ln of db.prepare('SELECT * FROM invoice_lines ORDER BY order_index ASC').all() as any[]) {
+      const arr = linesByInv.get(ln.invoice_id);
+      if (arr) arr.push(ln);
+      else linesByInv.set(ln.invoice_id, [ln]);
+    }
+
+    const invoices = (db.prepare('SELECT * FROM invoices ORDER BY date DESC, invoice_number DESC').all() as any[]).map((inv) => ({
+      ...inv,
+      split_details: parseJsonSafe<any>(inv.split_details, null),
+      lines: linesByInv.get(inv.id) || [],
+    }));
+
+    res.json({
+      missions,
+      invoices,
+      credit_notes: db.prepare('SELECT * FROM credit_notes ORDER BY date DESC').all(),
+      activities: db.prepare('SELECT * FROM activities ORDER BY date DESC').all(),
+      expenses: db.prepare('SELECT * FROM expenses ORDER BY date DESC').all(),
+      accounting_entries: db.prepare('SELECT * FROM accounting_entries ORDER BY date DESC').all(),
+      report_drafts: db.prepare('SELECT * FROM report_drafts').all(),
+      recurring_expenses: db.prepare('SELECT * FROM recurring_expenses').all(),
+      attendees: db.prepare('SELECT * FROM attendees').all(),
+      communications: db.prepare('SELECT * FROM communications').all(),
+      damage_lines: db.prepare('SELECT * FROM damage_lines').all(),
+      issued_reports: db.prepare('SELECT * FROM issued_reports').all(),
+      travel_orders: db.prepare('SELECT * FROM travel_orders').all(),
+      registered_mails: db.prepare('SELECT * FROM registered_mails').all(),
+      documents: db.prepare('SELECT * FROM documents').all(),
+      photos: db.prepare('SELECT * FROM photos').all(),
+    });
+  } catch (err: any) {
+    console.error('[Export State Error]:', err);
+    res.status(500).json({ error: err.message || "Erreur lors de l'export de l'état" });
+  }
+});
+
+apiRouter.post('/sync/import-state', (req, res) => {
+  try {
+    const payload = req.body;
+    if (!payload || !Array.isArray(payload.missions)) {
+      return res.status(400).json({ error: "Format d'état invalide (tableau 'missions' requis)." });
+    }
+
+    const insertMission = db.prepare(`
+      INSERT INTO missions (
+        id, code, title, case_reference, guarantee_type, status, insurance_client, client_contact,
+        insurer_company, insured_party, insured_contact, insured_reference, broker_name, broker_reference,
+        client_lawyer, third_parties, adverse_parties, stake_amount, initial_stake_amount, stake_history,
+        court_reference, judicial_expert, is_judicial, co_signer, incident_date, reception_date,
+        description, preliminary_analysis, pv_dommages_date, expertise_operations,
+        current_step, next_action, next_deadline, billing_contact_name, billing_address,
+        custom_hourly_rate, custom_travel_rate, custom_km_rate, custom_billing_threshold, custom_vat_rate
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?
+      )
+    `);
+
+    const insertInvoice = db.prepare(`
+      INSERT INTO invoices (
+        id, invoice_number, mission_id, mission_code, client_name, client_address, subject, case_title,
+        client_ref, our_ref, date, total_ht, vat_rate, vat_amount, total_ttc, advance_amount, net_payable,
+        status, payment_date, payment_method, paid_amount, split_details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertInvoiceLine = db.prepare(`
+      INSERT INTO invoice_lines (
+        id, invoice_id, activity_id, expense_id, description, quantity, time_spent, unit_price_ht, total_ht, order_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertCreditNote = db.prepare(`
+      INSERT INTO credit_notes (
+        id, credit_number, original_invoice_id, original_invoice_number, mission_id, mission_code,
+        date, reason, total_ht, vat_amount, total_ttc
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertActivity = db.prepare(`
+      INSERT INTO activities (
+        id, mission_id, mission_code, date, category, label, hours, hourly_rate, total_ht,
+        billable, status, invoice_id, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertExpense = db.prepare(`
+      INSERT INTO expenses (
+        id, mission_id, mission_code, date, category, label, quantity, unit_price, total_ht,
+        vat_rate, vat_amount, total_ttc, receipt_filename, receipt_original_name, status, invoice_id, is_refacturable
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertAccounting = db.prepare(`
+      INSERT INTO accounting_entries (
+        id, month, type, piece_number, date, invoice_number, mission_code, object, party,
+        amount_ht, vat_rate, vat_amount, amount_ttc, frequency, recurring_expense_id,
+        receipt_filename, receipt_original_name, comment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertReportDraft = db.prepare(`
+      INSERT INTO report_drafts (
+        id, mission_id, mission_code, title, version, section_facts, section_observations,
+        section_analysis, section_conclusions, raw_field_notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertRecurring = db.prepare(`
+      INSERT INTO recurring_expenses (
+        id, object, party, category, frequency, day_of_month,
+        amount_ht, vat_rate, vat_amount, amount_ttc, active, comment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertAttendee = db.prepare(`
+      INSERT INTO attendees (
+        id, mission_id, name, organization, role, email, phone,
+        present_on_site, present_remote, meeting_label, meeting_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertCommunication = db.prepare(`
+      INSERT INTO communications (
+        id, mission_id, mission_code, direction, sender, recipient, date, subject, body,
+        importance, urgency, status, next_action, draft_reply
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertDamageLine = db.prepare(`
+      INSERT INTO damage_lines (
+        id, mission_id, mission_code, category, label, claimed_amount, retained_amount,
+        comment, piece_numbers, order_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertIssuedReport = db.prepare(`
+      INSERT INTO issued_reports (
+        id, mission_id, mission_code, report_type, title, sent_date, recipient,
+        filename, original_name, attached_piece_numbers, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertTravelOrder = db.prepare(`
+      INSERT INTO travel_orders (
+        id, mission_id, mission_code, destination, start_date, end_date,
+        train_info, hotel_info, notes, checklist, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertRegisteredMail = db.prepare(`
+      INSERT INTO registered_mails (
+        id, mission_id, mission_code, recipient, subject, tracking_number,
+        status, sent_date, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertDocument = db.prepare(`
+      INSERT INTO documents (
+        id, mission_id, mission_code, piece_number, section, sub_section,
+        filename, original_name, mime_type, file_size, category, caption,
+        is_selected_for_report, document_group_id, document_group_label, source_origin
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertPhoto = db.prepare(`
+      INSERT INTO photos (
+        id, mission_id, filename, original_name, caption, taken_at,
+        order_index, piece_number, sub_section, is_selected_for_report
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const tx = db.transaction(() => {
+      const clearTables = [
+        'invoice_lines', 'credit_notes', 'activities', 'expenses', 'invoices',
+        'accounting_entries', 'report_drafts', 'damage_lines', 'issued_reports',
+        'attendees', 'photos', 'documents', 'communications', 'travel_orders',
+        'registered_mails', 'missions',
+      ];
+      for (const tbl of clearTables) {
+        db.prepare(`DELETE FROM ${tbl}`).run();
+      }
+      if (Array.isArray(payload.recurring_expenses) && payload.recurring_expenses.length > 0) {
+        db.prepare('DELETE FROM recurring_expenses').run();
+      }
+
+      const validMissionIds = new Set<string>();
+      for (const m of payload.missions || []) {
+        validMissionIds.add(m.id);
+        insertMission.run(
+          m.id, m.code, m.title || m.code, m.case_reference || '-', m.guarantee_type || 'RC',
+          m.status || 'en_cours', m.insurance_client || 'Mandant', m.client_contact || '',
+          m.insurer_company || '', m.insured_party || '', m.insured_contact || '',
+          m.insured_reference || '', m.broker_name || '', m.broker_reference || '',
+          m.client_lawyer || '', m.third_parties || '',
+          typeof m.adverse_parties === 'string' ? m.adverse_parties : JSON.stringify(m.adverse_parties || []),
+          m.stake_amount ?? null, m.initial_stake_amount ?? null,
+          typeof m.stake_history === 'string' ? m.stake_history : JSON.stringify(m.stake_history || []),
+          m.court_reference || '', m.judicial_expert || '', m.is_judicial ? 1 : 0,
+          m.co_signer || '', m.incident_date || '', m.reception_date || '2026-01-15',
+          m.description || m.title || '', m.preliminary_analysis || '', m.pv_dommages_date || '',
+          typeof m.expertise_operations === 'string' ? m.expertise_operations : JSON.stringify(m.expertise_operations || []),
+          m.current_step || '', m.next_action || '', m.next_deadline ?? null,
+          m.billing_contact_name || '', m.billing_address || '',
+          m.custom_hourly_rate ?? 190, m.custom_travel_rate ?? 135, m.custom_km_rate ?? 0.95,
+          m.custom_billing_threshold ?? 3500, m.custom_vat_rate ?? 0.20
+        );
+      }
+
+      const validInvoiceIds = new Set<string>();
+      for (const inv of payload.invoices || []) {
+        if (!validMissionIds.has(inv.mission_id)) continue;
+        validInvoiceIds.add(inv.id);
+        insertInvoice.run(
+          inv.id, inv.invoice_number, inv.mission_id, inv.mission_code, inv.client_name || 'Client',
+          inv.client_address || '-', inv.subject || '', inv.case_title || '',
+          inv.client_ref || '-', inv.our_ref || inv.mission_code, inv.date,
+          inv.total_ht ?? 0, inv.vat_rate ?? 0.2, inv.vat_amount ?? 0, inv.total_ttc ?? 0,
+          inv.advance_amount ?? 0, inv.net_payable ?? inv.total_ttc ?? 0,
+          inv.status || 'emis', inv.payment_date ?? null, inv.payment_method ?? null,
+          inv.paid_amount ?? 0,
+          inv.split_details ? (typeof inv.split_details === 'string' ? inv.split_details : JSON.stringify(inv.split_details)) : null
+        );
+      }
+
+      const validActivityIds = new Set<string>();
+      for (const a of payload.activities || []) {
+        if (!validMissionIds.has(a.mission_id)) continue;
+        validActivityIds.add(a.id);
+        insertActivity.run(
+          a.id, a.mission_id, a.mission_code, a.date, a.category || 'etude_documents',
+          a.label || '', a.hours ?? 0, a.hourly_rate ?? 190, a.total_ht ?? 0,
+          a.billable ?? 1, a.status || 'a_facturer',
+          a.invoice_id && validInvoiceIds.has(a.invoice_id) ? a.invoice_id : null,
+          a.notes || ''
+        );
+      }
+
+      const validExpenseIds = new Set<string>();
+      for (const e of payload.expenses || []) {
+        if (!validMissionIds.has(e.mission_id)) continue;
+        validExpenseIds.add(e.id);
+        insertExpense.run(
+          e.id, e.mission_id, e.mission_code, e.date, e.category || 'autre',
+          e.label || '', e.quantity ?? 1, e.unit_price ?? e.total_ht ?? 0,
+          e.total_ht ?? 0, e.vat_rate ?? 0, e.vat_amount ?? 0, e.total_ttc ?? e.total_ht ?? 0,
+          e.receipt_filename ?? null, e.receipt_original_name ?? null,
+          e.status || 'a_facturer',
+          e.invoice_id && validInvoiceIds.has(e.invoice_id) ? e.invoice_id : null,
+          e.is_refacturable ?? 1
+        );
+      }
+
+      for (const inv of payload.invoices || []) {
+        if (!validInvoiceIds.has(inv.id)) continue;
+        const lines = Array.isArray(inv.lines) ? inv.lines : [];
+        lines.forEach((ln: any, idx: number) => {
+          insertInvoiceLine.run(
+            ln.id || `il-${inv.invoice_number}-${idx + 1}`,
+            inv.id,
+            ln.activity_id && validActivityIds.has(ln.activity_id) ? ln.activity_id : null,
+            ln.expense_id && validExpenseIds.has(ln.expense_id) ? ln.expense_id : null,
+            ln.description || '',
+            ln.quantity ?? 1,
+            ln.time_spent ?? 1,
+            ln.unit_price_ht ?? ln.total_ht ?? 0,
+            ln.total_ht ?? 0,
+            ln.order_index ?? (idx + 1)
+          );
+        });
+      }
+
+      for (const cn of payload.credit_notes || []) {
+        if (!validMissionIds.has(cn.mission_id) || !validInvoiceIds.has(cn.original_invoice_id)) continue;
+        insertCreditNote.run(
+          cn.id, cn.credit_number, cn.original_invoice_id, cn.original_invoice_number,
+          cn.mission_id, cn.mission_code, cn.date, cn.reason || '',
+          cn.total_ht ?? 0, cn.vat_amount ?? 0, cn.total_ttc ?? 0
+        );
+      }
+
+      for (const rec of payload.recurring_expenses || []) {
+        insertRecurring.run(
+          rec.id, rec.object || '', rec.party || '', rec.category || 'autre',
+          rec.frequency || 'mensuel', rec.day_of_month ?? 5,
+          rec.amount_ht ?? 0, rec.vat_rate ?? 0, rec.vat_amount ?? 0,
+          rec.amount_ttc ?? 0, rec.active ?? 1, rec.comment ?? null
+        );
+      }
+
+      for (const acc of payload.accounting_entries || []) {
+        insertAccounting.run(
+          acc.id, acc.month, acc.type, acc.piece_number ?? null, acc.date,
+          acc.invoice_number ?? null, acc.mission_code ?? null, acc.object || '', acc.party || '',
+          acc.amount_ht ?? 0, acc.vat_rate ?? 0, acc.vat_amount ?? 0, acc.amount_ttc ?? 0,
+          acc.frequency || 'ponctuel', acc.recurring_expense_id ?? null,
+          acc.receipt_filename ?? null, acc.receipt_original_name ?? null, acc.comment ?? null
+        );
+      }
+
+      for (const rep of payload.report_drafts || []) {
+        if (!validMissionIds.has(rep.mission_id)) continue;
+        insertReportDraft.run(
+          rep.id, rep.mission_id, rep.mission_code, rep.title || '', rep.version ?? 1,
+          rep.section_facts || '', rep.section_observations || '',
+          rep.section_analysis || '', rep.section_conclusions || '', rep.raw_field_notes || ''
+        );
+      }
+
+      for (const att of payload.attendees || []) {
+        if (!validMissionIds.has(att.mission_id)) continue;
+        insertAttendee.run(
+          att.id, att.mission_id, att.name || '', att.organization || '', att.role || '',
+          att.email ?? null, att.phone ?? null,
+          att.present_on_site ? 1 : 0, att.present_remote ? 1 : 0,
+          att.meeting_label || '', att.meeting_date || ''
+        );
+      }
+
+      for (const comm of payload.communications || []) {
+        if (!validMissionIds.has(comm.mission_id)) continue;
+        insertCommunication.run(
+          comm.id, comm.mission_id, comm.mission_code || '', comm.direction || 'in',
+          comm.sender || '', comm.recipient || '', comm.date || '', comm.subject || '', comm.body || '',
+          comm.importance || 'normale', comm.urgency || 'normale', comm.status || 'a_traiter',
+          comm.next_action ?? null, comm.draft_reply ?? null
+        );
+      }
+
+      for (const dmg of payload.damage_lines || []) {
+        if (!validMissionIds.has(dmg.mission_id)) continue;
+        insertDamageLine.run(
+          dmg.id, dmg.mission_id, dmg.mission_code || '', dmg.category || 'Matériel roulant',
+          dmg.label || '', dmg.claimed_amount ?? 0, dmg.retained_amount ?? 0,
+          dmg.comment || '',
+          typeof dmg.piece_numbers === 'string' ? dmg.piece_numbers : JSON.stringify(dmg.piece_numbers || []),
+          dmg.order_index ?? 0
+        );
+      }
+
+      for (const ir of payload.issued_reports || []) {
+        if (!validMissionIds.has(ir.mission_id)) continue;
+        insertIssuedReport.run(
+          ir.id, ir.mission_id, ir.mission_code || '', ir.report_type || "Rapport d'étape",
+          ir.title || '', ir.sent_date || '', ir.recipient || '',
+          ir.filename ?? null, ir.original_name ?? null,
+          typeof ir.attached_piece_numbers === 'string' ? ir.attached_piece_numbers : JSON.stringify(ir.attached_piece_numbers || []),
+          ir.notes || ''
+        );
+      }
+
+      for (const tr of payload.travel_orders || []) {
+        if (!validMissionIds.has(tr.mission_id)) continue;
+        insertTravelOrder.run(
+          tr.id, tr.mission_id, tr.mission_code || '', tr.destination || '',
+          tr.start_date || '', tr.end_date || '', tr.train_info ?? null, tr.hotel_info ?? null,
+          tr.notes ?? null,
+          typeof tr.checklist === 'string' ? tr.checklist : JSON.stringify(tr.checklist || []),
+          tr.status || 'prevu'
+        );
+      }
+
+      for (const rm of payload.registered_mails || []) {
+        if (!validMissionIds.has(rm.mission_id)) continue;
+        insertRegisteredMail.run(
+          rm.id, rm.mission_id, rm.mission_code || '', rm.recipient || '', rm.subject || '',
+          rm.tracking_number ?? null, rm.status || 'a_preparer', rm.sent_date ?? null, rm.notes ?? null
+        );
+      }
+
+      for (const d of payload.documents || []) {
+        if (!validMissionIds.has(d.mission_id)) continue;
+        insertDocument.run(
+          d.id, d.mission_id, d.mission_code || '', d.piece_number ?? null,
+          d.section || 'constatations', d.sub_section || '',
+          d.filename || '', d.original_name || '', d.mime_type || 'application/octet-stream',
+          d.file_size ?? 0, d.category || 'autre', d.caption || '',
+          d.is_selected_for_report ? 1 : 0,
+          d.document_group_id || '', d.document_group_label || '', d.source_origin || ''
+        );
+      }
+
+      for (const ph of payload.photos || []) {
+        if (!validMissionIds.has(ph.mission_id)) continue;
+        insertPhoto.run(
+          ph.id, ph.mission_id, ph.filename || '', ph.original_name || '',
+          ph.caption || '', ph.taken_at ?? null, ph.order_index ?? 0,
+          ph.piece_number ?? null, ph.sub_section || 'terrain',
+          ph.is_selected_for_report ? 1 : 0
+        );
+      }
+    });
+
+    tx();
+    res.json({
+      success: true,
+      missions: (payload.missions || []).length,
+      invoices: (payload.invoices || []).length,
+      accounting_entries: (payload.accounting_entries || []).length,
+      report_drafts: (payload.report_drafts || []).length,
+      documents: (payload.documents || []).length,
+      photos: (payload.photos || []).length,
+    });
+  } catch (err: any) {
+    console.error('[Import State Error]:', err);
+    res.status(500).json({ error: err.message || "Erreur lors de l'import de l'état" });
   }
 });
